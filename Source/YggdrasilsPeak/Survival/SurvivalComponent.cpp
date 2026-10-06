@@ -55,6 +55,8 @@ void USurvivalComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		return;
 	}
 
+	DetectJump();
+
 	const float Step = FMath::Max(GetCfg()->FixedStepSeconds, KINDA_SMALL_NUMBER);
 
 	StepAccumulator += DeltaTime;
@@ -99,7 +101,7 @@ void USurvivalComponent::StepSimulation(float Dt)
 	{
 		Stamina -= C->SprintStaminaDrainPerSecond * Dt;
 	}
-	else
+	else if (!IsAirborne())
 	{
 		float Recover = bMoving ? C->WalkStaminaRecoverPerSecond : C->IdleStaminaRecoverPerSecond;
 		if (bPenalised)
@@ -261,6 +263,43 @@ bool USurvivalComponent::IsMoving() const
 
 	const float Threshold = GetCfg()->MovingSpeedThreshold;
 	return Movement->Velocity.SizeSquared2D() > FMath::Square(Threshold);
+}
+
+bool USurvivalComponent::IsAirborne() const
+{
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	return Movement && Movement->IsFalling();
+}
+
+void USurvivalComponent::DetectJump()
+{
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	if (!Movement)
+	{
+		return;
+	}
+
+	const bool bOnGround = Movement->IsMovingOnGround();
+	// Leaving the ground upward is a jump; walking off a ledge starts with zero or downward velocity.
+	const bool bJumped = bWasOnGround && Movement->IsFalling() && Movement->Velocity.Z > 0.f;
+	if (bOnGround || Movement->IsFalling())
+	{
+		bWasOnGround = bOnGround;
+	}
+
+	if (bJumped)
+	{
+		const USurvivalConfig* C = GetCfg();
+		Stamina = FMath::Max(0.f, Stamina - C->JumpStaminaCost);
+		if (Stamina <= 0.f)
+		{
+			bExhausted = true;
+		}
+		UpdateWarnings();
+		NotifyChanges();
+	}
 }
 
 void USurvivalComponent::ApplyMovementSpeed() const

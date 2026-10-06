@@ -64,6 +64,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stamina", meta=(ClampMin="0"))
 	float WalkStaminaRecoverPerSecond = 8.f;
 
+	/** Stamina spent each time the character jumps. Stamina does not recover while airborne. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stamina", meta=(ClampMin="0"))
+	float JumpStaminaCost = 10.f;
+
 	/** After hitting zero, sprinting stays blocked until stamina recovers to this value. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Stamina", meta=(ClampMin="0"))
 	float SprintResumeStamina = 20.f;

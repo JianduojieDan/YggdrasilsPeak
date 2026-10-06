@@ -129,6 +129,9 @@ private:
 	void NotifyChanges();
 	void Die();
 	bool IsMoving() const;
+	bool IsAirborne() const;
+	/** Spends stamina once when the character leaves the ground moving upward. Runs every frame so no jump is missed. */
+	void DetectJump();
 
 	/** The config actually in use (assigned asset, or a transient default copy). */
 	UPROPERTY(Transient)
@@ -154,6 +157,7 @@ private:
 	float DehydrationTimer = 0.f;
 	float HypothermiaTimer = 0.f;
 
+	bool bWasOnGround = true;
 	bool bSprintRequested = false;
 	bool bSprinting = false;
 	bool bExhausted = false;
