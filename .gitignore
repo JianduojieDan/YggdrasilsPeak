@@ -72,3 +72,44 @@ Plugins/**/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+
+# ---- GitHub copy is code-only (LFS quota). Full assets live in the local repo branch "main". ----
+# Unreal assets and maps
+Content/
+*.uasset
+*.umap
+*.ubulk
+*.uexp
+# 3D / source art
+*.fbx
+*.obj
+*.blend
+*.blend1
+*.max
+*.ma
+*.mb
+*.abc
+*.usd
+*.usdz
+*.gltf
+*.glb
+# Textures / images
+*.png
+*.jpg
+*.jpeg
+*.tga
+*.tif
+*.tiff
+*.exr
+*.hdr
+*.psd
+*.dds
+# Audio / video
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.mp4
+*.mov
+*.avi
+*.webm
