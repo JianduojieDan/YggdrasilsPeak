@@ -38,6 +38,18 @@ public:
 	UPROPERTY(EditAnywhere, Category="Expedition", meta=(ClampMin="0", ClampMax="100"))
 	float RespawnNeedsPercent = 60.f;
 
+	/** Extra cold exposure (0..1) at full storm strength, on top of altitude. */
+	UPROPERTY(EditAnywhere, Category="Expedition|Weather", meta=(ClampMin="0", ClampMax="1"))
+	float StormColdExposure = 0.45f;
+
+	/** Walking speed multiplier at full storm strength (wind and deep fresh snow). */
+	UPROPERTY(EditAnywhere, Category="Expedition|Weather", meta=(ClampMin="0.1", ClampMax="1"))
+	float StormSpeedMultiplier = 0.6f;
+
+	/** Storm strength 0..1 right now, from the weather system's local wind and snow. */
+	UFUNCTION(BlueprintPure, Category="Expedition|Weather")
+	float GetStormStrength() const { return StormStrength; }
+
 	/** Strength of the low-oxygen screen effect (0 disables it). */
 	UPROPERTY(EditAnywhere, Category="Expedition", meta=(ClampMin="0", ClampMax="1"))
 	float HypoxiaScreenEffect = 1.f;
@@ -74,12 +86,21 @@ private:
 	void Respawn();
 	void UpdateCamps();
 	void UpdateScreenEffect(float DeltaTime);
+	void UpdateWeather();
+	/** Reads a number property (float or double) from a Blueprint object by its display name, ignoring case and spaces. */
+	static bool ReadNumber(const UObject* Object, const TCHAR* Name, double& Out);
+	static UObject* ReadObject(const UObject* Object, const TCHAR* Name);
 	void Say(const FText& Message, float Seconds = 6.f);
 
 	TArray<TWeakObjectPtr<ARouteLandmark>> Camps;
 	TWeakObjectPtr<ARouteLandmark> LastCamp;
 	TWeakObjectPtr<ARouteLandmark> CurrentCamp;
 	TWeakObjectPtr<USurvivalComponent> Survival;
+	TWeakObjectPtr<AActor> WeatherActor;
+	float StormStrength = 0.f;
+	bool bStormWarned = false;
+	float LoggedStorm = -1.f;
+	bool bLoggedNoState = false;
 
 	FTimerHandle RespawnTimer;
 	float CampCheckTimer = 0.f;

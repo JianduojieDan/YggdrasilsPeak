@@ -39,6 +39,98 @@ void UExpeditionComponent::BeginPlay()
 		Survival->OnDeath.AddDynamic(this, &UExpeditionComponent::HandleDeath);
 	}
 	StartTime = GetWorld()->GetTimeSeconds();
+
+	// Ultra Dynamic Weather is a Blueprint; find it by class name so the code has no hard dependency on it.
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		if (It->GetClass()->GetName().Contains(TEXT("Ultra_Dynamic_Weather")))
+		{
+			WeatherActor = *It;
+			break;
+		}
+	}
+}
+
+namespace
+{
+	FString Simplify(const FString& Name)
+	{
+		return Name.Replace(TEXT(" "), TEXT("")).ToLower();
+	}
+
+	FProperty* FindByDisplayName(const UClass* Class, const TCHAR* Name)
+	{
+		const FString Wanted = Simplify(Name);
+		for (TFieldIterator<FProperty> It(Class); It; ++It)
+		{
+			if (Simplify(It->GetAuthoredName()) == Wanted || Simplify(It->GetName()) == Wanted)
+			{
+				return *It;
+			}
+		}
+		return nullptr;
+	}
+}
+
+bool UExpeditionComponent::ReadNumber(const UObject* Object, const TCHAR* Name, double& Out)
+{
+	const FProperty* Prop = Object ? FindByDisplayName(Object->GetClass(), Name) : nullptr;
+	if (const FDoubleProperty* D = CastField<FDoubleProperty>(Prop))
+	{
+		Out = D->GetPropertyValue_InContainer(Object);
+		return true;
+	}
+	if (const FFloatProperty* F = CastField<FFloatProperty>(Prop))
+	{
+		Out = F->GetPropertyValue_InContainer(Object);
+		return true;
+	}
+	return false;
+}
+
+UObject* UExpeditionComponent::ReadObject(const UObject* Object, const TCHAR* Name)
+{
+	const FObjectPropertyBase* Prop = Object ? CastField<FObjectPropertyBase>(FindByDisplayName(Object->GetClass(), Name)) : nullptr;
+	return Prop ? Prop->GetObjectPropertyValue_InContainer(Object) : nullptr;
+}
+
+void UExpeditionComponent::UpdateWeather()
+{
+	if (!Survival.IsValid())
+	{
+		return;
+	}
+
+	// Local state includes radial storms passing over the player; values are on UDW's 0..10 scale.
+	const UObject* State = WeatherActor.IsValid() ? ReadObject(WeatherActor.Get(), TEXT("Local Weather State")) : nullptr;
+	double Wind = 0.0, Snow = 0.0;
+	if (State)
+	{
+		ReadNumber(State, TEXT("Wind Intensity"), Wind);
+		ReadNumber(State, TEXT("Snow"), Snow);
+	}
+	const float NewStorm = FMath::Clamp(0.6f * float((Wind - 3.0) / 7.0) + 0.4f * float((Snow - 4.0) / 6.0), 0.f, 1.f);
+	if (FMath::Abs(NewStorm - LoggedStorm) > 0.1f || (State == nullptr) != bLoggedNoState)
+	{
+		LoggedStorm = NewStorm;
+		bLoggedNoState = State == nullptr;
+		UE_LOG(LogSurvival, Log, TEXT("Weather: wind %.1f snow %.1f -> storm %.2f%s"), Wind, Snow, NewStorm, State ? TEXT("") : TEXT(" (no UDW local state found)"));
+	}
+	StormStrength = NewStorm;
+
+	Survival->SetColdExposure(StormColdExposure * StormStrength);
+	Survival->SetWeatherSpeedMultiplier(FMath::Lerp(1.f, StormSpeedMultiplier, StormStrength));
+
+	if (!bStormWarned && StormStrength > 0.45f)
+	{
+		bStormWarned = true;
+		Say(NSLOCTEXT("Expedition", "Storm", "A blizzard is coming in. Get to a camp or keep moving."), 7.f);
+	}
+	else if (bStormWarned && StormStrength < 0.2f)
+	{
+		bStormWarned = false;
+		Say(NSLOCTEXT("Expedition", "StormOver", "The storm is passing."), 4.f);
+	}
 }
 
 void UExpeditionComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -50,6 +142,7 @@ void UExpeditionComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 	{
 		CampCheckTimer = 0.5f;
 		UpdateCamps();
+		UpdateWeather();
 	}
 	UpdateScreenEffect(DeltaTime);
 }

@@ -60,6 +60,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Survival")
 	void SetColdExposure(float Exposure01);
 
+	/** Extra speed multiplier from weather (1 = calm, lower = fighting the wind). */
+	UFUNCTION(BlueprintCallable, Category="Survival")
+	void SetWeatherSpeedMultiplier(float Multiplier) { WeatherSpeedMultiplier = FMath::Clamp(Multiplier, 0.1f, 1.f); }
+
 	/** Inside a camp: no cold exposure, faster recovery, a little more oxygen. */
 	UFUNCTION(BlueprintCallable, Category="Survival")
 	void SetSheltered(bool bInShelter);
@@ -173,6 +177,7 @@ private:
 	float LastNotified[6] = { -1.f, -1.f, -1.f, -1.f, -1.f, -1.f };
 
 	float OxygenBottleRemaining = 0.f;
+	float WeatherSpeedMultiplier = 1.f;
 	bool bSheltered = false;
 	FText DeathCause;
 

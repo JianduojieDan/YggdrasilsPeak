@@ -429,7 +429,7 @@ float USurvivalComponent::GetTerrainSpeedMultiplier() const
 	const USurvivalConfig* C = GetCfg();
 	const float Uphill = 1.f / (1.f + C->UphillSlowdownPerGrade * GetUphillGrade());
 	const float OxygenFatigue = FMath::Clamp((C->OxygenFatigueBelow - Oxygen) / FMath::Max(C->OxygenFatigueBelow - C->OxygenDamageBelow, 1.f), 0.f, 1.f);
-	return Uphill * FMath::Lerp(1.f, C->LowOxygenSpeedMultiplier, OxygenFatigue);
+	return Uphill * FMath::Lerp(1.f, C->LowOxygenSpeedMultiplier, OxygenFatigue) * WeatherSpeedMultiplier;
 }
 
 // ---- Stat access ----
