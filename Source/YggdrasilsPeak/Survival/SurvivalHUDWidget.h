@@ -11,6 +11,7 @@ class UProgressBar;
 class UTextBlock;
 class UWidget;
 class USurvivalComponent;
+class UExpeditionComponent;
 
 /**
  *  Presentation-only survival HUD. It finds the SurvivalComponent on the owning player's pawn,
@@ -77,6 +78,10 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
 	TObjectPtr<UTextBlock> DebugText;
+
+	/** Altimeter and blood-oxygen readout. Created at runtime (bottom left) when the Widget Blueprint has none. */
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> AltitudeText;
 
 	// ---- Tuning ----
 
@@ -163,10 +168,17 @@ private:
 	UFUNCTION()
 	void HandleDeath();
 
+	UFUNCTION()
+	void HandleExpeditionMessage(const FText& Message, float Seconds);
+
+	void CreateAltitudeText();
+	void UpdateAltitudeText(const FSurvivalSnapshot& Snapshot) const;
+
 	static void FadeWidget(UWidget* Widget, float TargetOpacity, float DeltaTime, float InSpeed, float OutSpeed);
 	void UpdateDebugText(const FSurvivalSnapshot& Snapshot) const;
 
 	TWeakObjectPtr<USurvivalComponent> Survival;
+	TWeakObjectPtr<UExpeditionComponent> Expedition;
 
 	float DisplayedStamina = 1.f;
 	float DisplayedHealth = 1.f;
@@ -177,7 +189,7 @@ private:
 	float WarningMessageTimer = 0.f;
 
 	/** Eased 0..1 strength of each warning icon, indexed by ESurvivalWarning. */
-	float WarningStrength[5] = { 0.f, 0.f, 0.f, 0.f, 0.f };
+	float WarningStrength[6] = { 0.f, 0.f, 0.f, 0.f, 0.f, 0.f };
 
 	float PulseClock = 0.f;
 };

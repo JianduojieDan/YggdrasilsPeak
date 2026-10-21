@@ -16,7 +16,9 @@ enum class ESurvivalStat : uint8
 	/** Higher is better: 100 = fully hydrated, 0 = dehydrated. */
 	Hydration,
 	/** Core temperature in degrees Celsius. */
-	BodyTemperature
+	BodyTemperature,
+	/** Blood oxygen saturation in percent (100 = sea level). Falls with altitude and effort. */
+	Oxygen
 };
 
 /** Danger states the HUD should surface. Enter/exit use separate thresholds to avoid flicker. */
@@ -27,7 +29,8 @@ enum class ESurvivalWarning : uint8
 	Hungry,
 	Thirsty,
 	Cold,
-	LowHealth
+	LowHealth,
+	LowOxygen
 };
 
 /** Read-only copy of the current survival state for HUD and debug tools. */
@@ -51,6 +54,22 @@ struct FSurvivalSnapshot
 	/** Degrees Celsius. */
 	UPROPERTY(BlueprintReadOnly, Category="Survival")
 	float BodyTemperature = 0.f;
+
+	/** Blood oxygen saturation, percent. */
+	UPROPERTY(BlueprintReadOnly, Category="Survival")
+	float Oxygen = 0.f;
+
+	/** Height above sea level of the character's feet, metres. */
+	UPROPERTY(BlueprintReadOnly, Category="Survival")
+	float ElevationMeters = 0.f;
+
+	/** Seconds of bottled oxygen left (0 = not breathing from a bottle). */
+	UPROPERTY(BlueprintReadOnly, Category="Survival")
+	float OxygenBottleSeconds = 0.f;
+
+	/** True while inside a camp (warm, sheltered). */
+	UPROPERTY(BlueprintReadOnly, Category="Survival")
+	bool bSheltered = false;
 
 	UPROPERTY(BlueprintReadOnly, Category="Survival")
 	bool bSprinting = false;

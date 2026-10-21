@@ -21,7 +21,13 @@ public class YggdrasilsPeak : ModuleRules
 			"Slate"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Landscape" });
+
+		if (Target.bBuildEditor)
+		{
+			// LandscapeRebuilder (editor-only) uses LandscapeEdit.h
+			PrivateDependencyModuleNames.AddRange(new string[] { "Foliage", "UnrealEd" });
+		}
 
 		PublicIncludePaths.AddRange(new string[] {
 			"YggdrasilsPeak",

@@ -16,8 +16,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSurvivalWarningChanged, ESurviva
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSurvivalDeath);
 
 /**
- *  Owns the player's body stats (health, stamina, satiety, hydration, body temperature)
- *  and decides walk/sprint speed on a Character. HUD widgets read GetSnapshot() and the
+ *  Owns the player's body stats (health, stamina, satiety, hydration, body temperature, oxygen)
+ *  and decides walk/sprint speed on a Character. Altitude (from world Z), uphill grade and camp
+ *  shelter feed the simulation directly. HUD widgets read GetSnapshot() and the
  *  change events; they never calculate stats themselves.
  *
  *  The simulation runs in fixed steps, stops while the game is paused, and fires death once.
@@ -55,9 +56,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Survival")
 	void SetSprintRequested(bool bRequested);
 
-	/** Cold exposure from 0 (comfortable) to 1 (full exposure). Temporary input until the environment service exists. */
+	/** Extra cold exposure (0..1) on top of altitude, e.g. from weather. */
 	UFUNCTION(BlueprintCallable, Category="Survival")
 	void SetColdExposure(float Exposure01);
+
+	/** Inside a camp: no cold exposure, faster recovery, a little more oxygen. */
+	UFUNCTION(BlueprintCallable, Category="Survival")
+	void SetSheltered(bool bInShelter);
+
+	/** Starts (or tops up) breathing bottled oxygen. Seconds <= 0 uses one bottle from the config. */
+	UFUNCTION(BlueprintCallable, Category="Survival")
+	void UseOxygenBottle(float Seconds = 0.f);
+
+	/** Brings the player back after death (or any time) with full health/stamina/oxygen and needs at NeedsPercent. */
+	UFUNCTION(BlueprintCallable, Category="Survival")
+	void Revive(float NeedsPercent = 60.f);
 
 	// ---- Reading state ----
 
@@ -82,6 +95,14 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Survival")
 	bool IsDead() const { return bDead; }
+
+	/** Metres above sea level of the owner's feet. */
+	UFUNCTION(BlueprintPure, Category="Survival")
+	float GetElevationMeters() const;
+
+	/** What killed the player, for the death message. Empty while alive. */
+	UFUNCTION(BlueprintPure, Category="Survival")
+	FText GetDeathCause() const { return DeathCause; }
 
 	/** Short player-facing text for a warning, including what to do about it. */
 	UFUNCTION(BlueprintPure, Category="Survival")
@@ -130,6 +151,10 @@ private:
 	void Die();
 	bool IsMoving() const;
 	bool IsAirborne() const;
+	/** Uphill grade (rise over run, 0 when flat or downhill) in the direction the character is moving. */
+	float GetUphillGrade() const;
+	/** Speed multiplier from slope and oxygen, applied on top of walk/sprint speed. */
+	float GetTerrainSpeedMultiplier() const;
 	/** Spends stamina once when the character leaves the ground moving upward. Runs every frame so no jump is missed. */
 	void DetectJump();
 
@@ -142,20 +167,27 @@ private:
 	float Satiety = 0.f;
 	float Hydration = 0.f;
 	float BodyTemperature = 0.f;
+	float Oxygen = 0.f;
 
 	/** Values last sent to listeners, indexed by ESurvivalStat. */
-	float LastNotified[5] = { -1.f, -1.f, -1.f, -1.f, -1.f };
+	float LastNotified[6] = { -1.f, -1.f, -1.f, -1.f, -1.f, -1.f };
+
+	float OxygenBottleRemaining = 0.f;
+	bool bSheltered = false;
+	FText DeathCause;
 
 	/** Bitmask of active ESurvivalWarning values. */
 	uint32 ActiveWarnings = 0;
 
 	float ColdExposure = 0.f;
 	float StepAccumulator = 0.f;
+	float LogTimer = 0.f;
 
 	/** Seconds each damaging condition has persisted. */
 	float StarvationTimer = 0.f;
 	float DehydrationTimer = 0.f;
 	float HypothermiaTimer = 0.f;
+	float HypoxiaTimer = 0.f;
 
 	bool bWasOnGround = true;
 	bool bSprintRequested = false;

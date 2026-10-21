@@ -2,6 +2,10 @@
 
 #include "Survival/SurvivalHUDWidget.h"
 #include "Survival/SurvivalComponent.h"
+#include "Survival/ExpeditionComponent.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
@@ -43,7 +47,31 @@ void USurvivalHUDWidget::NativeConstruct()
 		}
 	}
 
+	CreateAltitudeText();
 	TryBind();
+}
+
+void USurvivalHUDWidget::CreateAltitudeText()
+{
+	UCanvasPanel* Canvas = WidgetTree ? Cast<UCanvasPanel>(WidgetTree->RootWidget) : nullptr;
+	if (AltitudeText || !Canvas)
+	{
+		return;
+	}
+
+	AltitudeText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("AltitudeText"));
+	FSlateFontInfo Font = AltitudeText->GetFont();
+	Font.Size = 20;
+	AltitudeText->SetFont(Font);
+	AltitudeText->SetColorAndOpacity(FSlateColor(FLinearColor(0.9f, 0.95f, 1.f, 0.85f)));
+	AltitudeText->SetShadowOffset(FVector2D(1.f, 1.f));
+	AltitudeText->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.6f));
+
+	UCanvasPanelSlot* TextSlot = Canvas->AddChildToCanvas(AltitudeText);
+	TextSlot->SetAnchors(FAnchors(0.f, 1.f));
+	TextSlot->SetAlignment(FVector2D(0.f, 1.f));
+	TextSlot->SetPosition(FVector2D(40.f, -40.f));
+	TextSlot->SetAutoSize(true);
 }
 
 void USurvivalHUDWidget::NativeDestruct()
@@ -68,6 +96,12 @@ void USurvivalHUDWidget::TryBind()
 	Unbind();
 	Survival = Found;
 
+	Expedition = Pawn ? Pawn->FindComponentByClass<UExpeditionComponent>() : nullptr;
+	if (Expedition.IsValid())
+	{
+		Expedition->OnMessage.AddDynamic(this, &USurvivalHUDWidget::HandleExpeditionMessage);
+	}
+
 	if (Found)
 	{
 		Found->OnStatChanged.AddDynamic(this, &USurvivalHUDWidget::HandleStatChanged);
@@ -85,7 +119,12 @@ void USurvivalHUDWidget::Unbind()
 		Bound->OnWarningChanged.RemoveDynamic(this, &USurvivalHUDWidget::HandleWarningChanged);
 		Bound->OnDeath.RemoveDynamic(this, &USurvivalHUDWidget::HandleDeath);
 	}
+	if (UExpeditionComponent* BoundExpedition = Expedition.Get())
+	{
+		BoundExpedition->OnMessage.RemoveDynamic(this, &USurvivalHUDWidget::HandleExpeditionMessage);
+	}
 	Survival.Reset();
+	Expedition.Reset();
 }
 
 void USurvivalHUDWidget::SnapToCurrentState()
@@ -105,7 +144,7 @@ void USurvivalHUDWidget::SnapToCurrentState()
 	WarningMessageTimer = 0.f;
 
 	const UEnum* WarningEnum = StaticEnum<ESurvivalWarning>();
-	for (int32 Index = 0; Index < 5; ++Index)
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(WarningStrength); ++Index)
 	{
 		const ESurvivalWarning Warning = static_cast<ESurvivalWarning>(WarningEnum->GetValueByIndex(Index));
 		WarningStrength[Index] = Bound->IsWarningActive(Warning) ? 1.f : 0.f;
@@ -140,6 +179,20 @@ void USurvivalHUDWidget::HandleWarningChanged(ESurvivalWarning Warning, bool bAc
 void USurvivalHUDWidget::HandleDeath()
 {
 	HealthLinger = FLT_MAX;
+}
+
+void USurvivalHUDWidget::HandleExpeditionMessage(const FText& Message, float Seconds)
+{
+	if (WarningText)
+	{
+		WarningText->SetText(Message);
+	}
+	WarningMessageTimer = Seconds;
+	// Coming back from death: the health panel can go back to normal behaviour.
+	if (HealthLinger == FLT_MAX)
+	{
+		HealthLinger = 0.f;
+	}
 }
 
 // ---- Per-frame presentation ----
@@ -193,9 +246,9 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	FadeWidget(HealthPanel, (bLowHealth || HealthLinger > 0.f) ? 1.f : 0.f, InDeltaTime, FadeInSpeed, FadeOutSpeed);
 
 	// Warning icons: fade with the warning, pulse while it is active.
-	UWidget* const Icons[5] = { nullptr, HungerIcon.Get(), ThirstIcon.Get(), ColdIcon.Get(), nullptr };
+	UWidget* const Icons[6] = { nullptr, HungerIcon.Get(), ThirstIcon.Get(), ColdIcon.Get(), nullptr, nullptr };
 	const float Pulse = 0.65f + 0.35f * (0.5f + 0.5f * FMath::Sin(PulseClock));
-	for (int32 Index = 0; Index < 5; ++Index)
+	for (int32 Index = 0; Index < 6; ++Index)
 	{
 		const bool bActive = Bound->IsWarningActive(static_cast<ESurvivalWarning>(Index));
 		WarningStrength[Index] = FMath::FInterpTo(WarningStrength[Index], bActive ? 1.f : 0.f, InDeltaTime, bActive ? FadeInSpeed : FadeOutSpeed);
@@ -219,6 +272,8 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	WarningMessageTimer = FMath::Max(0.f, WarningMessageTimer - InDeltaTime);
 	FadeWidget(WarningPanel, WarningMessageTimer > 0.f ? 1.f : 0.f, InDeltaTime, FadeInSpeed, FadeOutSpeed);
 
+	UpdateAltitudeText(Snapshot);
+
 	// Debug numbers.
 	const bool bShowDebug = CVarHudDebug.GetValueOnGameThread() != 0;
 	FadeWidget(DebugPanel, bShowDebug ? 1.f : 0.f, InDeltaTime, 20.f, 20.f);
@@ -226,6 +281,31 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	{
 		UpdateDebugText(Snapshot);
 	}
+}
+
+void USurvivalHUDWidget::UpdateAltitudeText(const FSurvivalSnapshot& Snapshot) const
+{
+	if (!AltitudeText)
+	{
+		return;
+	}
+
+	FString Line = FString::Printf(TEXT("%s m     O2 %d%%"), *FText::AsNumber(FMath::RoundToInt(Snapshot.ElevationMeters)).ToString(),
+		FMath::RoundToInt(Snapshot.Oxygen));
+	if (Snapshot.OxygenBottleSeconds > 0.f)
+	{
+		Line += FString::Printf(TEXT("   bottle %d:%02d"), FMath::FloorToInt(Snapshot.OxygenBottleSeconds / 60.f), FMath::FloorToInt(Snapshot.OxygenBottleSeconds) % 60);
+	}
+	if (Snapshot.bSheltered)
+	{
+		Line += TEXT("   [camp]");
+	}
+	AltitudeText->SetText(FText::FromString(Line));
+
+	// Oxygen colour: white when fine, amber when low, red when dangerous.
+	const FLinearColor Colour = Snapshot.Oxygen > 72.f ? FLinearColor(0.9f, 0.95f, 1.f, 0.85f)
+		: Snapshot.Oxygen > 55.f ? FLinearColor(1.f, 0.75f, 0.3f, 0.95f) : FLinearColor(1.f, 0.3f, 0.3f, 1.f);
+	AltitudeText->SetColorAndOpacity(FSlateColor(Colour));
 }
 
 void USurvivalHUDWidget::UpdateDebugText(const FSurvivalSnapshot& Snapshot) const
@@ -236,7 +316,7 @@ void USurvivalHUDWidget::UpdateDebugText(const FSurvivalSnapshot& Snapshot) cons
 	}
 
 	DebugText->SetText(FText::FromString(FString::Printf(
-		TEXT("Health %.1f\nStamina %.1f\nSatiety %.1f\nHydration %.1f\nTemperature %.2f C\nSprinting %d  Exhausted %d  Dead %d"),
-		Snapshot.Health, Snapshot.Stamina, Snapshot.Satiety, Snapshot.Hydration, Snapshot.BodyTemperature,
+		TEXT("Health %.1f\nStamina %.1f\nSatiety %.1f\nHydration %.1f\nTemperature %.2f C\nOxygen %.1f%%  Elevation %.0f m\nSprinting %d  Exhausted %d  Dead %d"),
+		Snapshot.Health, Snapshot.Stamina, Snapshot.Satiety, Snapshot.Hydration, Snapshot.BodyTemperature, Snapshot.Oxygen, Snapshot.ElevationMeters,
 		Snapshot.bSprinting, Snapshot.bExhausted, Snapshot.bDead)));
 }

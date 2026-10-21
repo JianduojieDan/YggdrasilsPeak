@@ -12,10 +12,16 @@ DEFINE_LOG_CATEGORY(LogSurvival);
 
 namespace
 {
-	constexpr int32 NumSurvivalStats = 5;
+	constexpr int32 NumSurvivalStats = 6;
 
 	/** A tick that took longer than this many fixed steps drops the backlog instead of fast-forwarding. */
 	constexpr int32 MaxStepsPerTick = 5;
+
+	TAutoConsoleVariable<float> CVarSurvivalLogEvery(
+		TEXT("ygg.Survival.LogEvery"),
+		0.f,
+		TEXT("Seconds between automatic survival stat dumps to the log (0 = off). For testing without looking at the HUD."),
+		ECVF_Default);
 
 	FORCEINLINE uint32 WarningBit(ESurvivalWarning Warning)
 	{
@@ -73,6 +79,17 @@ void USurvivalComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		StepAccumulator = 0.f;
 	}
 
+	const float LogEvery = CVarSurvivalLogEvery.GetValueOnGameThread();
+	if (LogEvery > 0.f)
+	{
+		LogTimer += DeltaTime;
+		if (LogTimer >= LogEvery)
+		{
+			LogTimer = 0.f;
+			DebugDump();
+		}
+	}
+
 	// Sprint eligibility and speed are re-checked every frame so input feels immediate.
 	RefreshSprintState();
 	ApplyMovementSpeed();
@@ -92,6 +109,32 @@ void USurvivalComponent::StepSimulation(float Dt)
 		|| IsWarningActive(ESurvivalWarning::Thirsty)
 		|| IsWarningActive(ESurvivalWarning::Cold);
 
+	const bool bGrounded = !IsAirborne();
+	const float Grade = (bMoving && bGrounded) ? GetUphillGrade() : 0.f;
+
+	// Altitude: 0 at the bottom of each effect's range, 1 at the summit.
+	const float Elevation = GetElevationMeters();
+	const float ColdAltitude = FMath::Clamp((Elevation - C->ColdStartsAtMeters) / FMath::Max(C->SummitMeters - C->ColdStartsAtMeters, 1.f), 0.f, 1.f);
+	const float ThinAir = FMath::Clamp((Elevation - C->OxygenDropStartsAtMeters) / FMath::Max(C->SummitMeters - C->OxygenDropStartsAtMeters, 1.f), 0.f, 1.f);
+
+	// Oxygen drifts towards what the altitude and the current effort allow.
+	OxygenBottleRemaining = FMath::Max(0.f, OxygenBottleRemaining - Dt);
+	const float Effort = bSprinting ? C->SprintOxygenCost : (bMoving ? C->WalkOxygenCost : 0.f);
+	float OxygenTarget = 100.f - ThinAir * ((100.f - C->RestingOxygenAtSummit) + Effort + C->UphillOxygenCostPerGrade * Grade);
+	if (OxygenBottleRemaining > 0.f)
+	{
+		OxygenTarget += C->BottleOxygenBonus;
+	}
+	if (bSheltered)
+	{
+		OxygenTarget += C->ShelterOxygenBonus;
+	}
+	OxygenTarget = FMath::Clamp(OxygenTarget, 0.f, 100.f);
+	Oxygen = FMath::FInterpConstantTo(Oxygen, OxygenTarget, Dt, C->OxygenChangePerSecond);
+
+	// 0 while oxygen is fine, 1 at the hypoxia damage threshold.
+	const float OxygenFatigue = FMath::Clamp((C->OxygenFatigueBelow - Oxygen) / FMath::Max(C->OxygenFatigueBelow - C->OxygenDamageBelow, 1.f), 0.f, 1.f);
+
 	// 2. Update stats from activity and environment.
 	const float NeedsMultiplier = bSprinting ? C->SprintNeedsMultiplier : (bMoving ? C->WalkNeedsMultiplier : 1.f);
 	Satiety = FMath::Max(0.f, Satiety - C->SatietyDecayPerSecond * NeedsMultiplier * Dt);
@@ -108,7 +151,13 @@ void USurvivalComponent::StepSimulation(float Dt)
 		{
 			Recover *= C->StaminaRecoveryPenaltyMultiplier;
 		}
-		Stamina += Recover * Dt;
+		Recover *= FMath::Lerp(1.f, C->StaminaRecoveryPenaltyMultiplier, OxygenFatigue);
+		if (bSheltered)
+		{
+			Recover *= C->ShelterStaminaRecoveryMultiplier;
+		}
+		// Climbing costs more than walking can recover.
+		Stamina += (Recover - C->UphillStaminaDrainPerGrade * Grade) * Dt;
 	}
 	Stamina = FMath::Clamp(Stamina, 0.f, C->MaxStamina);
 
@@ -122,8 +171,18 @@ void USurvivalComponent::StepSimulation(float Dt)
 		bExhausted = false;
 	}
 
-	const float TargetTemperature = FMath::Lerp(C->NormalTemperature, C->FullExposureTargetTemperature, ColdExposure);
-	const float TemperatureRate = TargetTemperature < BodyTemperature ? C->CoolingPerSecond : C->WarmingPerSecond;
+	float Exposure = 0.f;
+	if (!bSheltered)
+	{
+		Exposure = FMath::Clamp(ColdAltitude * C->ColdExposureAtSummit + ColdExposure, 0.f, 1.f);
+		if (bMoving)
+		{
+			Exposure *= C->MovingColdMultiplier;
+		}
+	}
+	const float TargetTemperature = FMath::Lerp(C->NormalTemperature, C->FullExposureTargetTemperature, Exposure);
+	const float TemperatureRate = TargetTemperature < BodyTemperature ? C->CoolingPerSecond
+		: C->WarmingPerSecond * (bSheltered ? C->ShelterWarmingMultiplier : 1.f);
 	BodyTemperature = FMath::Clamp(FMath::FInterpConstantTo(BodyTemperature, TargetTemperature, Dt, TemperatureRate),
 		C->MinTemperature, C->NormalTemperature);
 
@@ -143,16 +202,29 @@ void USurvivalComponent::StepSimulation(float Dt)
 	const bool bStarving = Satiety <= 0.f;
 	const bool bDehydrated = Hydration <= 0.f;
 	const bool bHypothermic = BodyTemperature <= C->HypothermiaDamageBelow;
+	const bool bHypoxic = Oxygen <= C->OxygenDamageBelow;
 
-	const float Damage = ConditionDamage(StarvationTimer, bStarving, C->StarvationDamagePerSecond)
-		+ ConditionDamage(DehydrationTimer, bDehydrated, C->DehydrationDamagePerSecond)
-		+ ConditionDamage(HypothermiaTimer, bHypothermic, C->HypothermiaDamagePerSecond);
+	const float StarveDamage = ConditionDamage(StarvationTimer, bStarving, C->StarvationDamagePerSecond);
+	const float ThirstDamage = ConditionDamage(DehydrationTimer, bDehydrated, C->DehydrationDamagePerSecond);
+	const float ColdDamage = ConditionDamage(HypothermiaTimer, bHypothermic, C->HypothermiaDamagePerSecond);
+	const float AirDamage = ConditionDamage(HypoxiaTimer, bHypoxic, C->HypoxiaDamagePerSecond);
+	const float Damage = StarveDamage + ThirstDamage + ColdDamage + AirDamage;
+
+	// Remember the biggest killer for the death message.
+	if (Damage > 0.f)
+	{
+		const float Worst = FMath::Max(FMath::Max(StarveDamage, ThirstDamage), FMath::Max(ColdDamage, AirDamage));
+		DeathCause = Worst == ColdDamage ? NSLOCTEXT("Survival", "DiedCold", "You froze to death.")
+			: Worst == AirDamage ? NSLOCTEXT("Survival", "DiedOxygen", "You collapsed from lack of oxygen.")
+			: Worst == ThirstDamage ? NSLOCTEXT("Survival", "DiedThirst", "You died of thirst.")
+			: NSLOCTEXT("Survival", "DiedHunger", "You starved.");
+	}
 
 	if (Damage > 0.f)
 	{
 		Health = FMath::Max(0.f, Health - Damage);
 	}
-	else if (!bStarving && !bDehydrated && !bHypothermic)
+	else if (!bStarving && !bDehydrated && !bHypothermic && !bHypoxic)
 	{
 		const float RegenMinSatiety = C->MaxSatiety * C->RegenMinNeedsPercent * 0.01f;
 		const float RegenMinHydration = C->MaxHydration * C->RegenMinNeedsPercent * 0.01f;
@@ -202,6 +274,7 @@ void USurvivalComponent::UpdateWarnings()
 	WithHysteresis(ESurvivalWarning::Thirsty, Hydration / C->MaxHydration * 100.f, Enter, Exit);
 	WithHysteresis(ESurvivalWarning::LowHealth, Health / C->MaxHealth * 100.f, Enter, Exit);
 	WithHysteresis(ESurvivalWarning::Cold, BodyTemperature, C->ColdWarningEnter, C->ColdWarningExit);
+	WithHysteresis(ESurvivalWarning::LowOxygen, Oxygen, C->OxygenWarningEnter, C->OxygenWarningExit);
 }
 
 void USurvivalComponent::SetWarning(ESurvivalWarning Warning, bool bActive)
@@ -312,11 +385,51 @@ void USurvivalComponent::ApplyMovementSpeed() const
 	}
 
 	const USurvivalConfig* C = GetCfg();
-	const float Target = bSprinting ? C->SprintSpeed : C->WalkSpeed;
+	const float Target = (bSprinting ? C->SprintSpeed : C->WalkSpeed) * GetTerrainSpeedMultiplier();
 	if (!FMath::IsNearlyEqual(Movement->MaxWalkSpeed, Target))
 	{
 		Movement->MaxWalkSpeed = Target;
 	}
+}
+
+float USurvivalComponent::GetElevationMeters() const
+{
+	const USurvivalConfig* C = GetCfg();
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Character)
+	{
+		return 0.f;
+	}
+	// Feet, not capsule centre.
+	const float FeetZ = Character->GetActorLocation().Z - Character->GetSimpleCollisionHalfHeight();
+	return C->ReferenceElevationMeters + (FeetZ - C->ReferenceWorldZ) / 100.f;
+}
+
+float USurvivalComponent::GetUphillGrade() const
+{
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	if (!Movement || !Movement->CurrentFloor.IsWalkableFloor())
+	{
+		return 0.f;
+	}
+
+	const FVector Normal = Movement->CurrentFloor.HitResult.ImpactNormal;
+	const FVector Direction = Movement->Velocity.GetSafeNormal2D();
+	if (Normal.Z < KINDA_SMALL_NUMBER || Direction.IsNearlyZero())
+	{
+		return 0.f;
+	}
+	// The floor rises along -Normal.xy; its rise per unit of run in our direction is -(N.xy . dir) / N.z.
+	return FMath::Max(0.f, -FVector::DotProduct(FVector(Normal.X, Normal.Y, 0.f), Direction) / Normal.Z);
+}
+
+float USurvivalComponent::GetTerrainSpeedMultiplier() const
+{
+	const USurvivalConfig* C = GetCfg();
+	const float Uphill = 1.f / (1.f + C->UphillSlowdownPerGrade * GetUphillGrade());
+	const float OxygenFatigue = FMath::Clamp((C->OxygenFatigueBelow - Oxygen) / FMath::Max(C->OxygenFatigueBelow - C->OxygenDamageBelow, 1.f), 0.f, 1.f);
+	return Uphill * FMath::Lerp(1.f, C->LowOxygenSpeedMultiplier, OxygenFatigue);
 }
 
 // ---- Stat access ----
@@ -330,8 +443,12 @@ void USurvivalComponent::ResetStats()
 	Satiety = C->MaxSatiety;
 	Hydration = C->MaxHydration;
 	BodyTemperature = C->NormalTemperature;
+	Oxygen = 100.f;
+	OxygenBottleRemaining = 0.f;
+	DeathCause = FText::GetEmpty();
 
 	StarvationTimer = 0.f;
+	HypoxiaTimer = 0.f;
 	DehydrationTimer = 0.f;
 	HypothermiaTimer = 0.f;
 	StepAccumulator = 0.f;
@@ -350,6 +467,7 @@ float USurvivalComponent::GetStatValue(ESurvivalStat Stat) const
 	case ESurvivalStat::Satiety:         return Satiety;
 	case ESurvivalStat::Hydration:       return Hydration;
 	case ESurvivalStat::BodyTemperature: return BodyTemperature;
+	case ESurvivalStat::Oxygen:          return Oxygen;
 	}
 	return 0.f;
 }
@@ -364,6 +482,7 @@ float USurvivalComponent::GetStatMax(ESurvivalStat Stat) const
 	case ESurvivalStat::Satiety:         return C->MaxSatiety;
 	case ESurvivalStat::Hydration:       return C->MaxHydration;
 	case ESurvivalStat::BodyTemperature: return C->NormalTemperature;
+	case ESurvivalStat::Oxygen:          return 100.f;
 	}
 	return 0.f;
 }
@@ -393,6 +512,7 @@ void USurvivalComponent::SetStatInternal(ESurvivalStat Stat, float Value)
 	case ESurvivalStat::Satiety:         Satiety = FMath::Clamp(Value, 0.f, C->MaxSatiety); break;
 	case ESurvivalStat::Hydration:       Hydration = FMath::Clamp(Value, 0.f, C->MaxHydration); break;
 	case ESurvivalStat::BodyTemperature: BodyTemperature = FMath::Clamp(Value, C->MinTemperature, C->NormalTemperature); break;
+	case ESurvivalStat::Oxygen:          Oxygen = FMath::Clamp(Value, 0.f, 100.f); break;
 	}
 }
 
@@ -404,6 +524,10 @@ FSurvivalSnapshot USurvivalComponent::GetSnapshot() const
 	Snapshot.Satiety = Satiety;
 	Snapshot.Hydration = Hydration;
 	Snapshot.BodyTemperature = BodyTemperature;
+	Snapshot.Oxygen = Oxygen;
+	Snapshot.ElevationMeters = GetElevationMeters();
+	Snapshot.OxygenBottleSeconds = OxygenBottleRemaining;
+	Snapshot.bSheltered = bSheltered;
 	Snapshot.bSprinting = bSprinting;
 	Snapshot.bExhausted = bExhausted;
 	Snapshot.bDead = bDead;
@@ -424,6 +548,7 @@ FText USurvivalComponent::GetWarningText(ESurvivalWarning Warning)
 	case ESurvivalWarning::Thirsty:   return NSLOCTEXT("Survival", "Thirsty", "You are thirsty. Find water to drink.");
 	case ESurvivalWarning::Cold:      return NSLOCTEXT("Survival", "Cold", "You are freezing. Find shelter or make camp.");
 	case ESurvivalWarning::LowHealth: return NSLOCTEXT("Survival", "LowHealth", "You are badly hurt. Deal with what is hurting you.");
+	case ESurvivalWarning::LowOxygen: return NSLOCTEXT("Survival", "LowOxygen", "The air is too thin. Slow down, go lower or use bottled oxygen.");
 	}
 	return FText::GetEmpty();
 }
@@ -440,6 +565,30 @@ void USurvivalComponent::SetSprintRequested(bool bRequested)
 void USurvivalComponent::SetColdExposure(float Exposure01)
 {
 	ColdExposure = FMath::Clamp(Exposure01, 0.f, 1.f);
+}
+
+void USurvivalComponent::SetSheltered(bool bInShelter)
+{
+	bSheltered = bInShelter;
+}
+
+void USurvivalComponent::UseOxygenBottle(float Seconds)
+{
+	OxygenBottleRemaining += Seconds > 0.f ? Seconds : GetCfg()->OxygenBottleSeconds;
+}
+
+void USurvivalComponent::Revive(float NeedsPercent)
+{
+	const float KeepSatiety = Satiety;
+	const float KeepHydration = Hydration;
+	ResetStats();
+	const USurvivalConfig* C = GetCfg();
+	// Coming back costs food and water, but never leaves you with less than NeedsPercent.
+	Satiety = FMath::Max(KeepSatiety, C->MaxSatiety * NeedsPercent * 0.01f);
+	Hydration = FMath::Max(KeepHydration, C->MaxHydration * NeedsPercent * 0.01f);
+	UpdateWarnings();
+	NotifyChanges();
+	ApplyMovementSpeed();
 }
 
 void USurvivalComponent::ApplyDamage(float Amount)
@@ -504,9 +653,9 @@ void USurvivalComponent::DebugResetAll()
 
 void USurvivalComponent::DebugDump() const
 {
-	UE_LOG(LogSurvival, Log, TEXT("[%s] Health %.1f | Stamina %.1f | Satiety %.1f | Hydration %.1f | Temp %.2fC | Sprinting %d | Exhausted %d | Dead %d | ColdExposure %.2f"),
-		*GetNameSafe(GetOwner()), Health, Stamina, Satiety, Hydration, BodyTemperature,
-		bSprinting, bExhausted, bDead, ColdExposure);
+	UE_LOG(LogSurvival, Log, TEXT("[%s] Health %.1f | Stamina %.1f | Satiety %.1f | Hydration %.1f | Temp %.2fC | O2 %.1f | %.0f m | Sheltered %d | Bottle %.0fs | Sprinting %d | Exhausted %d | Dead %d | ColdExposure %.2f"),
+		*GetNameSafe(GetOwner()), Health, Stamina, Satiety, Hydration, BodyTemperature, Oxygen, GetElevationMeters(),
+		bSheltered, OxygenBottleRemaining, bSprinting, bExhausted, bDead, ColdExposure);
 
 	const UEnum* WarningEnum = StaticEnum<ESurvivalWarning>();
 	for (int32 Index = 0; Index < WarningEnum->NumEnums() - 1; ++Index)
@@ -532,7 +681,7 @@ namespace
 
 	FAutoConsoleCommandWithWorldAndArgs GSurvivalSetCommand(
 		TEXT("ygg.Survival.Set"),
-		TEXT("ygg.Survival.Set <Health|Stamina|Satiety|Hydration|BodyTemperature> <value> - set a survival stat on the local player."),
+		TEXT("ygg.Survival.Set <Health|Stamina|Satiety|Hydration|BodyTemperature|Oxygen> <value> - set a survival stat on the local player."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 		{
 			USurvivalComponent* Survival = FindLocalSurvival(World);
@@ -545,7 +694,7 @@ namespace
 			const int64 StatValue = Args.Num() >= 2 ? StaticEnum<ESurvivalStat>()->GetValueByNameString(Args[0]) : INDEX_NONE;
 			if (StatValue == INDEX_NONE)
 			{
-				UE_LOG(LogSurvival, Warning, TEXT("Usage: ygg.Survival.Set <Health|Stamina|Satiety|Hydration|BodyTemperature> <value>"));
+				UE_LOG(LogSurvival, Warning, TEXT("Usage: ygg.Survival.Set <Health|Stamina|Satiety|Hydration|BodyTemperature|Oxygen> <value>"));
 				return;
 			}
 
@@ -567,6 +716,18 @@ namespace
 
 			Survival->SetColdExposure(FCString::Atof(*Args[0]));
 			Survival->DebugDump();
+		}));
+
+	FAutoConsoleCommandWithWorldAndArgs GSurvivalBottleCommand(
+		TEXT("ygg.Survival.Bottle"),
+		TEXT("ygg.Survival.Bottle [seconds] - start breathing bottled oxygen (default: one bottle)."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			if (USurvivalComponent* Survival = FindLocalSurvival(World))
+			{
+				Survival->UseOxygenBottle(Args.Num() > 0 ? FCString::Atof(*Args[0]) : 0.f);
+				Survival->DebugDump();
+			}
 		}));
 
 	FAutoConsoleCommandWithWorld GSurvivalDumpCommand(
