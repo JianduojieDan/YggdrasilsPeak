@@ -79,9 +79,35 @@ void USnowTrailComponent::BeginPlay()
 	{
 		TrailBrush = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Environment/Snow/M_TrailBrush.M_TrailBrush"));
 	}
-	if (TrailMap && TrailParameters && TrailBrush)
+	if (!BootBrush)
 	{
+		BootBrush = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Environment/Snow/M_TrailBoot.M_TrailBoot"));
+	}
+	if (!TrailSoftMap)
+	{
+		TrailSoftMap = LoadObject<UTextureRenderTarget2D>(nullptr, TEXT("/Game/Environment/Snow/RT_SnowTrailSoft.RT_SnowTrailSoft"));
+	}
+	if (!TrailBlur)
+	{
+		TrailBlur = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Environment/Snow/M_TrailBlur.M_TrailBlur"));
+	}
+	if (!TrailFill)
+	{
+		TrailFill = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Environment/Snow/M_TrailFill.M_TrailFill"));
+	}
+	if (TrailMap && TrailParameters && TrailBrush && BootBrush && TrailSoftMap && TrailBlur)
+	{
+		FillInstance = TrailFill ? UMaterialInstanceDynamic::Create(TrailFill, this) : nullptr;
+		BlurInstance = UMaterialInstanceDynamic::Create(TrailBlur, this);
+		BlurInstance->SetTextureParameterValue(TEXT("Trail"), TrailMap);
+		BlurInstance->SetScalarParameterValue(TEXT("Texel"), 1.f / float(TrailMap->SizeX));
+		UKismetRenderingLibrary::ClearRenderTarget2D(this, TrailSoftMap, FLinearColor::Black);
 		BrushInstance = UMaterialInstanceDynamic::Create(TrailBrush, this);
+		for (int32 Side = 0; Side < 2; ++Side)
+		{
+			BootInstances[Side] = UMaterialInstanceDynamic::Create(BootBrush, this);
+			BootInstances[Side]->SetScalarParameterValue(TEXT("Mirror"), float(Side));
+		}
 		TrailScratch = UKismetRenderingLibrary::CreateRenderTarget2D(this, TrailMap->SizeX, TrailMap->SizeY, TrailMap->RenderTargetFormat, FLinearColor::Black);
 		UKismetRenderingLibrary::ClearRenderTarget2D(this, TrailMap, FLinearColor::Black);
 		TrailCentre = FVector2D(GetOwner()->GetActorLocation());
@@ -130,7 +156,31 @@ void USnowTrailComponent::RecentreTrailMap(const FVector2D& NewCentre)
 	TrailCentre = Snapped;
 }
 
-void USnowTrailComponent::UpdateTrailMap()
+void USnowTrailComponent::FillTrailMap(float DeltaTime)
+{
+	// Exponential refill: each step blends the whole map a little towards 0. Done every half second rather than every
+	// frame: at 120 fps the per-frame step (~0.0001) is below what a 16-bit float near 1.0 can store, so it never moved.
+	constexpr float FillInterval = 0.5f;
+	FillTimer += DeltaTime;
+	if (FillTimer < FillInterval || !FillInstance)
+	{
+		return;
+	}
+	const UExpeditionComponent* Expedition = GetOwner()->FindComponentByClass<UExpeditionComponent>();
+	const bool bStorm = Expedition && Expedition->GetStormStrength() > StormFillAbove;
+	const float HalfLife = bStorm ? StormTrailHalfLifeSeconds : TrailHalfLifeSeconds;
+	FillInstance->SetScalarParameterValue(TEXT("Amount"), 1.f - FMath::Pow(0.5f, FillTimer / HalfLife));
+	FillTimer = 0.f;
+
+	UCanvas* Canvas = nullptr;
+	FVector2D CanvasSize;
+	FDrawToRenderTargetContext Context;
+	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, TrailMap, Canvas, CanvasSize, Context);
+	Canvas->K2_DrawMaterial(FillInstance, FVector2D::ZeroVector, CanvasSize, FVector2D::ZeroVector, FVector2D::UnitVector);
+	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, Context);
+}
+
+void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 {
 	const bool bEnabled = CVarSnowDeform.GetValueOnGameThread() != 0;
 	PublishTrailArea(bEnabled);
@@ -145,27 +195,55 @@ void USnowTrailComponent::UpdateTrailMap()
 		RecentreTrailMap(Player);
 		PublishTrailArea(true);
 	}
+	FillTrailMap(DeltaTime);
 
-	// Only legs standing in snow push it away; deep powder all the way, hard crust just a little.
+	// Only feet in snow press into it; deep powder all the way, hard crust just a little.
 	if (GroundSoftness <= 0.f && CurrentSink <= 0.5f)
 	{
+		SoftenTrailMap();
 		return;
 	}
-	BrushInstance->SetScalarParameterValue(TEXT("Depth"), FMath::Max(GroundSoftness, 0.15f));
+	const float Depth = FMath::Max(GroundSoftness, 0.15f);
+	BootInstances[0]->SetScalarParameterValue(TEXT("Depth"), Depth);
+	BootInstances[1]->SetScalarParameterValue(TEXT("Depth"), Depth);
+	BrushInstance->SetScalarParameterValue(TEXT("Depth"), Depth * 0.75f);
 
 	const float PixelsPerCm = float(TrailMap->SizeX) / TrailAreaCm;
-	const FVector2D DabSize(LegRadiusCm * 2.f * PixelsPerCm);
+	const FVector Forward = GetOwner()->GetActorForwardVector().GetSafeNormal2D();
+	// The boot texture's U runs heel -> toe; turn it to where the body faces (pixel axes = world X/Y).
+	const float Yaw = FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X));
+	const FVector2D BootSize(BootLengthCm * PixelsPerCm, BootWidthCm * PixelsPerCm);
+	const FVector2D DragSize(LegRadiusCm * 2.f * PixelsPerCm);
 	UCanvas* Canvas = nullptr;
 	FVector2D CanvasSize;
 	FDrawToRenderTargetContext Context;
 	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, TrailMap, Canvas, CanvasSize, Context);
 	for (const FFootState& Foot : Feet)
 	{
-		const FVector2D FootXY(Body->GetSocketLocation(Foot.Bone));
-		const FVector2D Pixel = (FootXY - TrailCentre) * PixelsPerCm + CanvasSize * 0.5f;
-		Canvas->K2_DrawMaterial(BrushInstance, Pixel - DabSize * 0.5f, DabSize, FVector2D::ZeroVector, FVector2D::UnitVector);
+		const FVector FootLocation = Body->GetSocketLocation(Foot.Bone);
+		if (Foot.bPlanted)
+		{
+			// A planted foot leaves a boot print...
+			const FVector2D Sole = FVector2D(FootLocation + Forward * SoleForwardCm);
+			const FVector2D Pixel = (Sole - TrailCentre) * PixelsPerCm + CanvasSize * 0.5f;
+			Canvas->K2_DrawMaterial(BootInstances[Foot.bLeft ? 1 : 0], Pixel - BootSize * 0.5f, BootSize, FVector2D::ZeroVector, FVector2D::UnitVector, Yaw, FVector2D(0.5f, 0.5f));
+		}
+		else if (Foot.Height < CurrentSink)
+		{
+			// ...and a lifted one still under the surface of deep powder ploughs a channel to the next print.
+			const FVector2D Pixel = (FVector2D(FootLocation) - TrailCentre) * PixelsPerCm + CanvasSize * 0.5f;
+			Canvas->K2_DrawMaterial(BrushInstance, Pixel - DragSize * 0.5f, DragSize, FVector2D::ZeroVector, FVector2D::UnitVector);
+		}
 	}
 	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, Context);
+	SoftenTrailMap();
+}
+
+void USnowTrailComponent::SoftenTrailMap()
+{
+	// Sharp boot stamps on 2.5 cm texels turned into stair-steps when displaced directly; the landscape reads this
+	// blurred copy instead (round walls, plus a wide spread for the banks). One full-screen pass, ~0.05 ms.
+	UKismetRenderingLibrary::DrawMaterialToRenderTarget(this, TrailSoftMap, BlurInstance);
 }
 
 float USnowTrailComponent::SnowSoftness(const FVector& Location, const FVector& GroundNormal)
@@ -200,7 +278,7 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	UpdateSinking(DeltaTime);
 	if (bTrailReady)
 	{
-		UpdateTrailMap();
+		UpdateTrailMap(DeltaTime);
 	}
 
 	const UCharacterMovementComponent* Movement = Character->GetCharacterMovement();
@@ -231,6 +309,7 @@ void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirect
 	}
 	// The animated body's foot IK keeps its feet on the snow surface even while sunk, so no correction is needed.
 	const float Height = float(FootLocation.Z - Hit.ImpactPoint.Z);
+	Foot.Height = Height;
 	if (Foot.bPlanted)
 	{
 		Foot.bPlanted = Height < PlantHeight + 4.f;
@@ -303,7 +382,7 @@ void USnowTrailComponent::StampPrint(const FHitResult& Hit, const FVector& WalkD
 	{
 		// Powder kicks up more in soft snow; hard crust only gives off a little dust.
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), StepPuff, Hit.ImpactPoint + Normal * 3.f, FRotator::ZeroRotator,
-			FVector(FMath::Lerp(0.4f, 1.f, Softness)), true, true, ENCPoolMethod::AutoRelease);
+			FVector(FMath::Lerp(0.6f, 1.3f, Softness)), true, true, ENCPoolMethod::AutoRelease);
 	}
 	if (CVarSnowTrails.GetValueOnGameThread() == 0 || !FootprintMaterial)
 	{

@@ -47,21 +47,44 @@ public:
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation")
 	TObjectPtr<UMaterialParameterCollection> TrailParameters;
 
-	/** Soft round dab painted into the trail map under each foot (scalar parameter Depth). */
+	/** Soft round dab painted into the trail map where a lifted foot ploughs through deep snow (scalar parameter Depth). */
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation")
 	TObjectPtr<UMaterialInterface> TrailBrush;
 
+	/** Softened copy of TrailMap read by the landscape (R: print with rounded walls, G: wide spread for the snow banks). */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation")
+	TObjectPtr<UTextureRenderTarget2D> TrailSoftMap;
+
+	/** Draws TrailSoftMap from TrailMap (texture parameter Trail, scalar Texel). */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation")
+	TObjectPtr<UMaterialInterface> TrailBlur;
+
+	/** Boot-sole stamp painted into the trail map under a planted foot (scalar parameters Depth, Mirror = 1 for the left boot). */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation")
+	TObjectPtr<UMaterialInterface> BootBrush;
+
+	/** Size of the boot print in the trail map (cm). */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation", meta=(ClampMin="5"))
+	float BootLengthCm = 31.f;
+
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation", meta=(ClampMin="3"))
+	float BootWidthCm = 12.f;
+
+	/** The sole's centre lies this far in front of the foot (ankle) bone (cm). */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation")
+	float SoleForwardCm = 6.f;
+
 	/** Side length of the square the trail map covers, centred near the player (cm). */
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation", meta=(ClampMin="1000"))
-	float TrailAreaCm = 6400.f;
+	float TrailAreaCm = 5120.f;
 
 	/** The map re-centres on the player when they get this far from its centre (cm). */
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation", meta=(ClampMin="100"))
 	float RecentreDistanceCm = 1600.f;
 
-	/** Radius of the hole each leg pushes through the snow (cm). */
+	/** Radius of the channel a lifted foot ploughs through deep snow between prints (cm). */
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation", meta=(ClampMin="1"))
-	float LegRadiusCm = 22.f;
+	float LegRadiusCm = 14.f;
 
 	/** Small burst of powder kicked up by each step (scaled by how soft the snow is). */
 	UPROPERTY(EditAnywhere, Category="Snow Trail")
@@ -85,6 +108,18 @@ public:
 	UPROPERTY(EditAnywhere, Category="Snow Trail", meta=(ClampMin="0"))
 	float StormFillSeconds = 40.f;
 
+	/** Deep trail: blowing snow halves its depth every this many seconds (nearly gone after ~5 min)... */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation", meta=(ClampMin="1"))
+	float TrailHalfLifeSeconds = 45.f;
+
+	/** ...and this fast in a storm above StormFillAbove (nearly gone after ~40 s). */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation", meta=(ClampMin="1"))
+	float StormTrailHalfLifeSeconds = 7.f;
+
+	/** Covers the whole trail map with "no trail" at opacity Amount (fills the trail in a little). */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation")
+	TObjectPtr<UMaterialInterface> TrailFill;
+
 	/** Print size: half length, half width, projection depth (cm). */
 	UPROPERTY(EditAnywhere, Category="Snow Trail")
 	FVector PrintHalfSize = FVector(16.f, 7.f, 20.f);
@@ -95,7 +130,7 @@ public:
 
 	/** How far the body sinks into the softest snow (cm); hard crust, rock and props: none. */
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Sinking", meta=(ClampMin="0", ClampMax="60"))
-	float MaxSinkCm = 20.f;
+	float MaxSinkCm = 12.f;
 
 	/** Camps have trampled, packed snow: sinking is multiplied by this inside one. */
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Sinking", meta=(ClampMin="0", ClampMax="1"))
@@ -135,6 +170,8 @@ private:
 		FName Bone;
 		bool bPlanted = true;
 		bool bLeft = false;
+		/** Height of the foot bone above the snow surface under it, last time it was measured (cm). */
+		float Height = 0.f;
 	};
 
 	/** Samples the snow under the player and eases the body's sink depth towards it. */
@@ -146,16 +183,32 @@ private:
 	void FillInPrints(float Seconds);
 
 	/** Paints the legs into the trail map and keeps the map centred on the player. */
-	void UpdateTrailMap();
+	void UpdateTrailMap(float DeltaTime);
+	/** Lets blowing snow refill the deep trail a little (every FillInterval, so half floats can resolve the step). */
+	void FillTrailMap(float DeltaTime);
 	/** Moves the map's centre to the player, shifting what is already drawn so the trail stays in place. */
 	void RecentreTrailMap(const FVector2D& NewCentre);
 	void PublishTrailArea(bool bEnabled) const;
+	/** Redraws TrailSoftMap from TrailMap. */
+	void SoftenTrailMap();
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextureRenderTarget2D> TrailScratch;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> BrushInstance;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> BlurInstance;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> FillInstance;
+
+	float FillTimer = 0.f;
+
+	/** Right and left boot (separate instances: canvas draws are batched, so one instance can't switch Mirror between them). */
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> BootInstances[2];
 
 	FVector2D TrailCentre = FVector2D::ZeroVector;
 	bool bTrailReady = false;

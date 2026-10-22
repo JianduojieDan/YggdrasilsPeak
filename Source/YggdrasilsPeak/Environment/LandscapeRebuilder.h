@@ -79,6 +79,23 @@ public:
 	UFUNCTION(CallInEditor, Category="Rebuild")
 	void RebuildLandscape();
 
+	/** Height the highest point of BuiltLandscape is raised to, in metres above sea level (Everest: 8848.86). */
+	UPROPERTY(EditAnywhere, Category="Summit")
+	float SummitElevationM = 8848.86f;
+
+	/** Radius of the smooth bump that lifts the summit, in metres. Props and rope points inside it are lifted with the ground. */
+	UPROPERTY(EditAnywhere, Category="Summit", meta=(ClampMin="50"))
+	float SummitRadiusM = 450.f;
+
+	/**
+	 *  The 34 m/px source heightmap averages Everest's sharp top down to ~8762 m (and the 16-bit range is already used up there).
+	 *  This shifts BuiltLandscape's stored heights down and its actor up by the same amount (world heights unchanged, only the
+	 *  lowest valley floors far outside the route get clamped), then adds a smooth bump so the top reaches SummitElevationM.
+	 *  Run once; running again finds the summit already high enough and does nothing.
+	 */
+	UFUNCTION(CallInEditor, Category="Summit")
+	void RaiseSummit();
+
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif

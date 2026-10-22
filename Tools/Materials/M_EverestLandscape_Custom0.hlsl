@@ -26,11 +26,29 @@ struct HexTile {
     o1=Hash(v1); o2=Hash(v2); o3=Hash(v3); q1=Hash(v1+7.31); q2=Hash(v2+7.31); q3=Hash(v3+7.31);
   }
   float3 Blend(float3 w, float3 h){ float3 b=pow(max(w,0.0),4.0)*(0.3+h); return b/max(b.x+b.y+b.z,1e-6); }
+  // 2D simplex noise (Gustavson/McEwan), -1..1. Unlike value noise it has no square lattice, so lumps don't line up in rows.
+  float3 M289(float3 x){ return x-floor(x*(1.0/289.0))*289.0; }
+  float SX(float2 v){
+    const float4 C=float4(0.211324865405187,0.366025403784439,-0.577350269189626,0.024390243902439);
+    float2 i=floor(v+dot(v,C.yy)); float2 x0=v-i+dot(i,C.xx);
+    float2 i1=(x0.x>x0.y)?float2(1.0,0.0):float2(0.0,1.0);
+    float4 x12=x0.xyxy+C.xxzz; x12.xy-=i1;
+    i=i-floor(i*(1.0/289.0))*289.0;
+    float3 p=M289(M289(i.y+float3(0.0,i1.y,1.0))*34.0+10.0); p=M289(((p+i.x+float3(0.0,i1.x,1.0))*34.0+10.0)*(p+i.x+float3(0.0,i1.x,1.0)));
+    p=M289((p*34.0+10.0)*p);
+    float3 m=max(0.5-float3(dot(x0,x0),dot(x12.xy,x12.xy),dot(x12.zw,x12.zw)),0.0); m=m*m; m=m*m;
+    float3 x=2.0*frac(p*C.www)-1.0; float3 h=abs(x)-0.5; float3 a0=x-floor(x+0.5);
+    m*=1.79284291400159-0.85373472095314*(a0*a0+h*h);
+    float3 g; g.x=a0.x*x0.x+h.x*x0.y; g.yz=a0.yz*x12.xz+h.yz*x12.yw;
+    return 130.0*dot(m,g);
+  }
+  // two octaves at unrelated angles and a non-integer ratio, 0..1
+  float SX2(float2 p, float a){ return 0.5+0.32*SX(Rot(p,a))+0.18*SX(Rot(p*2.37,a+1.9)+13.7); }
   // soft pillowy swells of deep snow (~10 m and ~27 m across), height 0..1.6
-  float Pil(float2 p){ return VN(p/1000.0)*0.6+VN(p/2700.0+17.0); }
-  // softer, smaller lumps: 2-6 m mounds and 30-60 cm powder clumps (height 0..1 each)
-  float Lump(float2 p){ return VN(p/250.0+3.1)*0.6+VN(p/600.0+8.7)*0.4; }
-  float Clump(float2 p){ return VN(p/35.0+1.3)*0.6+VN(p/60.0+4.4)*0.4; }
+  float Pil(float2 p){ return SX2(p/1000.0,0.3)*0.6+SX2(p/2700.0+17.0,1.2); }
+  // soft lumps: 4-9 m mounds and 3-7 m drifts (height 0..1 each); no finer detail - small-scale bumps everywhere read as noise
+  float Lump(float2 p){ return 0.5+0.3*SX(Rot(p/400.0+3.1,2.1))+0.2*SX(Rot(p/900.0+8.7,0.7)); }
+  float Clump(float2 p){ return 0.5+0.3*SX(Rot(p/300.0+1.3,4.0))+0.2*SX(Rot(p/700.0+4.4,5.3)); }
   // wind-packed ripples (sastrugi) across the prevailing westerly: gentle windward rise, short steep lee face, in patches; 0..1
   float Sast(float2 p){ float2 r=Rot(p,0.35); float w=r.y/180.0+VN(r/1500.0)*3.0+VN(r/400.0)*0.6;
     float s=frac(w); float ridge=s<0.75?s/0.75:(1.0-s)/0.25;
@@ -89,7 +107,12 @@ float3 snowC=0,snowW=0; float snowH=0;
   float2 sx=hx.Rot(SnowNrm.SampleGrad(SnowNrmSampler,sa,ka,la).rg*2.0-1.0,-r1.x*6.2831853)*sbw.x
            +hx.Rot(SnowNrm.SampleGrad(SnowNrmSampler,sb,kb,lb).rg*2.0-1.0,-r2.x*6.2831853)*sbw.y
            +hx.Rot(SnowNrm.SampleGrad(SnowNrmSampler,sc3,kc,lc).rg*2.0-1.0,-r3.x*6.2831853)*sbw.z;
-  float shA=dot(sh3,sbw);
+  // Variance-preserving hex blend: where 2-3 cells overlap, plain averaging flattens the bumps, so cell centres stayed
+  // sharp and cell edges went smooth - a regular honeycomb of bumps across the snow. Rescale the deviation so the detail
+  // has the same strength everywhere (1 at a cell centre, up to ~1.7 where three cells meet).
+  float vk=rsqrt(max(dot(sbw,sbw),0.2));
+  sx*=vk;
+  float shA=saturate(0.5+(dot(sh3,sbw)-0.5)*vk);
   // snow layer B: same texture 3.7x larger, rotated 1.1 rad, blended in by large noise patches
   float2 uvB=hx.Rot(uvS*0.27,1.1)+float2(0.43,0.71); float2 bX=hx.Rot(sX*0.27,1.1); float2 bY=hx.Rot(sY*0.27,1.1);
   float3 scB=SnowCol.SampleGrad(SnowColSampler,uvB,bX,bY).rgb;
@@ -124,27 +147,27 @@ float hard=saturate(smoothstep(6600.0,7600.0,elev+(zn-0.5)*600.0)*0.9+(1.0-smoot
 // big soft swells (all snow), flattened where the wind packs it
 float e=40.0;
 float p0=hx.Pil(WP.xy), px=hx.Pil(WP.xy+float2(e,0)), py=hx.Pil(WP.xy+float2(0,e));
-float2 gP=float2(px-p0,py-p0)/e*lerp(140.0,50.0,hard);
+float2 gP=float2(px-p0,py-p0)/e*lerp(80.0,30.0,hard);
 // sastrugi ripples on hard snow only (6 cm tall)
 float es=20.0;
 float s0=hx.Sast(WP.xy), sx1=hx.Sast(WP.xy+float2(es,0)), sy1=hx.Sast(WP.xy+float2(0,es));
 float2 gS=float2(sx1-s0,sy1-s0)/es*6.0*hard;
 // grain from the snow texture is kept faint: deep powder looks smooth, wind crust a bit rougher
-float3 micro=hx.SN(lerp(n,hx.SN(snowW,n),lerp(0.22,0.55,hard)),n);
+float3 micro=hx.SN(lerp(n,hx.SN(snowW,n),lerp(0.05,0.28,hard)),n);
 // soft lumps and clumps, strongest in deep powder; clumps fade out where a pixel covers more than ~3 cm (no shimmer far away)
 float fp=length(float2(ddx(WP.x),ddx(WP.y)))+length(float2(ddy(WP.x),ddy(WP.y)));
-float el=10.0, ec=4.0;
+float el=20.0, ec=15.0;
 float l0=hx.Lump(WP.xy), lx=hx.Lump(WP.xy+float2(el,0)), ly=hx.Lump(WP.xy+float2(0,el));
 float c0=hx.Clump(WP.xy), cx=hx.Clump(WP.xy+float2(ec,0)), cy=hx.Clump(WP.xy+float2(0,ec));
-float2 gL=float2(lx-l0,ly-l0)/el*lerp(60.0,18.0,hard);
-float2 gC=float2(cx-c0,cy-c0)/ec*lerp(3.5,1.2,hard)*(1.0-smoothstep(1.5,4.0,fp));
+float2 gL=float2(lx-l0,ly-l0)/el*lerp(18.0,6.0,hard);
+float2 gC=float2(cx-c0,cy-c0)/ec*lerp(5.0,2.0,hard);
 float3 sN=hx.SN(micro-float3(gP.x+gS.x+gL.x+gC.x,gP.y+gS.y+gL.y+gC.y,0.0),n);
 // colour: clean white powder, blue-grey crust, blue ice patches on steep high ground; blue in the hollows
 // bare blue ice only where it is both high and steep (wind strips the snow), in soft-edged patches
 float ice=(1.0-smoothstep(0.6,0.85,n.z))*smoothstep(7000.0,7800.0,elev)*smoothstep(0.45,0.8,hx.Fbm(WP.xy/4000.0+5.0))*0.8;
 float3 sCol=lerp(float3(0.90,0.93,0.97),float3(0.80,0.86,0.93),hard);
 sCol=lerp(sCol,float3(0.66,0.78,0.89),ice);
-float hollow=saturate((0.55-snowH)*1.6)*0.45+saturate(0.6-p0*0.6)*0.35*(1.0-hard)+saturate(0.45-l0)*0.4*(1.0-hard);
+float hollow=saturate((0.55-snowH)*1.6)*0.08+saturate(0.6-p0*0.6)*0.35*(1.0-hard)+saturate(0.45-l0)*0.4*(1.0-hard);
 hollow=saturate(hollow+saturate(rm*(1.0-rm)*4.0)*0.5); // blue edge where snow meets rock: the side of the snow layer
 sCol*=lerp(float3(1,1,1),float3(0.84,0.91,1.0),hollow);
 sCol*=lerp(0.95,1.03,sm3*0.5+sm1*0.5);
@@ -159,6 +182,12 @@ sN=hx.SN(lerp(sN,hx.SN(float3((gh.y-0.5)*0.8,(frac(gh.y*7.3)-0.5)*0.8,1.0),n),sp
 float3 col=lerp(sCol,rockC,rm);
 col*=lerp(0.96,1.03,lf);
 Normal=hx.SN(lerp(sN,rN,rm),n);
+// Shadow-terminator fix: the terrain is 17 m flat triangles, so where the sun grazes the ground the shadow map flips
+// lit/unlit in stripes and triangle-shaped blocks (VSM acne). Fade the sun's direct light out a little early on snow
+// there (remove the sun-facing part of the normal), so those stripes land on snow that is already in soft shade.
+float3 sunL=normalize(ResolvedView.AtmosphereLightDirection[0].xyz);
+float term=(1.0-smoothstep(0.03,0.30,dot(n,sunL)))*(1.0-rm);
+Normal=hx.SN(Normal-sunL*max(dot(Normal,sunL),0.0)*term,n);
 Roughness=lerp(sRough,rockM.g,rm);
 AO=lerp(lerp(1.0,0.9,hollow),rockM.r,rm);
 RockMask=rm;

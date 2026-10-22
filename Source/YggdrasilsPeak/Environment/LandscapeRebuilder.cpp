@@ -6,10 +6,14 @@
 #include "Landscape.h"
 #include "LandscapeProxy.h"
 #include "Async/ParallelFor.h"
+#include "EngineUtils.h"
+#include "Environment/FixedRope.h"
+#include "Survival/SurvivalConfig.h"
 
 #if WITH_EDITOR
 #include "LandscapeEdit.h"
 #include "LandscapeInfo.h"
+#include "LandscapeEditLayer.h"
 #endif
 
 ALandscapeRebuilder::ALandscapeRebuilder()
@@ -215,6 +219,134 @@ void ALandscapeRebuilder::RebuildLandscape()
 	SourceLandscape->SetActorEnableCollision(false);
 
 	LastResult = FString::Printf(TEXT("Built %s: %d x %d verts from %d x %d."), *NewLandscape->GetName(), NewW, NewH, SrcW, SrcH);
+	UE_LOG(LogTemp, Display, TEXT("LandscapeRebuilder: %s"), *LastResult);
+#endif
+}
+
+void ALandscapeRebuilder::RaiseSummit()
+{
+#if WITH_EDITOR
+	ALandscape* Landscape = Cast<ALandscape>(BuiltLandscape.Get());
+	ULandscapeInfo* Info = Landscape ? Landscape->GetLandscapeInfo() : nullptr;
+	int32 MinX, MinY, MaxX, MaxY;
+	if (!Info || !Info->GetLandscapeExtent(MinX, MinY, MaxX, MaxY))
+	{
+		LastResult = TEXT("RaiseSummit: no BuiltLandscape.");
+		return;
+	}
+	const int32 W = MaxX - MinX + 1;
+	const int32 H = MaxY - MinY + 1;
+
+	// Write into the base edit layer (the only one), then let the landscape re-merge its layers.
+	TOptional<FScopedSetLandscapeEditingLayer> LayerScope;
+	if (const ULandscapeEditLayerBase* Layer = Landscape->GetEditLayerConst(0))
+	{
+		LayerScope.Emplace(Landscape, Layer->GetGuid(), [Landscape] { Landscape->RequestLayersContentUpdateForceAll(); });
+	}
+
+	TArray<uint16> Heights;
+	Heights.SetNumZeroed(W * H);
+	FLandscapeEditDataInterface Edit(Info);
+	{
+		int32 X1 = MinX, Y1 = MinY, X2 = MaxX, Y2 = MaxY;
+		Edit.GetHeightData(X1, Y1, X2, Y2, Heights.GetData(), W);
+	}
+
+	// Summit = centre of the highest samples (the top is a flat 65535 plateau when the range is used up).
+	uint16 Top = 0;
+	for (uint16 V : Heights) { Top = FMath::Max(Top, V); }
+	FVector2D Peak = FVector2D::ZeroVector;
+	int32 Count = 0;
+	for (int32 Y = 0; Y < H; ++Y)
+	{
+		for (int32 X = 0; X < W; ++X)
+		{
+			if (Heights[Y * W + X] + 2 >= Top) { Peak += FVector2D(X, Y); ++Count; }
+		}
+	}
+	Peak /= FMath::Max(Count, 1);
+
+	const FTransform LandscapeTransform = Landscape->GetActorTransform();
+	const FVector Scale = LandscapeTransform.GetScale3D();
+	const double CmPerUnit = Scale.Z / 128.0;
+	const USurvivalConfig* Cfg = GetDefault<USurvivalConfig>();
+	const double TopZ = LandscapeTransform.GetLocation().Z + (double(Top) - 32768.0) * CmPerUnit;
+	const double TargetZ = Cfg->ReferenceWorldZ + (SummitElevationM - Cfg->ReferenceElevationMeters) * 100.0;
+	const double RaiseCm = TargetZ - TopZ;
+	if (RaiseCm < 50.0)
+	{
+		LastResult = FString::Printf(TEXT("RaiseSummit: summit already at %.1f m, nothing to do."), Cfg->ReferenceElevationMeters + (TopZ - Cfg->ReferenceWorldZ) / 100.0);
+		return;
+	}
+
+	// Make room at the top of the 16-bit range: store everything lower and move the actor up by the same amount.
+	const double RaiseUnits = RaiseCm / CmPerUnit;
+	const int32 Shift = FMath::Max(0, FMath::CeilToInt32(double(Top) + RaiseUnits - 65535.0 + 64.0));
+	const double RadiusQuads = SummitRadiusM * 100.0 / Scale.X;
+	auto Bump = [RadiusQuads](double DistQuads)
+	{
+		// 1 at the top, 0 at the edge, flat at both ends: a small standing spot and no crease where it meets the old slope.
+		return 1.0 - FMath::SmoothStep(0.0, 1.0, DistQuads / RadiusQuads);
+	};
+
+	int32 Clamped = 0;
+	for (int32 Y = 0; Y < H; ++Y)
+	{
+		for (int32 X = 0; X < W; ++X)
+		{
+			const double Dist = FVector2D::Distance(FVector2D(X, Y), Peak);
+			const double NewValue = double(Heights[Y * W + X]) - Shift + (Dist < RadiusQuads ? RaiseUnits * Bump(Dist) : 0.0);
+			Clamped += NewValue < 0.0 ? 1 : 0;
+			Heights[Y * W + X] = (uint16)FMath::Clamp(FMath::RoundToInt(NewValue), 0, 65535);
+		}
+	}
+	Edit.SetHeightData(MinX, MinY, MaxX, MaxY, Heights.GetData(), W, true);
+	Edit.Flush();
+	LayerScope.Reset();
+
+	Landscape->Modify();
+	Landscape->SetActorLocation(LandscapeTransform.GetLocation() + FVector(0.0, 0.0, Shift * CmPerUnit));
+
+	// Lift what stands on the bump (summit props, the top of the last fixed rope) with the ground.
+	const FVector PeakWorld = LandscapeTransform.TransformPosition(FVector(MinX + Peak.X, MinY + Peak.Y, 0.0));
+	const double RadiusCm = SummitRadiusM * 100.0;
+	auto LiftAt = [&](const FVector& P)
+	{
+		const double Dist = FVector2D::Distance(FVector2D(P), FVector2D(PeakWorld)) / Scale.X;
+		return Dist < RadiusQuads ? RaiseCm * Bump(Dist) : 0.0;
+	};
+	int32 Moved = 0;
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (Actor == this || Actor->IsA<ALandscapeProxy>())
+		{
+			continue;
+		}
+		if (AFixedRope* Rope = Cast<AFixedRope>(Actor))
+		{
+			bool bChanged = false;
+			for (FVector& P : Rope->RopePoints)
+			{
+				const double Lift = LiftAt(P);
+				if (Lift > 0.0) { if (!bChanged) { Rope->Modify(); } P.Z += Lift; bChanged = true; }
+			}
+			if (bChanged) { Rope->RerunConstructionScripts(); ++Moved; }
+			continue;
+		}
+		FVector Origin, Extent;
+		Actor->GetActorBounds(false, Origin, Extent);
+		const double Lift = LiftAt(Actor->GetActorLocation());
+		if (Lift > 0.0 && Extent.Size2D() < RadiusCm)
+		{
+			Actor->Modify();
+			Actor->SetActorLocation(Actor->GetActorLocation() + FVector(0.0, 0.0, Lift));
+			++Moved;
+		}
+	}
+
+	LastResult = FString::Printf(TEXT("RaiseSummit: +%.1f m at the top (now %.2f m), stored heights shifted by %d (actor +%.1f m), %d valley samples clamped, %d actors lifted."),
+		RaiseCm / 100.0, SummitElevationM, Shift, Shift * CmPerUnit / 100.0, Clamped, Moved);
 	UE_LOG(LogTemp, Display, TEXT("LandscapeRebuilder: %s"), *LastResult);
 #endif
 }

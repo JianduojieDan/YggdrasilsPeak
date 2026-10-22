@@ -53,6 +53,22 @@ public:
 	UPROPERTY(EditAnywhere, Category="First Person", meta=(ClampMin="1"))
 	float FollowSpeed = 18.f;
 
+	/**
+	 *  Engine first-person rendering (as in the UE 5.6+ First Person template): the view body and the held tool are drawn
+	 *  with their own field of view and pulled towards the camera by FirstPersonScale, so arms and axe never sink into
+	 *  snow or rock walls and don't stretch at the screen edges. The hidden world body / shadow copy casts the shadow.
+	 */
+	UPROPERTY(EditAnywhere, Category="First Person|Rendering")
+	bool bFirstPersonRendering = true;
+
+	/** Horizontal FOV for the view body and tool; 90 = same as the world camera, so they keep their old on-screen size. */
+	UPROPERTY(EditAnywhere, Category="First Person|Rendering", meta=(ClampMin="40", ClampMax="120"))
+	float FirstPersonFieldOfView = 90.f;
+
+	/** How far the view body and tool are pulled towards the camera (1 = not at all). */
+	UPROPERTY(EditAnywhere, Category="First Person|Rendering", meta=(ClampMin="0.1", ClampMax="1"))
+	float FirstPersonScale = 0.6f;
+
 	// ---- Held tool (ice axe in the right hand) ----
 
 	/** Tool carried in the right hand. Empty = no tool, arms follow the animation only. */
@@ -130,6 +146,13 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<USkeletalMeshComponent> AnimatedBody;
+
+	/** First Person template's arms mesh (component named FirstPersonMesh), when the owner has one. */
+	UPROPERTY(Transient)
+	TObjectPtr<USkeletalMeshComponent> TemplateArms;
+
+	/** The world body's relative location before sinking (differs from BodyBaseLocation with the template layout). */
+	FVector WorldBodyBaseLocation = FVector::ZeroVector;
 
 	UPROPERTY(Transient)
 	TObjectPtr<USpringArmComponent> CameraBoom;

@@ -33,8 +33,20 @@ void UFirstPersonBodyComponent::BeginPlay()
 	{
 		return;
 	}
-	AnimatedBody = Body;
-	BodyBaseLocation = Body->GetRelativeLocation();
+	// First Person template layout: Mesh is the world-space body (shadow, others see it) and a separate "FirstPersonMesh"
+	// runs the first-person animation (ABP_FP_Copy + arm warp). Then the view body copies that mesh's pose instead.
+	TArray<USkeletalMeshComponent*> Meshes;
+	Character->GetComponents(Meshes);
+	for (USkeletalMeshComponent* Mesh : Meshes)
+	{
+		if (Mesh != Body && Mesh->GetName().Contains(TEXT("FirstPersonMesh")))
+		{
+			TemplateArms = Mesh;
+		}
+	}
+	AnimatedBody = TemplateArms ? TemplateArms.Get() : Body;
+	BodyBaseLocation = AnimatedBody->GetRelativeLocation();
+	WorldBodyBaseLocation = Body->GetRelativeLocation();
 
 	CameraBoom = Character->FindComponentByClass<USpringArmComponent>();
 	if (CameraBoom && HeadFollow > 0.f)
@@ -44,22 +56,34 @@ void UFirstPersonBodyComponent::BeginPlay()
 	}
 
 	UCameraComponent* Camera = Character->FindComponentByClass<UCameraComponent>();
-	if (HeldToolMesh && Camera && Body->GetBoneIndex(HandBone) != INDEX_NONE)
+	if (HeldToolMesh && Camera && AnimatedBody->GetBoneIndex(HandBone) != INDEX_NONE)
 	{
 		// The owner sees a posable copy (head hidden, right arm on the tool); the animated body is for everyone else.
 		ViewBody = NewObject<UPoseableMeshComponent>(Character, TEXT("FirstPersonViewBody"));
-		ViewBody->SetupAttachment(Body->GetAttachParent());
-		ViewBody->SetRelativeTransform(Body->GetRelativeTransform());
-		ViewBody->SetSkinnedAssetAndUpdate(Body->GetSkeletalMeshAsset());
+		ViewBody->SetupAttachment(AnimatedBody->GetAttachParent(), AnimatedBody->GetAttachSocketName());
+		ViewBody->SetRelativeTransform(AnimatedBody->GetRelativeTransform());
+		ViewBody->SetSkinnedAssetAndUpdate(AnimatedBody->GetSkeletalMeshAsset());
 		ViewBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		ViewBody->SetOnlyOwnerSee(true);
 		ViewBody->SetCastShadow(false);
 		ViewBody->RegisterComponent();
 		ViewBody->HideBoneByName(HiddenBone, PBO_None);
+		for (int32 Slot = 0; Slot < AnimatedBody->GetNumMaterials(); ++Slot)
+		{
+			ViewBody->SetMaterial(Slot, AnimatedBody->GetMaterial(Slot));
+		}
 
-		Body->SetOwnerNoSee(true);
 		// Not rendered for the owner, but its pose still drives the view body and the camera.
-		Body->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+		AnimatedBody->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+		if (TemplateArms)
+		{
+			// The template's world body already hides itself from the owner and casts the shadow.
+			TemplateArms->SetVisibility(false);
+		}
+		else
+		{
+			Body->SetOwnerNoSee(true);
+		}
 
 		HeldTool = NewObject<UStaticMeshComponent>(Character, TEXT("HeldTool"));
 		HeldTool->SetupAttachment(Camera);
@@ -71,7 +95,21 @@ void UFirstPersonBodyComponent::BeginPlay()
 		HeldTool->SetRelativeTransform(FTransform(ToolRotation, GripInView - ToolRotation.RotateVector(ToolGripPoint * HeldToolScale), FVector(HeldToolScale)));
 		HeldTool->RegisterComponent();
 
+		if (bFirstPersonRendering)
+		{
+			ViewBody->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
+			HeldTool->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
+			Camera->SetEnableFirstPersonFieldOfView(true);
+			Camera->SetFirstPersonFieldOfView(FirstPersonFieldOfView);
+			Camera->SetEnableFirstPersonScale(true);
+			Camera->SetFirstPersonScale(FirstPersonScale);
+		}
+
 		SetComponentTickEnabled(true);
+	}
+	else if (TemplateArms)
+	{
+		// No tool: the template's own first-person arms and animation are shown untouched.
 	}
 	else
 	{
@@ -80,7 +118,7 @@ void UFirstPersonBodyComponent::BeginPlay()
 		Body->HideBoneByName(HiddenBone, PBO_None);
 	}
 
-	if (!bShadowProxy)
+	if (!bShadowProxy || TemplateArms)
 	{
 		return;
 	}
@@ -96,6 +134,11 @@ void UFirstPersonBodyComponent::BeginPlay()
 	ShadowMesh->SetOwnerNoSee(true);
 	ShadowMesh->bCastHiddenShadow = true;
 	ShadowMesh->SetCastShadow(true);
+	if (ViewBody && bFirstPersonRendering)
+	{
+		// The world-space stand-in for the first-person body: owner-no-see, casts the shadow (needed for VSM).
+		ShadowMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
+	}
 	ShadowMesh->RegisterComponent();
 
 	Body->SetCastShadow(false);
@@ -131,6 +174,14 @@ void UFirstPersonBodyComponent::SetSinkDepth(float Centimetres)
 	SinkDepth = Centimetres;
 	const FVector Sunk = BodyBaseLocation - FVector(0.f, 0.f, SinkDepth);
 	AnimatedBody->SetRelativeLocation(Sunk);
+	if (TemplateArms)
+	{
+		// The world body (shadow, what others see) sinks too; with the template layout it is a separate mesh.
+		if (ACharacter* Character = Cast<ACharacter>(GetOwner()))
+		{
+			Character->GetMesh()->SetRelativeLocation(WorldBodyBaseLocation - FVector(0.f, 0.f, SinkDepth));
+		}
+	}
 	if (ViewBody)
 	{
 		ViewBody->SetRelativeLocation(Sunk);
