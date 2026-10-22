@@ -1,0 +1,16 @@
+A = {
+ 'tent_modern': '/Game/Fab/Modern_Camping_Tent/modern_camping_tent__GLTF_/StaticMeshes/modern_camping_tent__GLTF_',
+ 'tent_green':  '/Game/Fab/Camping_Tent/camping_tent/StaticMeshes/camping_tent',
+ 'mess':        '/Game/Fab/Camp_Props/Camp_props/StaticMeshes/Camp_props',
+ 'fire':        '/Game/Fab/Stone_fireplace/stone_fireplace/StaticMeshes/stone_fireplace',
+ 'o2':          '/Game/Fab/Oxygen_Tank/oxygen_tank/StaticMeshes/oxygen_tank',
+ 'axe':         '/Game/Fab/Climbing_Axe_for_Blender/climbing_axe_422_packed/StaticMeshes/climbing_axe_422_packed',
+ 'rope':        '/Game/Fab/Megascans/3D/Bundled_Rope_Coil_vhnmbdcs/Raw/vhnmbdcs_tier_0/StaticMeshes/vhnmbdcs_tier_0',
+ 'strap':       '/Game/Fab/Megascans/3D/Lashing_Strap_Coil_vigvahd/Raw/vigvahd_tier_0/StaticMeshes/vigvahd_tier_0',
+ 'ice1':        '/Game/Fab/Megascans/3D/Ice_Cliff_uhpocesfa/Raw/uhpocesfa_tier_0/StaticMeshes/uhpocesfa_tier_0',
+ 'ice2':        '/Game/Fab/Megascans/3D/Ice_Cliff_uhupbgxfa/Raw/uhupbgxfa_tier_0/StaticMeshes/uhupbgxfa_tier_0',
+ 'ice3':        '/Game/Fab/Megascans/3D/Ice_Cliff_veipbcmcb/Raw/veipbcmcb_tier_0/StaticMeshes/veipbcmcb_tier_0',
+ 'snowpile':    '/Game/Fab/Megascans/3D/Snow_Pile_xgxhcjxqx/Raw/xgxhcjxqx_tier_0/StaticMeshes/xgxhcjxqx_tier_0',
+ 'rockysnow':   '/Game/Fab/Megascans/3D/Rocky_Snow_Pile_vcytca0fa/Raw/vcytca0fa_tier_0/StaticMeshes/vcytca0fa_tier_0',
+ 'embank':      '/Game/Fab/Megascans/3D/Snow_Embankment_uhvjae0fa/Raw/uhvjae0fa_tier_0/StaticMeshes/uhvjae0fa_tier_0',
+}

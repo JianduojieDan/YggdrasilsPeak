@@ -6,6 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "ExpeditionComponent.generated.h"
 
+class AFixedRope;
 class ARouteLandmark;
 class USurvivalComponent;
 
@@ -50,6 +51,20 @@ public:
 	UFUNCTION(BlueprintPure, Category="Expedition|Weather")
 	float GetStormStrength() const { return StormStrength; }
 
+	/** Within this distance (cm) of a fixed rope you are clipped in. */
+	UPROPERTY(EditAnywhere, Category="Expedition|Fixed Rope", meta=(ClampMin="50"))
+	float RopeClipDistance = 400.f;
+
+	/** Steepest ground (degrees) you can walk up while clipped; the normal limit is the movement component's own. */
+	UPROPERTY(EditAnywhere, Category="Expedition|Fixed Rope", meta=(ClampMin="0", ClampMax="85"))
+	float RopeWalkableFloorAngle = 58.f;
+
+	UFUNCTION(BlueprintPure, Category="Expedition|Fixed Rope")
+	bool IsOnRope() const { return bOnRope; }
+
+	/** Shows a message through the HUD (pickups and other actors use this too). */
+	void ShowMessage(const FText& Message, float Seconds = 6.f) { Say(Message, Seconds); }
+
 	/** Strength of the low-oxygen screen effect (0 disables it). */
 	UPROPERTY(EditAnywhere, Category="Expedition", meta=(ClampMin="0", ClampMax="1"))
 	float HypoxiaScreenEffect = 1.f;
@@ -85,6 +100,8 @@ private:
 
 	void Respawn();
 	void UpdateCamps();
+	/** Clips the player onto the nearest fixed rope when close enough, and unclips when they wander off. */
+	void UpdateRope();
 	void UpdateScreenEffect(float DeltaTime);
 	void UpdateWeather();
 	/** Reads a number property (float or double) from a Blueprint object by its display name, ignoring case and spaces. */
@@ -93,6 +110,11 @@ private:
 	void Say(const FText& Message, float Seconds = 6.f);
 
 	TArray<TWeakObjectPtr<ARouteLandmark>> Camps;
+	TArray<TWeakObjectPtr<AFixedRope>> Ropes;
+	bool bOnRope = false;
+	bool bRopeExplained = false;
+	float DefaultWalkableFloorAngle = 0.f;
+	float RopeCheckTimer = 0.f;
 	TWeakObjectPtr<ARouteLandmark> LastCamp;
 	TWeakObjectPtr<ARouteLandmark> CurrentCamp;
 	TWeakObjectPtr<USurvivalComponent> Survival;

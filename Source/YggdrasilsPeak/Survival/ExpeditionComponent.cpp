@@ -2,8 +2,10 @@
 
 #include "Survival/ExpeditionComponent.h"
 
+#include "Survival/SnowTrailComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalConfig.h"
+#include "Environment/FixedRope.h"
 #include "Environment/RouteLandmark.h"
 #include "Camera/CameraComponent.h"
 #include "Engine/World.h"
@@ -32,6 +34,23 @@ void UExpeditionComponent::BeginPlay()
 	{
 		return A->GetActorLocation().Z < B->GetActorLocation().Z;
 	});
+
+	for (TActorIterator<AFixedRope> It(GetWorld()); It; ++It)
+	{
+		Ropes.Add(*It);
+	}
+	if (const ACharacter* Character = Cast<ACharacter>(GetOwner()))
+	{
+		DefaultWalkableFloorAngle = Character->GetCharacterMovement()->GetWalkableFloorAngle();
+	}
+
+	// Footprints for the local player (not part of the Blueprint, so it is added here).
+	const APawn* Pawn = Cast<APawn>(GetOwner());
+	if (Pawn && Pawn->IsLocallyControlled() && !GetOwner()->FindComponentByClass<USnowTrailComponent>())
+	{
+		USnowTrailComponent* Trails = NewObject<USnowTrailComponent>(GetOwner(), TEXT("SnowTrails"));
+		Trails->RegisterComponent();
+	}
 
 	Survival = GetOwner()->FindComponentByClass<USurvivalComponent>();
 	if (Survival.IsValid())
@@ -144,7 +163,54 @@ void UExpeditionComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 		UpdateCamps();
 		UpdateWeather();
 	}
+	RopeCheckTimer -= DeltaTime;
+	if (RopeCheckTimer <= 0.f)
+	{
+		RopeCheckTimer = 0.2f;
+		UpdateRope();
+	}
 	UpdateScreenEffect(DeltaTime);
+}
+
+void UExpeditionComponent::UpdateRope()
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Character || !Survival.IsValid() || Survival->IsDead())
+	{
+		return;
+	}
+
+	// Measure from the feet: the rope lies just above the snow.
+	const FVector Feet = Character->GetActorLocation() - FVector(0.f, 0.f, Character->GetSimpleCollisionHalfHeight());
+	// Letting go needs a bit more distance than clipping on, so walking along the edge does not flicker.
+	const float Reach = bOnRope ? RopeClipDistance * 1.5f : RopeClipDistance;
+	bool bClipped = false;
+	for (const TWeakObjectPtr<AFixedRope>& Rope : Ropes)
+	{
+		if (Rope.IsValid() && Rope->IsNear(Feet, Reach) && Rope->DistanceToRope(Feet) < Reach)
+		{
+			bClipped = true;
+			break;
+		}
+	}
+	if (bClipped == bOnRope)
+	{
+		return;
+	}
+
+	bOnRope = bClipped;
+	Survival->SetOnRope(bOnRope);
+	Character->GetCharacterMovement()->SetWalkableFloorAngle(bOnRope ? FMath::Max(RopeWalkableFloorAngle, DefaultWalkableFloorAngle) : DefaultWalkableFloorAngle);
+
+	if (bOnRope && !bRopeExplained)
+	{
+		bRopeExplained = true;
+		Say(NSLOCTEXT("Expedition", "RopeFirst", "Clipped to the fixed rope. Follow it up."), 7.f);
+	}
+	else if (!bOnRope)
+	{
+		Say(NSLOCTEXT("Expedition", "RopeOff", "Off the rope. Find the orange line again."), 4.f);
+	}
 }
 
 void UExpeditionComponent::UpdateCamps()

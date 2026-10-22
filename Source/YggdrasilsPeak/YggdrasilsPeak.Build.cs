@@ -21,7 +21,7 @@ public class YggdrasilsPeak : ModuleRules
 			"Slate"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "Landscape" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Landscape", "AnimationCore", "Niagara" });
 
 		if (Target.bBuildEditor)
 		{

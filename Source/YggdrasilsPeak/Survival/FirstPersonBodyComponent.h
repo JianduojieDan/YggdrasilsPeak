@@ -6,8 +6,12 @@
 #include "Components/ActorComponent.h"
 #include "FirstPersonBodyComponent.generated.h"
 
+class UCameraComponent;
+class UPoseableMeshComponent;
 class USkeletalMeshComponent;
 class USpringArmComponent;
+class UStaticMesh;
+class UStaticMeshComponent;
 
 /**
  *  First-person body: the local player sees their own body (legs, arms, hands) with the head bone hidden
@@ -16,6 +20,9 @@ class USpringArmComponent;
  *  (invisible to the owner, full head, own animation instance) and the visible body stops casting shadows.
  *  Other players / cameras keep seeing the normal full mesh.
  *  The camera boom also follows the animated head (HeadFollow), so steps and breathing move the view a little.
+ *
+ *  With a HeldToolMesh the owner's view body is a posable copy of the animated body: the tool sits at a fixed
+ *  spot low in the view and the right arm is bent onto its handle with two-bone IK, so the hand stays visible.
  */
 UCLASS(ClassGroup=(Survival), meta=(BlueprintSpawnableComponent))
 class YGGDRASILSPEAK_API UFirstPersonBodyComponent : public UActorComponent
@@ -46,7 +53,55 @@ public:
 	UPROPERTY(EditAnywhere, Category="First Person", meta=(ClampMin="1"))
 	float FollowSpeed = 18.f;
 
+	// ---- Held tool (ice axe in the right hand) ----
+
+	/** Tool carried in the right hand. Empty = no tool, arms follow the animation only. */
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	TObjectPtr<UStaticMesh> HeldToolMesh;
+
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool", meta=(ClampMin="0.1"))
+	float HeldToolScale = 1.4f;
+
+	/** Where the hand grips the tool, in camera space (X forward, Y right, Z up), cm. Low on the right, just inside the view. */
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	FVector GripInView = FVector(38.f, 17.f, -13.f);
+
+	/** Camera-space directions of the tool's pick (mesh +X) and of its handle end (mesh +Y): head up and forward. */
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	FVector PickDirectionInView = FVector(0.75f, 0.f, -0.65f);
+
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	FVector HandleDirectionInView = FVector(-0.65f, -0.05f, -0.75f);
+
+	/** Point on the tool mesh (mesh space, unscaled) that sits in the palm: the middle of the rubber handle. */
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	FVector ToolGripPoint = FVector(0.f, 14.f, 0.f);
+
+	/** The tool's rotation relative to the hand bone: handle across the palm, pick along the knuckles... */
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	FRotator ToolRotationInHand = FRotator(0.f, 180.f, 90.f);
+
+	/** ...and the palm point, in hand-bone space, where ToolGripPoint goes. */
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	FVector PalmInHand = FVector(-7.f, 4.f, 0.f);
+
+	/** The camera sits ahead of the shoulders, so the view-only arm may stretch this much to reach the tool. */
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool", meta=(ClampMin="1", ClampMax="1.6"))
+	float ArmMaxStretch = 1.3f;
+
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	FName UpperArmBone = TEXT("upperarm_r");
+
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	FName LowerArmBone = TEXT("lowerarm_r");
+
+	UPROPERTY(EditAnywhere, Category="First Person|Held Tool")
+	FName HandBone = TEXT("hand_r");
+
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
+	/** Sinks the visible body, its shadow copy and the eye this far (cm) into the snow; collision is unchanged. */
+	void SetSinkDepth(float Centimetres);
 
 protected:
 
@@ -54,11 +109,34 @@ protected:
 
 private:
 
+	/** Copies this frame's animated pose to ViewBody, bends the right arm onto the held tool and sinks the feet. */
+	void PoseViewBody();
+
+	/** Two-bone IK on ViewBody: Upper -> Lower -> End reaches EndLocation (component space) with EndRotation, bending towards Pole. */
+	void BendLimb(FName UpperBone, FName LowerBone, FName EndBone, const FVector& EndLocation, const FQuat& EndRotation, const FVector& Pole, float MaxStretch);
+
+	inline static const FName LeftLegBones[3] = { TEXT("thigh_l"), TEXT("calf_l"), TEXT("foot_l") };
+	inline static const FName RightLegBones[3] = { TEXT("thigh_r"), TEXT("calf_r"), TEXT("foot_r") };
+
 	UPROPERTY(Transient)
 	TObjectPtr<USkeletalMeshComponent> ShadowMesh;
+
+	/** What the owner sees when holding a tool: a posable copy of the body. */
+	UPROPERTY(Transient)
+	TObjectPtr<UPoseableMeshComponent> ViewBody;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMeshComponent> HeldTool;
+
+	UPROPERTY(Transient)
+	TObjectPtr<USkeletalMeshComponent> AnimatedBody;
 
 	UPROPERTY(Transient)
 	TObjectPtr<USpringArmComponent> CameraBoom;
 
 	FVector BoomBaseLocation = FVector::ZeroVector;
+
+	/** The body's relative location before any sinking. */
+	FVector BodyBaseLocation = FVector::ZeroVector;
+	float SinkDepth = 0.f;
 };

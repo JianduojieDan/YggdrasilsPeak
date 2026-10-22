@@ -296,6 +296,14 @@ void USurvivalHUDWidget::UpdateAltitudeText(const FSurvivalSnapshot& Snapshot) c
 	{
 		Line += FString::Printf(TEXT("   bottle %d:%02d"), FMath::FloorToInt(Snapshot.OxygenBottleSeconds / 60.f), FMath::FloorToInt(Snapshot.OxygenBottleSeconds) % 60);
 	}
+	if (Snapshot.CarriedBottles > 0)
+	{
+		Line += FString::Printf(TEXT("   spare x%d"), Snapshot.CarriedBottles);
+	}
+	if (Snapshot.bOnRope)
+	{
+		Line += TEXT("   [rope]");
+	}
 	if (Snapshot.bSheltered)
 	{
 		Line += TEXT("   [camp]");

@@ -110,7 +110,7 @@ void USurvivalComponent::StepSimulation(float Dt)
 		|| IsWarningActive(ESurvivalWarning::Cold);
 
 	const bool bGrounded = !IsAirborne();
-	const float Grade = (bMoving && bGrounded) ? GetUphillGrade() : 0.f;
+	const float Grade = (bMoving && bGrounded) ? GetUphillGrade() * (bOnRope ? C->RopeGradeMultiplier : 1.f) : 0.f;
 
 	// Altitude: 0 at the bottom of each effect's range, 1 at the summit.
 	const float Elevation = GetElevationMeters();
@@ -119,6 +119,13 @@ void USurvivalComponent::StepSimulation(float Dt)
 
 	// Oxygen drifts towards what the altitude and the current effort allow.
 	OxygenBottleRemaining = FMath::Max(0.f, OxygenBottleRemaining - Dt);
+	// A spare bottle goes on by itself when the air gets too thin; the player only has to carry them.
+	if (OxygenBottleRemaining <= 0.f && CarriedBottles > 0 && Oxygen < C->AutoBottleBelowOxygen)
+	{
+		--CarriedBottles;
+		OxygenBottleRemaining = C->OxygenBottleSeconds;
+		UE_LOG(LogSurvival, Log, TEXT("Put on a spare oxygen bottle (%d left)."), CarriedBottles);
+	}
 	const float Effort = bSprinting ? C->SprintOxygenCost : (bMoving ? C->WalkOxygenCost : 0.f);
 	float OxygenTarget = 100.f - ThinAir * ((100.f - C->RestingOxygenAtSummit) + Effort + C->UphillOxygenCostPerGrade * Grade);
 	if (OxygenBottleRemaining > 0.f)
@@ -139,10 +146,19 @@ void USurvivalComponent::StepSimulation(float Dt)
 	const float NeedsMultiplier = bSprinting ? C->SprintNeedsMultiplier : (bMoving ? C->WalkNeedsMultiplier : 1.f);
 	Satiety = FMath::Max(0.f, Satiety - C->SatietyDecayPerSecond * NeedsMultiplier * Dt);
 	Hydration = FMath::Max(0.f, Hydration - C->HydrationDecayPerSecond * NeedsMultiplier * Dt);
+	if (bSheltered)
+	{
+		// Resting in camp: eating and melting snow for water.
+		const float Refill = C->ShelterNeedsRecoveryPerSecond * 0.01f * Dt;
+		Satiety = FMath::Min(C->MaxSatiety, Satiety + C->MaxSatiety * Refill);
+		Hydration = FMath::Min(C->MaxHydration, Hydration + C->MaxHydration * Refill);
+	}
 
+	// Wading through deep powder is hard work.
+	const float SnowDrain = bMoving ? C->DeepSnowStaminaDrainPerSecond * SnowDepth : 0.f;
 	if (bSprinting)
 	{
-		Stamina -= C->SprintStaminaDrainPerSecond * Dt;
+		Stamina -= (C->SprintStaminaDrainPerSecond + SnowDrain) * Dt;
 	}
 	else if (!IsAirborne())
 	{
@@ -157,7 +173,7 @@ void USurvivalComponent::StepSimulation(float Dt)
 			Recover *= C->ShelterStaminaRecoveryMultiplier;
 		}
 		// Climbing costs more than walking can recover.
-		Stamina += (Recover - C->UphillStaminaDrainPerGrade * Grade) * Dt;
+		Stamina += (Recover - C->UphillStaminaDrainPerGrade * Grade - SnowDrain) * Dt;
 	}
 	Stamina = FMath::Clamp(Stamina, 0.f, C->MaxStamina);
 
@@ -427,9 +443,12 @@ float USurvivalComponent::GetUphillGrade() const
 float USurvivalComponent::GetTerrainSpeedMultiplier() const
 {
 	const USurvivalConfig* C = GetCfg();
-	const float Uphill = 1.f / (1.f + C->UphillSlowdownPerGrade * GetUphillGrade());
+	const float Grade = GetUphillGrade() * (bOnRope ? C->RopeGradeMultiplier : 1.f);
+	const float Uphill = 1.f / (1.f + C->UphillSlowdownPerGrade * Grade);
 	const float OxygenFatigue = FMath::Clamp((C->OxygenFatigueBelow - Oxygen) / FMath::Max(C->OxygenFatigueBelow - C->OxygenDamageBelow, 1.f), 0.f, 1.f);
-	return Uphill * FMath::Lerp(1.f, C->LowOxygenSpeedMultiplier, OxygenFatigue) * WeatherSpeedMultiplier;
+	const float Weather = bOnRope ? FMath::Lerp(WeatherSpeedMultiplier, 1.f, C->RopeWeatherRelief) : WeatherSpeedMultiplier;
+	const float Snow = FMath::Lerp(1.f, C->DeepSnowSpeedMultiplier, SnowDepth);
+	return Uphill * FMath::Lerp(1.f, C->LowOxygenSpeedMultiplier, OxygenFatigue) * Weather * Snow;
 }
 
 // ---- Stat access ----
@@ -527,7 +546,9 @@ FSurvivalSnapshot USurvivalComponent::GetSnapshot() const
 	Snapshot.Oxygen = Oxygen;
 	Snapshot.ElevationMeters = GetElevationMeters();
 	Snapshot.OxygenBottleSeconds = OxygenBottleRemaining;
+	Snapshot.CarriedBottles = CarriedBottles;
 	Snapshot.bSheltered = bSheltered;
+	Snapshot.bOnRope = bOnRope;
 	Snapshot.bSprinting = bSprinting;
 	Snapshot.bExhausted = bExhausted;
 	Snapshot.bDead = bDead;
@@ -575,6 +596,16 @@ void USurvivalComponent::SetSheltered(bool bInShelter)
 void USurvivalComponent::UseOxygenBottle(float Seconds)
 {
 	OxygenBottleRemaining += Seconds > 0.f ? Seconds : GetCfg()->OxygenBottleSeconds;
+}
+
+bool USurvivalComponent::AddCarriedBottle()
+{
+	if (CarriedBottles >= GetCfg()->MaxCarriedBottles)
+	{
+		return false;
+	}
+	++CarriedBottles;
+	return true;
 }
 
 void USurvivalComponent::Revive(float NeedsPercent)
@@ -653,9 +684,9 @@ void USurvivalComponent::DebugResetAll()
 
 void USurvivalComponent::DebugDump() const
 {
-	UE_LOG(LogSurvival, Log, TEXT("[%s] Health %.1f | Stamina %.1f | Satiety %.1f | Hydration %.1f | Temp %.2fC | O2 %.1f | %.0f m | Sheltered %d | Bottle %.0fs | Sprinting %d | Exhausted %d | Dead %d | ColdExposure %.2f"),
+	UE_LOG(LogSurvival, Log, TEXT("[%s] Health %.1f | Stamina %.1f | Satiety %.1f | Hydration %.1f | Temp %.2fC | O2 %.1f | %.0f m | Sheltered %d | Rope %d | Snow %.2f | Spare %d | Bottle %.0fs | Sprinting %d | Exhausted %d | Dead %d | ColdExposure %.2f"),
 		*GetNameSafe(GetOwner()), Health, Stamina, Satiety, Hydration, BodyTemperature, Oxygen, GetElevationMeters(),
-		bSheltered, OxygenBottleRemaining, bSprinting, bExhausted, bDead, ColdExposure);
+		bSheltered, bOnRope, SnowDepth, CarriedBottles, OxygenBottleRemaining, bSprinting, bExhausted, bDead, ColdExposure);
 
 	const UEnum* WarningEnum = StaticEnum<ESurvivalWarning>();
 	for (int32 Index = 0; Index < WarningEnum->NumEnums() - 1; ++Index)

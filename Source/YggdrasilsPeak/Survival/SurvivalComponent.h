@@ -72,6 +72,24 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Survival")
 	void UseOxygenBottle(float Seconds = 0.f);
 
+	/** Adds a spare bottle to the pack. Returns false when the pack is already full. Spares are put on automatically when oxygen runs low. */
+	UFUNCTION(BlueprintCallable, Category="Survival")
+	bool AddCarriedBottle();
+
+	UFUNCTION(BlueprintPure, Category="Survival")
+	int32 GetCarriedBottles() const { return CarriedBottles; }
+
+	/** Clipped to a fixed rope: uphill and wind cost less. */
+	UFUNCTION(BlueprintCallable, Category="Survival")
+	void SetOnRope(bool bClipped) { bOnRope = bClipped; }
+
+	UFUNCTION(BlueprintPure, Category="Survival")
+	bool IsOnRope() const { return bOnRope; }
+
+	/** How deep the snow underfoot is, 0 (hard / none) .. 1 (deepest powder): slows walking and costs stamina. */
+	UFUNCTION(BlueprintCallable, Category="Survival")
+	void SetSnowDepth(float Depth01) { SnowDepth = FMath::Clamp(Depth01, 0.f, 1.f); }
+
 	/** Brings the player back after death (or any time) with full health/stamina/oxygen and needs at NeedsPercent. */
 	UFUNCTION(BlueprintCallable, Category="Survival")
 	void Revive(float NeedsPercent = 60.f);
@@ -177,8 +195,12 @@ private:
 	float LastNotified[6] = { -1.f, -1.f, -1.f, -1.f, -1.f, -1.f };
 
 	float OxygenBottleRemaining = 0.f;
+	/** Spare bottles in the pack; kept through death and revive. */
+	int32 CarriedBottles = 0;
 	float WeatherSpeedMultiplier = 1.f;
 	bool bSheltered = false;
+	bool bOnRope = false;
+	float SnowDepth = 0.f;
 	FText DeathCause;
 
 	/** Bitmask of active ESurvivalWarning values. */

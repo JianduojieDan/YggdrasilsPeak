@@ -67,9 +67,17 @@ struct FSurvivalSnapshot
 	UPROPERTY(BlueprintReadOnly, Category="Survival")
 	float OxygenBottleSeconds = 0.f;
 
+	/** Spare oxygen bottles in the pack. */
+	UPROPERTY(BlueprintReadOnly, Category="Survival")
+	int32 CarriedBottles = 0;
+
 	/** True while inside a camp (warm, sheltered). */
 	UPROPERTY(BlueprintReadOnly, Category="Survival")
 	bool bSheltered = false;
+
+	/** True while clipped to a fixed rope. */
+	UPROPERTY(BlueprintReadOnly, Category="Survival")
+	bool bOnRope = false;
 
 	UPROPERTY(BlueprintReadOnly, Category="Survival")
 	bool bSprinting = false;

@@ -78,11 +78,16 @@ public:
 
 	// ---- Satiety and hydration ----
 
+	/** Slow enough for a real-distance climb: walking empties food in ~2 h and water in ~1.5 h between camps. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Needs", meta=(ClampMin="0"))
-	float SatietyDecayPerSecond = 0.05f;
+	float SatietyDecayPerSecond = 0.01f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Needs", meta=(ClampMin="0"))
-	float HydrationDecayPerSecond = 0.08f;
+	float HydrationDecayPerSecond = 0.015f;
+
+	/** Percent of food and water regained per second while resting in a camp (eating, melting snow). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Needs", meta=(ClampMin="0"))
+	float ShelterNeedsRecoveryPerSecond = 1.f;
 
 	/** Decay is multiplied by this while walking. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Needs", meta=(ClampMin="0"))
@@ -202,7 +207,35 @@ public:
 
 	/** Seconds of bottled oxygen one bottle gives. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Oxygen", meta=(ClampMin="0"))
-	float OxygenBottleSeconds = 600.f;
+	float OxygenBottleSeconds = 1800.f;
+
+	/** Spare bottles the player can carry (picked up at camps). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Oxygen", meta=(ClampMin="0"))
+	int32 MaxCarriedBottles = 3;
+
+	/** A carried bottle is put on automatically when saturation falls below this and no bottle is running. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Oxygen", meta=(ClampMin="0", ClampMax="100"))
+	float AutoBottleBelowOxygen = 80.f;
+
+	// ---- Deep snow ----
+
+	/** Walk/sprint speed multiplier in the deepest powder (scales from 1 on hard crust, rock and packed camp snow). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Deep Snow", meta=(ClampMin="0.1", ClampMax="1"))
+	float DeepSnowSpeedMultiplier = 0.8f;
+
+	/** Extra stamina per second while moving through the deepest powder. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Deep Snow", meta=(ClampMin="0"))
+	float DeepSnowStaminaDrainPerSecond = 4.f;
+
+	// ---- Fixed ropes ----
+
+	/** While clipped to a fixed rope, the uphill grade costs (speed, stamina, oxygen) are multiplied by this. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fixed Rope", meta=(ClampMin="0", ClampMax="1"))
+	float RopeGradeMultiplier = 0.5f;
+
+	/** While clipped, this fraction of the storm slowdown is removed (the rope holds you against the wind). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fixed Rope", meta=(ClampMin="0", ClampMax="1"))
+	float RopeWeatherRelief = 0.5f;
 
 	// ---- Slopes ----
 
