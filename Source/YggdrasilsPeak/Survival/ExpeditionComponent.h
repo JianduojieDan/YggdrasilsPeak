@@ -51,6 +51,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="Expedition|Weather")
 	float GetStormStrength() const { return StormStrength; }
 
+	/** Local wind on the weather system's 0..10 scale (calm ~2, gale 8+). */
+	UFUNCTION(BlueprintPure, Category="Expedition|Weather")
+	float GetWindIntensity() const { return WindIntensity; }
+
+	/** Yaw (degrees, world) the wind blows towards. */
+	UFUNCTION(BlueprintPure, Category="Expedition|Weather")
+	float GetWindDirection() const { return WindDirection; }
+
 	/** Within this distance (cm) of a fixed rope you are clipped in. */
 	UPROPERTY(EditAnywhere, Category="Expedition|Fixed Rope", meta=(ClampMin="50"))
 	float RopeClipDistance = 400.f;
@@ -120,6 +128,9 @@ private:
 	TWeakObjectPtr<USurvivalComponent> Survival;
 	TWeakObjectPtr<AActor> WeatherActor;
 	float StormStrength = 0.f;
+	/** Without the weather system: a moderate wind from the west-northwest, the prevailing winter wind on Everest (north = -Y). */
+	float WindIntensity = 4.f;
+	float WindDirection = 15.f;
 	bool bStormWarned = false;
 	float LoggedStorm = -1.f;
 	bool bLoggedNoState = false;

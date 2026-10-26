@@ -787,4 +787,43 @@ namespace
 				Survival->DebugDump();
 			}
 		}));
+
+	// One switch for a visual check of the whole HUD and the weather effects.
+	FAutoConsoleCommandWithWorldAndArgs GTestAllCommand(
+		TEXT("ygg.Test.All"),
+		TEXT("ygg.Test.All [0] - show everything at once: all HUD bars and warning icons, frost on the screen, blowing snow. 0 = back to normal."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			USurvivalComponent* Survival = FindLocalSurvival(World);
+			if (!Survival)
+			{
+				UE_LOG(LogSurvival, Warning, TEXT("ygg.Test.All needs a SurvivalComponent on the local player (press Play first)."));
+				return;
+			}
+			const bool bOn = Args.Num() == 0 || FCString::Atoi(*Args[0]) != 0;
+			IConsoleVariable* Spindrift = IConsoleManager::Get().FindConsoleVariable(TEXT("ygg.Snow.Spindrift"));
+			if (bOn)
+			{
+				Survival->DebugSetStat(ESurvivalStat::Satiety, 10.f);
+				Survival->DebugSetStat(ESurvivalStat::Hydration, 10.f);
+				Survival->DebugSetStat(ESurvivalStat::Health, 20.f);
+				Survival->DebugSetStat(ESurvivalStat::Stamina, 40.f);
+				Survival->DebugSetStat(ESurvivalStat::BodyTemperature, 32.f);
+				Survival->SetColdExposure(1.f);
+				if (Spindrift)
+				{
+					Spindrift->Set(1.f, ECVF_SetByConsole);
+				}
+			}
+			else
+			{
+				Survival->SetColdExposure(0.f);
+				Survival->DebugResetAll();
+				if (Spindrift)
+				{
+					Spindrift->Set(-1.f, ECVF_SetByConsole);
+				}
+			}
+			Survival->DebugDump();
+		}));
 }

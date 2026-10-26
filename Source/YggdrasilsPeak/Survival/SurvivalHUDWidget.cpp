@@ -6,6 +6,7 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/Image.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
@@ -21,14 +22,18 @@ namespace
 		TEXT("1 shows the survival debug numbers on the HUD, 0 hides them."),
 		ECVF_Default);
 
-	/** Moves a bar fill towards its target value and tints it. */
-	void UpdateBar(UProgressBar* Bar, float& Displayed, float Target, float Speed, float DeltaTime, const FLinearColor& Colour)
+	/** Moves a bar fill towards its target value and tints it and its icon. */
+	void UpdateBar(UProgressBar* Bar, UImage* Glyph, float& Displayed, float Target, float Speed, float DeltaTime, const FLinearColor& Colour)
 	{
 		Displayed = FMath::FInterpTo(Displayed, Target, DeltaTime, Speed);
 		if (Bar)
 		{
 			Bar->SetPercent(Displayed);
 			Bar->SetFillColorAndOpacity(Colour);
+		}
+		if (Glyph)
+		{
+			Glyph->SetColorAndOpacity(Colour);
 		}
 	}
 }
@@ -234,14 +239,14 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	{
 		StaminaLinger = FMath::Max(0.f, StaminaLinger - InDeltaTime);
 	}
-	UpdateBar(StaminaBar, DisplayedStamina, StaminaNormalized, BarInterpSpeed, InDeltaTime,
+	UpdateBar(StaminaBar, StaminaGlyph, DisplayedStamina, StaminaNormalized, BarInterpSpeed, InDeltaTime,
 		Snapshot.bExhausted ? ExhaustedColor : StaminaColor);
 	FadeWidget(StaminaPanel, StaminaLinger > 0.f ? 1.f : 0.f, InDeltaTime, FadeInSpeed, FadeOutSpeed);
 
 	// Health: visible while low or shortly after taking damage.
 	const bool bLowHealth = Bound->IsWarningActive(ESurvivalWarning::LowHealth);
 	HealthLinger = FMath::Max(0.f, HealthLinger - InDeltaTime);
-	UpdateBar(HealthBar, DisplayedHealth, Bound->GetStatNormalized(ESurvivalStat::Health), BarInterpSpeed, InDeltaTime,
+	UpdateBar(HealthBar, HealthGlyph, DisplayedHealth, Bound->GetStatNormalized(ESurvivalStat::Health), BarInterpSpeed, InDeltaTime,
 		bLowHealth ? LowHealthColor : HealthColor);
 	FadeWidget(HealthPanel, (bLowHealth || HealthLinger > 0.f) ? 1.f : 0.f, InDeltaTime, FadeInSpeed, FadeOutSpeed);
 
@@ -261,7 +266,7 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	// Temperature: an indicator once the body cools, frost along the edges when it gets dangerous.
 	const float TemperatureNormalized = Bound->GetStatNormalized(ESurvivalStat::BodyTemperature);
 	const bool bCold = Bound->IsWarningActive(ESurvivalWarning::Cold);
-	UpdateBar(TemperatureBar, DisplayedTemperature, TemperatureNormalized, BarInterpSpeed, InDeltaTime,
+	UpdateBar(TemperatureBar, TemperatureGlyph, DisplayedTemperature, TemperatureNormalized, BarInterpSpeed, InDeltaTime,
 		bCold ? ColdTemperatureColor : TemperatureColor);
 	FadeWidget(TemperaturePanel, (bCold || TemperatureNormalized < TemperatureShowBelow) ? 1.f : 0.f, InDeltaTime, FadeInSpeed, FadeOutSpeed);
 
@@ -290,30 +295,57 @@ void USurvivalHUDWidget::UpdateAltitudeText(const FSurvivalSnapshot& Snapshot) c
 		return;
 	}
 
-	FString Line = FString::Printf(TEXT("%s m     O2 %d%%"), *FText::AsNumber(FMath::RoundToInt(Snapshot.ElevationMeters)).ToString(),
-		FMath::RoundToInt(Snapshot.Oxygen));
+	const FString Altitude = FString::Printf(TEXT("%s m"), *FText::AsNumber(FMath::RoundToInt(Snapshot.ElevationMeters)).ToString());
+	const FString Oxygen = FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Snapshot.Oxygen));
+
+	TArray<FString> Status;
 	if (Snapshot.OxygenBottleSeconds > 0.f)
 	{
-		Line += FString::Printf(TEXT("   bottle %d:%02d"), FMath::FloorToInt(Snapshot.OxygenBottleSeconds / 60.f), FMath::FloorToInt(Snapshot.OxygenBottleSeconds) % 60);
+		Status.Add(FString::Printf(TEXT("bottle %d:%02d"), FMath::FloorToInt(Snapshot.OxygenBottleSeconds / 60.f), FMath::FloorToInt(Snapshot.OxygenBottleSeconds) % 60));
 	}
 	if (Snapshot.CarriedBottles > 0)
 	{
-		Line += FString::Printf(TEXT("   spare x%d"), Snapshot.CarriedBottles);
+		Status.Add(FString::Printf(TEXT("spare ×%d"), Snapshot.CarriedBottles));
 	}
 	if (Snapshot.bOnRope)
 	{
-		Line += TEXT("   [rope]");
+		Status.Add(TEXT("rope"));
 	}
 	if (Snapshot.bSheltered)
 	{
-		Line += TEXT("   [camp]");
+		Status.Add(TEXT("camp"));
 	}
-	AltitudeText->SetText(FText::FromString(Line));
+	const FString StatusLine = FString::Join(Status, TEXT("  ·  "));
 
 	// Oxygen colour: white when fine, amber when low, red when dangerous.
-	const FLinearColor Colour = Snapshot.Oxygen > 72.f ? FLinearColor(0.9f, 0.95f, 1.f, 0.85f)
+	const FLinearColor Colour = Snapshot.Oxygen > 72.f ? FLinearColor(0.93f, 0.96f, 1.f, 0.95f)
 		: Snapshot.Oxygen > 55.f ? FLinearColor(1.f, 0.75f, 0.3f, 0.95f) : FLinearColor(1.f, 0.3f, 0.3f, 1.f);
-	AltitudeText->SetColorAndOpacity(FSlateColor(Colour));
+
+	if (!OxygenText)
+	{
+		// Single-line fallback.
+		FString Line = Altitude + TEXT("  ·  O2 ") + Oxygen;
+		if (!StatusLine.IsEmpty())
+		{
+			Line += TEXT("  ·  ") + StatusLine;
+		}
+		AltitudeText->SetText(FText::FromString(Line));
+		AltitudeText->SetColorAndOpacity(FSlateColor(Colour));
+		return;
+	}
+
+	AltitudeText->SetText(FText::FromString(Altitude));
+	OxygenText->SetText(FText::FromString(Oxygen));
+	OxygenText->SetColorAndOpacity(FSlateColor(Colour));
+	if (OxygenGlyph)
+	{
+		OxygenGlyph->SetColorAndOpacity(Colour);
+	}
+	if (StatusText)
+	{
+		StatusText->SetText(FText::FromString(StatusLine));
+		StatusText->SetVisibility(StatusLine.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
 }
 
 void USurvivalHUDWidget::UpdateDebugText(const FSurvivalSnapshot& Snapshot) const

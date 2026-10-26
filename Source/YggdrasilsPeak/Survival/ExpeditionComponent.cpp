@@ -3,6 +3,7 @@
 #include "Survival/ExpeditionComponent.h"
 
 #include "Survival/SnowTrailComponent.h"
+#include "Survival/SpindriftComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalConfig.h"
 #include "Environment/FixedRope.h"
@@ -50,6 +51,12 @@ void UExpeditionComponent::BeginPlay()
 	{
 		USnowTrailComponent* Trails = NewObject<USnowTrailComponent>(GetOwner(), TEXT("SnowTrails"));
 		Trails->RegisterComponent();
+	}
+	// Blowing snow around the local player, driven by the wind read in UpdateWeather.
+	if (Pawn && Pawn->IsLocallyControlled() && !GetOwner()->FindComponentByClass<USpindriftComponent>())
+	{
+		USpindriftComponent* Spindrift = NewObject<USpindriftComponent>(GetOwner(), TEXT("Spindrift"));
+		Spindrift->RegisterComponent();
 	}
 
 	Survival = GetOwner()->FindComponentByClass<USurvivalComponent>();
@@ -127,6 +134,12 @@ void UExpeditionComponent::UpdateWeather()
 	{
 		ReadNumber(State, TEXT("Wind Intensity"), Wind);
 		ReadNumber(State, TEXT("Snow"), Snow);
+		WindIntensity = float(Wind);
+		double Direction = 0.0;
+		if (ReadNumber(WeatherActor.Get(), TEXT("Wind Direction"), Direction))
+		{
+			WindDirection = float(Direction);
+		}
 	}
 	const float NewStorm = FMath::Clamp(0.6f * float((Wind - 3.0) / 7.0) + 0.4f * float((Snow - 4.0) / 6.0), 0.f, 1.f);
 	if (FMath::Abs(NewStorm - LoggedStorm) > 0.1f || (State == nullptr) != bLoggedNoState)

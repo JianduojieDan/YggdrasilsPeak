@@ -7,6 +7,7 @@
 #include "Survival/SurvivalTypes.h"
 #include "SurvivalHUDWidget.generated.h"
 
+class UImage;
 class UProgressBar;
 class UTextBlock;
 class UWidget;
@@ -79,9 +80,31 @@ public:
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
 	TObjectPtr<UTextBlock> DebugText;
 
-	/** Altimeter and blood-oxygen readout. Created at runtime (bottom left) when the Widget Blueprint has none. */
+	/** Altimeter readout. Created at runtime (bottom left) when the Widget Blueprint has none; without
+	 *  OxygenText it shows the whole line (altitude, oxygen and status). */
 	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
 	TObjectPtr<UTextBlock> AltitudeText;
+
+	/** Blood oxygen, tinted white / amber / red with its icon. */
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> OxygenText;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
+	TObjectPtr<UImage> OxygenGlyph;
+
+	/** Bottle time, spare bottles, rope and camp; collapsed when there is nothing to say. */
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> StatusText;
+
+	/** Icons in front of the bars; they take the bar's colour. */
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
+	TObjectPtr<UImage> StaminaGlyph;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
+	TObjectPtr<UImage> HealthGlyph;
+
+	UPROPERTY(BlueprintReadOnly, meta=(BindWidgetOptional))
+	TObjectPtr<UImage> TemperatureGlyph;
 
 	// ---- Tuning ----
 
@@ -128,22 +151,22 @@ public:
 	// ---- Colours ----
 
 	UPROPERTY(EditDefaultsOnly, Category="Survival HUD|Colours")
-	FLinearColor StaminaColor = FLinearColor(0.78f, 0.90f, 1.f, 0.95f);
+	FLinearColor StaminaColor = FLinearColor(1.f, 0.84f, 0.48f, 0.95f);
 
 	UPROPERTY(EditDefaultsOnly, Category="Survival HUD|Colours")
-	FLinearColor ExhaustedColor = FLinearColor(1.f, 0.55f, 0.25f, 0.95f);
+	FLinearColor ExhaustedColor = FLinearColor(1.f, 0.48f, 0.22f, 0.95f);
 
 	UPROPERTY(EditDefaultsOnly, Category="Survival HUD|Colours")
-	FLinearColor HealthColor = FLinearColor(0.85f, 0.95f, 0.90f, 0.95f);
+	FLinearColor HealthColor = FLinearColor(1.f, 0.50f, 0.56f, 0.95f);
 
 	UPROPERTY(EditDefaultsOnly, Category="Survival HUD|Colours")
-	FLinearColor LowHealthColor = FLinearColor(1.f, 0.30f, 0.30f, 0.95f);
+	FLinearColor LowHealthColor = FLinearColor(1.f, 0.22f, 0.25f, 1.f);
 
 	UPROPERTY(EditDefaultsOnly, Category="Survival HUD|Colours")
-	FLinearColor TemperatureColor = FLinearColor(0.70f, 0.85f, 1.f, 0.95f);
+	FLinearColor TemperatureColor = FLinearColor(0.62f, 0.86f, 1.f, 0.95f);
 
 	UPROPERTY(EditDefaultsOnly, Category="Survival HUD|Colours")
-	FLinearColor ColdTemperatureColor = FLinearColor(0.35f, 0.60f, 1.f, 0.95f);
+	FLinearColor ColdTemperatureColor = FLinearColor(0.38f, 0.62f, 1.f, 0.95f);
 
 protected:
 
