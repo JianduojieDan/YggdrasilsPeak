@@ -6,7 +6,10 @@
 #include "Components/PoseableMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/Character.h"
 #include "TwoBoneIK.h"
@@ -19,8 +22,7 @@ UFirstPersonBodyComponent::UFirstPersonBodyComponent()
 	// After animation so the head bone is this frame's pose.
 	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> IceAxe(TEXT("/Game/Fab/Climbing_Axe_for_Blender/climbing_axe_422_packed/StaticMeshes/climbing_axe_422_packed.climbing_axe_422_packed"));
-	HeldToolMesh = IceAxe.Object;
+	// No held tool by default: the First Person template's arms and animation are used as they are.
 }
 
 void UFirstPersonBodyComponent::BeginPlay()
@@ -65,6 +67,9 @@ void UFirstPersonBodyComponent::BeginPlay()
 		ViewBody->SetSkinnedAssetAndUpdate(AnimatedBody->GetSkeletalMeshAsset());
 		ViewBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		ViewBody->SetOnlyOwnerSee(true);
+		// Culling uses the reference-pose box (an arms-only mesh: down at the hips), not where the arms are posed in front
+		// of the camera, so the hands vanished whenever the hips were out of view. Grow the box to cover the view.
+		ViewBody->SetBoundsScale(4.f);
 		ViewBody->SetCastShadow(false);
 		ViewBody->RegisterComponent();
 		ViewBody->HideBoneByName(HiddenBone, PBO_None);
@@ -85,9 +90,40 @@ void UFirstPersonBodyComponent::BeginPlay()
 			Body->SetOwnerNoSee(true);
 		}
 
-		// The tool rides in the view body's fist; PoseToolArm places it every frame.
+		// The tool rides in the view body's right fist; PoseArm places it every frame. The left hand rests empty.
 		ViewCamera = Camera;
-		MeasureHand();
+		Arms[0] = FViewArm();
+		Arms[0].Upper = UpperArmBone; Arms[0].Lower = LowerArmBone; Arms[0].Hand = HandBone; Arms[0].Suffix = TEXT("r");
+		Arms[0].Side = 1.f; Arms[0].bHoldsTool = true;
+		Arms[0].RestInView = GripInView; Arms[0].ElbowInView = ElbowDirectionInView;
+		Arms[0].FingerCurl = FingerCurl; Arms[0].ThumbCurl = ThumbCurl;
+		Arms[1] = FViewArm();
+		Arms[1].Upper = TEXT("upperarm_l"); Arms[1].Lower = TEXT("lowerarm_l"); Arms[1].Hand = TEXT("hand_l"); Arms[1].Suffix = TEXT("l");
+		Arms[1].Side = -1.f;
+		Arms[1].RestInView = LeftHandInView; Arms[1].ElbowInView = LeftElbowDirectionInView;
+		Arms[1].FingerCurl = LeftFingerCurl; Arms[1].ThumbCurl = LeftThumbCurl;
+		MeasureHand(Arms[0]);
+		MeasureHand(Arms[1]);
+
+		// Handle across the fist along the thumb side, head leaning forward by ToolTiltForward, pick along the knuckles.
+		const FViewArm& Tool = Arms[0];
+		const float Tilt = FMath::DegreesToRadians(ToolTiltForward);
+		const FVector Head = Tool.ThumbDir * FMath::Cos(Tilt) + Tool.KnuckleDir * FMath::Sin(Tilt);
+		const FVector Pick = Tool.KnuckleDir * FMath::Cos(Tilt) - Tool.ThumbDir * FMath::Sin(Tilt);
+		const FQuat ToolRotation = FRotationMatrix::MakeFromXY(Pick, -Head).ToQuat();
+		const FVector Grip = Tool.KnuckleDir * Tool.Length * GripAlongHand + Tool.PalmDir * GripPalmOffset;
+		ToolInHand = FTransform(ToolRotation, Grip - ToolRotation.RotateVector(ToolGripPoint * HeldToolScale), FVector(HeldToolScale));
+
+		// The same tool in the world body's hand, for everyone else (and mirrors / shadows); hidden from the owner,
+		// who sees the first-person one.
+		WorldTool = NewObject<UStaticMeshComponent>(Character, TEXT("WorldHeldTool"));
+		WorldTool->SetupAttachment(Body, HandBone);
+		WorldTool->SetStaticMesh(HeldToolMesh);
+		WorldTool->SetRelativeTransform(ToolInHand);
+		WorldTool->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		WorldTool->SetOwnerNoSee(true);
+		WorldTool->bCastHiddenShadow = true;
+		WorldTool->RegisterComponent();
 		HeldTool = NewObject<UStaticMeshComponent>(Character, TEXT("HeldTool"));
 		HeldTool->SetupAttachment(ViewBody);
 		HeldTool->SetStaticMesh(HeldToolMesh);
@@ -110,7 +146,9 @@ void UFirstPersonBodyComponent::BeginPlay()
 	}
 	else if (TemplateArms)
 	{
-		// No tool: the template's own first-person arms and animation are shown untouched.
+		// No tool: the template's own first-person arms and animation are shown untouched, minus the head (a full
+		// character mesh on FirstPersonMesh would otherwise put its hair in front of the camera).
+		TemplateArms->HideBoneByName(HiddenBone, PBO_None);
 	}
 	else
 	{
@@ -203,7 +241,12 @@ void UFirstPersonBodyComponent::PoseViewBody(float DeltaTime)
 	ViewBody->CopyPoseFromSkeletalComponent(AnimatedBody);
 	const TArray<FTransform>& Pose = AnimatedBody->GetComponentSpaceTransforms();
 
-	PoseToolArm(DeltaTime);
+	UpdateHandMotion(DeltaTime);
+	PoseArm(Arms[0], DeltaTime);
+	if (bShowLeftHand)
+	{
+		PoseArm(Arms[1], DeltaTime);
+	}
 
 	// Legs: the animation's foot IK keeps the boots on top of the snow even when the body is sunk; push them
 	// back down by the sink depth so they disappear into it.
@@ -227,11 +270,11 @@ void UFirstPersonBodyComponent::PoseViewBody(float DeltaTime)
 	ViewBody->MarkRefreshTransformDirty();
 }
 
-void UFirstPersonBodyComponent::MeasureHand()
+void UFirstPersonBodyComponent::MeasureHand(FViewArm& Arm)
 {
 	const FReferenceSkeleton& Ref = ViewBody->GetSkinnedAsset()->GetRefSkeleton();
 	const TArray<FTransform>& RefPose = Ref.GetRefBonePose();
-	const int32 Hand = Ref.FindBoneIndex(HandBone);
+	const int32 Hand = Ref.FindBoneIndex(Arm.Hand);
 	// Reference-pose position of a bone below the hand, in hand-bone space.
 	auto InHand = [&](const TCHAR* Name) -> TOptional<FVector>
 	{
@@ -252,37 +295,53 @@ void UFirstPersonBodyComponent::MeasureHand()
 		return Xf.GetLocation();
 	};
 
-	const TOptional<FVector> Middle = InHand(TEXT("middle_01_r"));
-	const TOptional<FVector> Index = InHand(TEXT("index_01_r"));
-	const TOptional<FVector> Pinky = InHand(TEXT("pinky_01_r"));
+	const TOptional<FVector> Middle = InHand(*(TEXT("middle_01_") + Arm.Suffix));
+	const TOptional<FVector> Index = InHand(*(TEXT("index_01_") + Arm.Suffix));
+	const TOptional<FVector> Pinky = InHand(*(TEXT("pinky_01_") + Arm.Suffix));
 	if (Middle && Index && Pinky)
 	{
-		HandLength = Middle->Size();
-		HandKnuckleDir = Middle->GetSafeNormal();
-		HandThumbDir = FVector::VectorPlaneProject(*Index - *Pinky, HandKnuckleDir).GetSafeNormal();
-		// Right hand: knuckles forward and thumb up leaves the palm facing left.
-		HandPalmDir = FVector::CrossProduct(HandKnuckleDir, HandThumbDir);
+		Arm.Length = Middle->Size();
+		Arm.KnuckleDir = Middle->GetSafeNormal();
+		Arm.ThumbDir = FVector::VectorPlaneProject(*Index - *Pinky, Arm.KnuckleDir).GetSafeNormal();
+		// Right hand: knuckles forward and thumb up leaves the palm facing left; the left hand is the mirror.
+		Arm.PalmDir = FVector::CrossProduct(Arm.KnuckleDir, Arm.ThumbDir) * Arm.Side;
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("FirstPersonBody: no finger bones under %s, the tool grip will be approximate"), *HandBone.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("FirstPersonBody: no finger bones under %s, the grip will be approximate"), *Arm.Hand.ToString());
 	}
 
-	// Handle across the fist along the thumb side, head leaning forward by ToolTiltForward, pick along the knuckles.
-	const float Tilt = FMath::DegreesToRadians(ToolTiltForward);
-	const FVector Head = HandThumbDir * FMath::Cos(Tilt) + HandKnuckleDir * FMath::Sin(Tilt);
-	const FVector Pick = HandKnuckleDir * FMath::Cos(Tilt) - HandThumbDir * FMath::Sin(Tilt);
-	const FQuat ToolRotation = FRotationMatrix::MakeFromXY(Pick, -Head).ToQuat();
-	const FVector Grip = HandKnuckleDir * HandLength * GripAlongHand + HandPalmDir * GripPalmOffset;
-	ToolInHand = FTransform(ToolRotation, Grip - ToolRotation.RotateVector(ToolGripPoint * HeldToolScale), FVector(HeldToolScale));
+	// Reference pose in component space, for rebuilding the arm bones from directions plus a shared palm roll.
+	auto InComponent = [&](int32 Bone)
+	{
+		FTransform Xf = RefPose[Bone];
+		for (int32 Parent = Ref.GetParentIndex(Bone); Parent != INDEX_NONE; Parent = Ref.GetParentIndex(Parent))
+		{
+			Xf = Xf * RefPose[Parent];
+		}
+		return Xf;
+	};
+	const int32 UpperBone = Ref.FindBoneIndex(Arm.Upper);
+	const int32 LowerBone = Ref.FindBoneIndex(Arm.Lower);
+	if (Hand != INDEX_NONE && UpperBone != INDEX_NONE && LowerBone != INDEX_NONE)
+	{
+		const FTransform RefUpper = InComponent(UpperBone);
+		const FTransform RefLower = InComponent(LowerBone);
+		const FTransform RefHand = InComponent(Hand);
+		Arm.RefPalm = RefHand.TransformVectorNoScale(Arm.PalmDir);
+		Arm.RefUpperDir = (RefLower.GetLocation() - RefUpper.GetLocation()).GetSafeNormal();
+		Arm.RefLowerDir = (RefHand.GetLocation() - RefLower.GetLocation()).GetSafeNormal();
+		Arm.RefUpperRotation = RefUpper.GetRotation();
+		Arm.RefLowerRotation = RefLower.GetRotation();
+	}
 
-	FingerChains.Reset();
+	Arm.Fingers.Reset();
 	for (const TCHAR* Finger : { TEXT("index"), TEXT("middle"), TEXT("ring"), TEXT("pinky"), TEXT("thumb") })
 	{
-		TArray<int32>& Chain = FingerChains.AddDefaulted_GetRef();
+		TArray<int32>& Chain = Arm.Fingers.AddDefaulted_GetRef();
 		for (int32 Joint = 1; Joint <= 3; ++Joint)
 		{
-			Chain.Add(Ref.FindBoneIndex(*FString::Printf(TEXT("%s_0%d_r"), Finger, Joint)));
+			Chain.Add(Ref.FindBoneIndex(*FString::Printf(TEXT("%s_0%d_%s"), Finger, Joint, *Arm.Suffix)));
 		}
 		if (Chain.Contains(INDEX_NONE))
 		{
@@ -302,19 +361,104 @@ FTransform UFirstPersonBodyComponent::ViewBoneUnderHand(int32 Bone, int32 Hand, 
 	return Xf * HandXf;
 }
 
-FQuat UFirstPersonBodyComponent::HandRotationFor(const FVector& Knuckles, const FVector& ThumbSide) const
+void UFirstPersonBodyComponent::UpdateHandMotion(float DeltaTime)
 {
-	const FQuat InHand = FRotationMatrix::MakeFromXY(HandKnuckleDir, HandThumbDir).ToQuat();
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Character || DeltaTime <= 0.f)
+	{
+		return;
+	}
+	const UCharacterMovementComponent* Movement = Character->GetCharacterMovement();
+	const bool bFalling = Movement && Movement->IsFalling();
+	const float Speed = Character->GetVelocity().Size2D();
+
+	// Walk rhythm follows the distance actually covered; the motion fades in and out with speed (none in the air).
+	const float WalkTarget = bFalling ? 0.f : FMath::Clamp(Speed / WalkSpeedForFullBob, 0.f, 1.f);
+	WalkAlpha = FMath::FInterpTo(WalkAlpha, WalkTarget, DeltaTime, 6.f);
+	SprintAlpha = FMath::FInterpTo(SprintAlpha, (!bFalling && Speed > SprintSpeed) ? 1.f : 0.f, DeltaTime, 5.f);
+	if (!bFalling)
+	{
+		StridePhase = FMath::Fmod(StridePhase + Speed * DeltaTime / StrideLength * UE_TWO_PI, UE_TWO_PI);
+	}
+	BreathPhase = FMath::Fmod(BreathPhase + BreathRate * DeltaTime * UE_TWO_PI, UE_TWO_PI);
+
+	// Turning: the hands lag against the turn (view yaw right -> hands drift left), springing back when it stops.
+	const FRotator View = Character->GetControlRotation();
+	FVector2D LagTarget = FVector2D::ZeroVector;
+	if (bHasLastViewRotation)
+	{
+		const float YawRate = FRotator::NormalizeAxis(View.Yaw - LastViewRotation.Yaw) / DeltaTime;
+		const float PitchRate = FRotator::NormalizeAxis(View.Pitch - LastViewRotation.Pitch) / DeltaTime;
+		LagTarget = FVector2D(-YawRate, -PitchRate) * (TurnSway / 100.f);
+		LagTarget = LagTarget.ClampAxes(-TurnSwayMax, TurnSwayMax);
+	}
+	LastViewRotation = View;
+	bHasLastViewRotation = true;
+	TurnLag = FMath::Vector2DInterpTo(TurnLag, LagTarget, DeltaTime, 8.f);
+
+	// Landing: kick the hands down by the fall speed, then a damped spring brings them back.
+	if (bFalling)
+	{
+		LastFallSpeed = FMath::Max(0.f, -Character->GetVelocity().Z);
+	}
+	else if (bWasFalling)
+	{
+		DipVelocity -= LastFallSpeed / 1000.f * LandingDip * 12.f;
+	}
+	bWasFalling = bFalling;
+	DipVelocity += (-DipOffset * 120.f - DipVelocity * 14.f) * DeltaTime;
+	DipOffset = FMath::Clamp(DipOffset + DipVelocity * DeltaTime, -LandingDip * 2.f, LandingDip);
+}
+
+FVector UFirstPersonBodyComponent::HandTargetInView(const FViewArm& Arm) const
+{
+	FVector Target = Arm.RestInView;
+
+	// Rest height from the real screen shape, so a wide monitor (short vertical view) doesn't push the hands off the bottom.
+	UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+	if (HandScreenDrop > 0.f && Viewport && ViewCamera)
+	{
+		FVector2D Size;
+		Viewport->GetViewportSize(Size);
+		if (Size.X > 1.f && Size.Y > 1.f)
+		{
+			const float Fov = bFirstPersonRendering ? FirstPersonFieldOfView : ViewCamera->FieldOfView;
+			const float HalfVertical = FMath::Atan(FMath::Tan(FMath::DegreesToRadians(Fov * 0.5f)) * Size.Y / Size.X);
+			Target.Z = -Target.X * FMath::Tan(HalfVertical * HandScreenDrop);
+		}
+	}
+
+	// Two bobs per stride (one per footfall); the arms swing in opposition, the tool hand a little less.
+	const float Swing = Arm.bHoldsTool ? 0.6f : 1.f;
+	Target.X += FMath::Sin(StridePhase) * WalkSwing * Swing * Arm.Side * WalkAlpha;
+	Target.Z -= FMath::Abs(FMath::Sin(StridePhase)) * WalkBob * WalkAlpha;
+	Target.Y += FMath::Cos(StridePhase) * WalkSway * WalkAlpha;
+
+	// Breathing shows when standing still and fades out while walking.
+	Target.Z += FMath::Sin(BreathPhase) * BreathAmount * (1.f - WalkAlpha);
+
+	Target.Y += TurnLag.X;
+	Target.Z += TurnLag.Y + DipOffset;
+
+	// Running: hands drop and pull in towards the body.
+	Target.Z -= SprintDrop * SprintAlpha;
+	Target.X -= SprintDrop * 0.6f * SprintAlpha;
+	return Target;
+}
+
+FQuat UFirstPersonBodyComponent::HandRotationFor(const FViewArm& Arm, const FVector& Knuckles, const FVector& ThumbSide)
+{
+	const FQuat InHand = FRotationMatrix::MakeFromXY(Arm.KnuckleDir, Arm.ThumbDir).ToQuat();
 	const FQuat Wanted = FRotationMatrix::MakeFromXY(Knuckles, ThumbSide).ToQuat();
 	return Wanted * InHand.Inverse();
 }
 
-void UFirstPersonBodyComponent::PoseToolArm(float DeltaTime)
+void UFirstPersonBodyComponent::PoseArm(FViewArm& Arm, float DeltaTime)
 {
 	const TArray<FTransform>& Pose = AnimatedBody->GetComponentSpaceTransforms();
-	const int32 Upper = AnimatedBody->GetBoneIndex(UpperArmBone);
-	const int32 Lower = AnimatedBody->GetBoneIndex(LowerArmBone);
-	const int32 Hand = AnimatedBody->GetBoneIndex(HandBone);
+	const int32 Upper = AnimatedBody->GetBoneIndex(Arm.Upper);
+	const int32 Lower = AnimatedBody->GetBoneIndex(Arm.Lower);
+	const int32 Hand = AnimatedBody->GetBoneIndex(Arm.Hand);
 	const FReferenceSkeleton& Ref = ViewBody->GetSkinnedAsset()->GetRefSkeleton();
 	if (!ViewCamera || !Pose.IsValidIndex(Upper) || !Pose.IsValidIndex(Lower) || !Pose.IsValidIndex(Hand) || !ViewBody->BoneSpaceTransforms.IsValidIndex(Hand)
 		|| Ref.GetParentIndex(Hand) != Lower || !Pose.IsValidIndex(Ref.GetParentIndex(Upper)))
@@ -327,21 +471,22 @@ void UFirstPersonBodyComponent::PoseToolArm(float DeltaTime)
 	const FVector Up = FVector::UpVector;
 	const FVector CameraRight = Camera.GetUnitAxis(EAxis::Y);
 
-	// The fist eases towards its spot in the view, so turning the head leaves the axe trailing a little.
-	const FVector GripTarget = Camera.TransformPosition(GripInView);
-	if (!bHasSmoothedGrip || DeltaTime <= 0.f)
+	// The fist eases towards its spot in the view, so turning the head leaves the hands trailing a little.
+	const FVector GripTarget = Camera.TransformPosition(HandTargetInView(Arm));
+	FVector& SmoothedGrip = Arm.SmoothedGrip;
+	if (!Arm.bHasSmoothedGrip || DeltaTime <= 0.f)
 	{
 		SmoothedGrip = GripTarget;
-		bHasSmoothedGrip = true;
+		Arm.bHasSmoothedGrip = true;
 	}
 	else
 	{
 		SmoothedGrip = FMath::VInterpTo(SmoothedGrip, GripTarget, DeltaTime, HandFollowSpeed);
-		SmoothedGrip = GripTarget + (SmoothedGrip - GripTarget).GetClampedToMaxSize(12.f);
+		SmoothedGrip = GripTarget + (SmoothedGrip - GripTarget).GetClampedToMaxSize(3.f);
 	}
 
 	const FVector Shoulder = Pose[Upper].GetLocation();
-	const FVector Pole = (Shoulder + SmoothedGrip) * 0.5f + Camera.TransformVectorNoScale(ElbowDirectionInView.GetSafeNormal()) * 40.f;
+	const FVector Pole = (Shoulder + SmoothedGrip) * 0.5f + Camera.TransformVectorNoScale(Arm.ElbowInView.GetSafeNormal()) * 40.f;
 	const float UpperLength = (Pose[Lower].GetLocation() - Shoulder).Size();
 	const float LowerLength = (Pose[Hand].GetLocation() - Pose[Lower].GetLocation()).Size();
 
@@ -356,48 +501,61 @@ void UFirstPersonBodyComponent::PoseToolArm(float DeltaTime)
 			Knuckles = FQuat::Slerp(FQuat::Identity, FQuat::FindBetweenNormals(Forearm, Knuckles), MaxBend / Bend).RotateVector(Forearm);
 		}
 		FVector Thumb = FVector::VectorPlaneProject(Up, Knuckles).GetSafeNormal();
+		// "Inside" = towards the body's centre line: left of the view for the right hand, right of it for the left.
 		FVector Inside = FVector::CrossProduct(Knuckles, Thumb);
-		if (FVector::DotProduct(Inside, CameraRight) > 0.f)
+		if (FVector::DotProduct(Inside, CameraRight) * Arm.Side > 0.f)
 		{
 			Inside = -Inside;
 		}
 		const float Inward = FMath::DegreesToRadians(ThumbInward);
 		Thumb = Thumb * FMath::Cos(Inward) + Inside * FMath::Sin(Inward);
-		return HandRotationFor(Knuckles, Thumb);
+		return HandRotationFor(Arm, Knuckles, Thumb);
 	};
 
 	// The grip is offset from the wrist, and the wrist's rotation follows the forearm: settle the two in a few passes.
-	const FVector GripInHandSpace = HandKnuckleDir * HandLength * GripAlongHand + HandPalmDir * GripPalmOffset;
+	const FVector GripInHandSpace = Arm.KnuckleDir * Arm.Length * GripAlongHand + Arm.PalmDir * GripPalmOffset;
 	FQuat HandRotation = HandFor((SmoothedGrip - Shoulder).GetSafeNormal());
-	FVector Wrist = SmoothedGrip;
+	FVector Elbow = Pose[Lower].GetLocation();
+	FVector Reached = SmoothedGrip;
 	for (int32 Pass = 0; Pass < 3; ++Pass)
 	{
-		Wrist = SmoothedGrip - HandRotation.RotateVector(GripInHandSpace);
-		FVector Elbow, Reached;
+		const FVector Wrist = SmoothedGrip - HandRotation.RotateVector(GripInHandSpace);
+		// Bone lengths kept: out of reach, the arm straightens and the fist stops short.
 		AnimationCore::SolveTwoBoneIK(Shoulder, Shoulder + FVector(UpperLength, 0.f, 0.f), Shoulder + FVector(UpperLength + LowerLength, 0.f, 0.f),
 			Pole, Wrist, Elbow, Reached, false, 1.0, 1.0);
 		HandRotation = HandFor((Reached - Elbow).GetSafeNormal());
 	}
 
-	// Bone lengths kept: out of reach, the arm straightens and the fist stops short.
-	BendLimb(UpperArmBone, LowerArmBone, HandBone, Wrist, HandRotation, Pole, 1.f, 0.6f);
-
-	// Where the hand really ended up (the forearm took part of its roll, so rebuild it from the bones).
-	const FTransform HandXf = ViewBody->BoneSpaceTransforms[Hand] * ViewBody->BoneSpaceTransforms[Lower] * ViewBody->BoneSpaceTransforms[Upper] * Pose[Ref.GetParentIndex(Upper)];
+	// Upper arm, forearm and hand all take their roll from the same palm direction, so nothing between shoulder and
+	// fingers twists against its neighbour (swinging each bone separately from the animation's pose wrung the arm).
+	const FVector PalmNow = HandRotation.RotateVector(Arm.PalmDir);
+	auto Aim = [&PalmNow, &Arm](const FVector& Dir, const FVector& RefDir, const FQuat& RefRotation)
+	{
+		const FVector Side = FVector::VectorPlaneProject(PalmNow, Dir).GetSafeNormal();
+		const FVector RefSide = FVector::VectorPlaneProject(Arm.RefPalm, RefDir).GetSafeNormal();
+		return FRotationMatrix::MakeFromXY(Dir, Side).ToQuat() * FRotationMatrix::MakeFromXY(RefDir, RefSide).ToQuat().Inverse() * RefRotation;
+	};
+	const int32 Clavicle = Ref.GetParentIndex(Upper);
+	const FTransform NewUpper(Aim((Elbow - Shoulder).GetSafeNormal(), Arm.RefUpperDir, Arm.RefUpperRotation), Shoulder, Pose[Upper].GetScale3D());
+	const FTransform NewLower(Aim((Reached - Elbow).GetSafeNormal(), Arm.RefLowerDir, Arm.RefLowerRotation), Elbow, Pose[Lower].GetScale3D());
+	const FTransform HandXf(HandRotation, Reached, Pose[Hand].GetScale3D());
+	ViewBody->BoneSpaceTransforms[Upper] = NewUpper.GetRelativeTransform(Pose[Clavicle]);
+	ViewBody->BoneSpaceTransforms[Lower] = NewLower.GetRelativeTransform(NewUpper);
+	ViewBody->BoneSpaceTransforms[Hand] = HandXf.GetRelativeTransform(NewLower);
 
 	// Close the fingers round the handle and wrap the thumb over them.
-	const FVector Palm = HandXf.TransformVectorNoScale(HandPalmDir);
-	const FVector KnuckleAxis = HandXf.TransformVectorNoScale(HandKnuckleDir);
-	const FVector ThumbAxis = HandXf.TransformVectorNoScale(HandThumbDir);
-	for (int32 Finger = 0; Finger < FingerChains.Num(); ++Finger)
+	const FVector Palm = HandXf.TransformVectorNoScale(Arm.PalmDir);
+	const FVector KnuckleAxis = HandXf.TransformVectorNoScale(Arm.KnuckleDir);
+	const FVector ThumbAxis = HandXf.TransformVectorNoScale(Arm.ThumbDir);
+	for (int32 Finger = 0; Finger < Arm.Fingers.Num(); ++Finger)
 	{
-		const TArray<int32>& Chain = FingerChains[Finger];
+		const TArray<int32>& Chain = Arm.Fingers[Finger];
 		if (Chain.Num() != 3)
 		{
 			continue;
 		}
-		const bool bThumb = Finger == FingerChains.Num() - 1;
-		const FVector Curl = bThumb ? ThumbCurl : FingerCurl;
+		const bool bThumb = Finger == Arm.Fingers.Num() - 1;
+		const FVector Curl = bThumb ? Arm.ThumbCurl : Arm.FingerCurl;
 
 		// Fingers hinge about the thumb-side axis; the thumb folds about an axis across its own first bone.
 		FVector Axis = ThumbAxis;
@@ -423,7 +581,10 @@ void UFirstPersonBodyComponent::PoseToolArm(float DeltaTime)
 		}
 	}
 
-	HeldTool->SetRelativeTransform(ToolInHand * HandXf);
+	if (Arm.bHoldsTool)
+	{
+		HeldTool->SetRelativeTransform(ToolInHand * HandXf);
+	}
 }
 
 void UFirstPersonBodyComponent::BendLimb(FName UpperBone, FName LowerBone, FName EndBone, const FVector& EndLocation, const FQuat& EndRotation, const FVector& Pole, float MaxStretch, float TwistToLower)

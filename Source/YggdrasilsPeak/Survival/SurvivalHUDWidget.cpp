@@ -48,7 +48,7 @@ void USurvivalHUDWidget::NativeConstruct()
 	{
 		if (Widget)
 		{
-			Widget->SetRenderOpacity(0.f);
+			SetFadedOpacity(Widget, 0.f);
 		}
 	}
 
@@ -211,7 +211,15 @@ void USurvivalHUDWidget::FadeWidget(UWidget* Widget, float TargetOpacity, float 
 
 	const float Current = Widget->GetRenderOpacity();
 	const float Speed = TargetOpacity > Current ? InSpeed : OutSpeed;
-	Widget->SetRenderOpacity(FMath::FInterpTo(Current, TargetOpacity, DeltaTime, Speed));
+	SetFadedOpacity(Widget, FMath::FInterpTo(Current, TargetOpacity, DeltaTime, Speed));
+}
+
+void USurvivalHUDWidget::SetFadedOpacity(UWidget* Widget, float Opacity)
+{
+	// The panels are BackgroundBlurs: their blur ignores render opacity, so a faded-out panel would still leave an
+	// empty blurred pill on screen. Hide it outright once it is (nearly) transparent; Hidden keeps the stack layout.
+	Widget->SetRenderOpacity(Opacity);
+	Widget->SetVisibility(Opacity > 0.01f ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 }
 
 void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -259,7 +267,7 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 		WarningStrength[Index] = FMath::FInterpTo(WarningStrength[Index], bActive ? 1.f : 0.f, InDeltaTime, bActive ? FadeInSpeed : FadeOutSpeed);
 		if (Icons[Index])
 		{
-			Icons[Index]->SetRenderOpacity(WarningStrength[Index] * (bActive ? Pulse : 1.f));
+			SetFadedOpacity(Icons[Index], WarningStrength[Index] * (bActive ? Pulse : 1.f));
 		}
 	}
 

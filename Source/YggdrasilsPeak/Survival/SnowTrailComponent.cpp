@@ -58,8 +58,26 @@ void USnowTrailComponent::BeginPlay()
 	{
 		StepPuff = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/Environment/Snow/NS_SnowPuff.NS_SnowPuff"));
 	}
+	// Characters on other skeletons (e.g. a Mixamo-style rig retargeted from the mannequin) name their feet differently.
+	auto FindFoot = [this](FName& Bone, std::initializer_list<const TCHAR*> Alternatives)
+	{
+		for (const TCHAR* Name : Alternatives)
+		{
+			if (Body->GetBoneIndex(Bone) != INDEX_NONE)
+			{
+				return;
+			}
+			Bone = Name;
+		}
+	};
+	if (Body)
+	{
+		FindFoot(LeftFootBone, { TEXT("LeftFoot"), TEXT("mixamorig:LeftFoot"), TEXT("foot_l") });
+		FindFoot(RightFootBone, { TEXT("RightFoot"), TEXT("mixamorig:RightFoot"), TEXT("foot_r") });
+	}
 	if (!Body || Body->GetBoneIndex(LeftFootBone) == INDEX_NONE || Body->GetBoneIndex(RightFootBone) == INDEX_NONE)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("SnowTrail: no foot bones found on %s, footprints are off"), Body ? *GetNameSafe(Body->GetSkeletalMeshAsset()) : TEXT("(no mesh)"));
 		SetComponentTickEnabled(false);
 		return;
 	}

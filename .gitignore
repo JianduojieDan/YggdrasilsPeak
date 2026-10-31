@@ -113,3 +113,5 @@ Content/
 *.mov
 *.avi
 *.webm
+
+__pycache__/

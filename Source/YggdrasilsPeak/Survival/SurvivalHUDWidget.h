@@ -198,6 +198,9 @@ private:
 	void UpdateAltitudeText(const FSurvivalSnapshot& Snapshot) const;
 
 	static void FadeWidget(UWidget* Widget, float TargetOpacity, float DeltaTime, float InSpeed, float OutSpeed);
+
+	/** Sets the opacity and hides the widget completely when it is (nearly) transparent. */
+	static void SetFadedOpacity(UWidget* Widget, float Opacity);
 	void UpdateDebugText(const FSurvivalSnapshot& Snapshot) const;
 
 	TWeakObjectPtr<USurvivalComponent> Survival;
