@@ -79,12 +79,33 @@ public:
 	UFUNCTION(BlueprintPure, Category="Survival")
 	int32 GetCarriedBottles() const { return CarriedBottles; }
 
+	/** Seconds of bottled oxygen left in the bottle being breathed (0 = not on a bottle). */
+	float GetBottleSecondsLeft() const { return OxygenBottleRemaining; }
+
+	/** Restores the spare bottle count (checkpoint / save game). */
+	void SetCarriedBottles(int32 Count);
+
+	/** Speed multiplier from the pack's weight (UInventoryComponent). */
+	UFUNCTION(BlueprintCallable, Category="Survival")
+	void SetLoadSpeedMultiplier(float Multiplier) { LoadSpeedMultiplier = FMath::Clamp(Multiplier, 0.1f, 1.f); }
+
+	/** Careful footing (a ladder over a crevasse): slows walking, and no sprinting while below 1. */
+	void SetFootingSpeedMultiplier(float Multiplier) { FootingSpeedMultiplier = FMath::Clamp(Multiplier, 0.1f, 1.f); }
+
+	/** On a climbing face: stamina does not recover. */
+	void SetClimbing(bool bOn) { bClimbing = bOn; }
+
+	/** Kills the character at once with a cause the HUD shows (a fall into a crevasse). */
+	void KillBy(const FText& Cause);
+
 	/** Clipped to a fixed rope: uphill and wind cost less. */
 	UFUNCTION(BlueprintCallable, Category="Survival")
 	void SetOnRope(bool bClipped) { bOnRope = bClipped; }
 
 	UFUNCTION(BlueprintPure, Category="Survival")
 	bool IsOnRope() const { return bOnRope; }
+
+	bool IsSheltered() const { return bSheltered; }
 
 	/** How deep the snow underfoot is, 0 (hard / none) .. 1 (deepest powder): slows walking and costs stamina. */
 	UFUNCTION(BlueprintCallable, Category="Survival")
@@ -141,6 +162,10 @@ public:
 	void AddToStat(ESurvivalStat Stat, float Delta);
 
 	/** Sets a stat directly, clamped to its range. Intended for debug tools and tests. */
+	/** Sets a stat directly (save game / checkpoint restore). */
+	UFUNCTION(BlueprintCallable, Category="Survival")
+	void SetStat(ESurvivalStat Stat, float Value) { DebugSetStat(Stat, Value); }
+
 	UFUNCTION(BlueprintCallable, Category="Survival|Debug")
 	void DebugSetStat(ESurvivalStat Stat, float Value);
 
@@ -198,6 +223,9 @@ private:
 	/** Spare bottles in the pack; kept through death and revive. */
 	int32 CarriedBottles = 0;
 	float WeatherSpeedMultiplier = 1.f;
+	float LoadSpeedMultiplier = 1.f;
+	float FootingSpeedMultiplier = 1.f;
+	bool bClimbing = false;
 	bool bSheltered = false;
 	bool bOnRope = false;
 	float SnowDepth = 0.f;

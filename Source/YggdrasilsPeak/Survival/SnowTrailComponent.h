@@ -124,9 +124,21 @@ public:
 	UPROPERTY(EditAnywhere, Category="Snow Trail")
 	FVector PrintHalfSize = FVector(16.f, 7.f, 20.f);
 
-	/** A foot bone counts as planted below this height above the ground under it (cm) and lifted again above it + 4 (planted feet sit ~7 cm up, lifted ones 13-22). */
+	/** A foot counts as planted in the lowest this fraction of its own up-down swing (measured per foot, so any skeleton or clip works)... */
+	UPROPERTY(EditAnywhere, Category="Snow Trail", meta=(ClampMin="0", ClampMax="1"))
+	float PlantFraction = 0.3f;
+
+	/** ...and lifted again this fraction of the swing above that. */
+	UPROPERTY(EditAnywhere, Category="Snow Trail", meta=(ClampMin="0", ClampMax="1"))
+	float LiftHysteresis = 0.2f;
+
+	/** Swing below this (cm) is treated as this, so a shuffling or standing foot's jitter never stamps prints. */
+	UPROPERTY(EditAnywhere, Category="Snow Trail", meta=(ClampMin="0.5"))
+	float MinSwingCm = 4.f;
+
+	/** How fast the remembered lowest/highest foot heights relax towards each other (cm/s), so slopes and clip changes are followed. */
 	UPROPERTY(EditAnywhere, Category="Snow Trail", meta=(ClampMin="0"))
-	float PlantHeight = 10.f;
+	float SwingDriftCmPerSecond = 3.f;
 
 	/** How far the body sinks into the softest snow (cm); hard crust, rock and props: none. */
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Sinking", meta=(ClampMin="0", ClampMax="60"))
@@ -143,6 +155,27 @@ public:
 	/** Softness (0 hard .. 1 deep powder) of the snow the player is standing on, 0 when not on snow. */
 	float GetGroundSoftness() const { return GroundSoftness; }
 
+	// ---- Footstep sounds (one per foot plant, chosen by the surface under the foot)
+	/** Soft / wind-packed snow. Empty = Ultra Dynamic Sky's Snow_Compress recordings. */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Footsteps")
+	TArray<TObjectPtr<USoundBase>> SnowSteps;
+
+	/** Crampons on bare glacier ice, hard crust and the seracs' ice. Empty = /Game/Audio/Footsteps/Step_Ice_*. */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Footsteps")
+	TArray<TObjectPtr<USoundBase>> IceSteps;
+
+	/** Moraine rubble and rock. Empty = /Game/Audio/Footsteps/Step_Rubble_*. */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Footsteps")
+	TArray<TObjectPtr<USoundBase>> RubbleSteps;
+
+	/** Crampons on an aluminium ladder rung. Empty = /Game/Audio/Footsteps/Step_Ladder_*. */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Footsteps")
+	TArray<TObjectPtr<USoundBase>> LadderSteps;
+
+	/** Footstep loudness at walking speed (sprinting is a little louder, standing still quieter). */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Footsteps", meta=(ClampMin="0", ClampMax="2"))
+	float FootstepVolume = 0.5f;
+
 	UPROPERTY(EditAnywhere, Category="Snow Trail")
 	FName LeftFootBone = TEXT("foot_l");
 
@@ -155,6 +188,9 @@ public:
 	 *  so what you see, what you sink into and how fast you walk agree.
 	 */
 	static float SnowSoftness(const FVector& Location, const FVector& GroundNormal);
+
+	/** Bare glacier ice / debris (the landscape's Glacier zones below ~6000 m), where there is no snow to sink into. */
+	static bool IsGlacierHard(const FVector& Location);
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
@@ -172,13 +208,20 @@ private:
 		bool bLeft = false;
 		/** Height of the foot bone above the snow surface under it, last time it was measured (cm). */
 		float Height = 0.f;
+		/** Lowest / highest foot height over the last steps (cm), relaxing towards each other at SwingDriftCmPerSecond. */
+		float Lowest = 1000.f;
+		float Highest = -1000.f;
 	};
 
 	/** Samples the snow under the player and eases the body's sink depth towards it. */
 	void UpdateSinking(float DeltaTime);
 	/** True when the hit is the landscape's snow (not its rock, not a prop). */
 	static bool IsSnow(const FHitResult& Hit);
-	void UpdateFoot(FFootState& Foot, const FVector& WalkDirection);
+	void PlayFootstep(const FHitResult& Hit);
+	void LoadDefaultFootsteps();
+	int32 LastStepVariation = -1;
+	/** Glacier rubble or bare ice (T_GlacierMask, below ~6000 m): no snow to sink into or leave prints in. */
+	void UpdateFoot(FFootState& Foot, const FVector& WalkDirection, float DeltaTime);
 	void StampPrint(const FHitResult& Hit, const FVector& WalkDirection, bool bLeft);
 	void FillInPrints(float Seconds);
 

@@ -7,8 +7,12 @@
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalConfig.h"
 #include "Components/DecalComponent.h"
+#include "Environment/CrevasseCrossing.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Canvas.h"
+#include "Engine/Texture2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
@@ -50,6 +54,7 @@ void USnowTrailComponent::BeginPlay()
 
 	const ACharacter* Character = Cast<ACharacter>(GetOwner());
 	Body = Character ? Character->GetMesh() : nullptr;
+	LoadDefaultFootsteps();
 	if (!FootprintMaterial)
 	{
 		FootprintMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Environment/Snow/M_Footprint.M_Footprint"));
@@ -246,7 +251,7 @@ void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 			const FVector2D Pixel = (Sole - TrailCentre) * PixelsPerCm + CanvasSize * 0.5f;
 			Canvas->K2_DrawMaterial(BootInstances[Foot.bLeft ? 1 : 0], Pixel - BootSize * 0.5f, BootSize, FVector2D::ZeroVector, FVector2D::UnitVector, Yaw, FVector2D(0.5f, 0.5f));
 		}
-		else if (Foot.Height < CurrentSink)
+		else if (Foot.Height - Foot.Lowest < CurrentSink)
 		{
 			// ...and a lifted one still under the surface of deep powder ploughs a channel to the next print.
 			const FVector2D Pixel = (FVector2D(FootLocation) - TrailCentre) * PixelsPerCm + CanvasSize * 0.5f;
@@ -310,11 +315,11 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	}
 
 	const FVector WalkDirection = Velocity.GetSafeNormal2D();
-	UpdateFoot(Feet[0], WalkDirection);
-	UpdateFoot(Feet[1], WalkDirection);
+	UpdateFoot(Feet[0], WalkDirection, DeltaTime);
+	UpdateFoot(Feet[1], WalkDirection, DeltaTime);
 }
 
-void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirection)
+void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirection, float DeltaTime)
 {
 	// Height of the foot bone above the ground right under it (the skeleton root shifts on slopes).
 	const FVector FootLocation = Body->GetSocketLocation(Foot.Bone);
@@ -328,16 +333,145 @@ void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirect
 	// The animated body's foot IK keeps its feet on the snow surface even while sunk, so no correction is needed.
 	const float Height = float(FootLocation.Z - Hit.ImpactPoint.Z);
 	Foot.Height = Height;
+
+	// Each foot's own lowest and highest height over the last steps: the planted height depends on the skeleton
+	// (Mixamo ankles sit higher than the mannequin's) and the lift on the clip, so thresholds sit inside that range.
+	const float Drift = SwingDriftCmPerSecond * DeltaTime;
+	Foot.Lowest = FMath::Min(Height, Foot.Lowest + Drift);
+	Foot.Highest = FMath::Max(Height, Foot.Highest - Drift);
+	const float Swing = FMath::Max(Foot.Highest - Foot.Lowest, MinSwingCm);
+	const float PlantBelow = Foot.Lowest + Swing * PlantFraction;
 	if (Foot.bPlanted)
 	{
-		Foot.bPlanted = Height < PlantHeight + 4.f;
+		Foot.bPlanted = Height < PlantBelow + Swing * LiftHysteresis;
 		return;
 	}
-	if (Height < PlantHeight)
+	if (Height < PlantBelow)
 	{
 		Foot.bPlanted = true;
+		PlayFootstep(Hit);
 		StampPrint(Hit, WalkDirection, Foot.bLeft);
 	}
+}
+
+namespace
+{
+	/** T_GlacierMask (real glacier outlines on the heightmap grid), read once into memory for the footstep checks. */
+	struct FGlacierMask
+	{
+		TArray<uint8> Pixels;
+		int32 Size = 0;
+		bool bLoaded = false;
+
+		void Load()
+		{
+			bLoaded = true;
+			const UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Environment/Glacier/T_GlacierMask.T_GlacierMask"));
+#if WITH_EDITORONLY_DATA
+			if (Tex && Tex->Source.IsValid() && Tex->Source.GetFormat() == TSF_G8)
+			{
+				TArray64<uint8> Data;
+				const_cast<UTexture2D*>(Tex)->Source.GetMipData(Data, 0);
+				Size = Tex->Source.GetSizeX();
+				Pixels.Append(Data.GetData(), int32(Data.Num()));
+			}
+#endif
+		}
+
+		float Sample(const FVector& Location)
+		{
+			if (!bLoaded)
+			{
+				Load();
+			}
+			if (Size <= 0)
+			{
+				return 0.f;
+			}
+			const double Extent = 3374.24 * 1009.0;
+			const int32 X = FMath::FloorToInt32((Location.X + 504000.0) / Extent * Size);
+			const int32 Y = FMath::FloorToInt32((Location.Y + 504000.0) / Extent * Size);
+			return (X >= 0 && Y >= 0 && X < Size && Y < Size) ? Pixels[Y * Size + X] / 255.f : 0.f;
+		}
+	};
+	FGlacierMask GlacierMask;
+}
+
+bool USnowTrailComponent::IsGlacierHard(const FVector& Location)
+{
+	// Same zones as the landscape's Glacier node (debris tongue and bare ice up to ~6000 m); its noisy snow patches
+	// can't be matched on the CPU (GPU sin differs), so the whole zone counts as rubble / ice here.
+	const USurvivalConfig* C = GetDefault<USurvivalConfig>();
+	const float Elevation = C->ReferenceElevationMeters + float(Location.Z - C->ReferenceWorldZ) / 100.f;
+	return Elevation < 5975.f && GlacierMask.Sample(Location) > 0.5f;
+}
+
+void USnowTrailComponent::LoadDefaultFootsteps()
+{
+	// Dir/NameNN.NameNN (or NameN when Digits is 1)
+	auto Fill = [](TArray<TObjectPtr<USoundBase>>& Sounds, const FString& Dir, const FString& Name, int32 Count, int32 Digits)
+	{
+		if (Sounds.Num() > 0)
+		{
+			return;
+		}
+		for (int32 i = 1; i <= Count; ++i)
+		{
+			const FString Asset = Name + (Digits == 2 ? FString::Printf(TEXT("%02d"), i) : FString::FromInt(i));
+			if (USoundBase* Sound = LoadObject<USoundBase>(nullptr, *(Dir / Asset + TEXT(".") + Asset)))
+			{
+				Sounds.Add(Sound);
+			}
+		}
+	};
+	Fill(SnowSteps, TEXT("/Game/Content_From_Internet/UltraDynamicSky/Sound/Snow"), TEXT("Snow_Compress_"), 6, 1);
+	Fill(IceSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Ice_"), 5, 2);
+	Fill(RubbleSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Rubble_"), 5, 2);
+	Fill(LadderSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Ladder_"), 5, 2);
+}
+
+void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
+{
+	// Which surface: the ladder over a crevasse, the landscape (rock, glacier rubble / bare ice, hard crust or
+	// snow, the same zones the landscape material and the footprints use), or ice meshes (seracs, crevasse lips).
+	const TArray<TObjectPtr<USoundBase>>* Set = &SnowSteps;
+	const ACrevasseCrossing* Crevasse = Cast<ACrevasseCrossing>(Hit.GetActor());
+	if (Crevasse && Hit.GetComponent() == Crevasse->Ladder)
+	{
+		Set = &LadderSteps;
+	}
+	else if (Cast<ALandscapeProxy>(Hit.GetActor()))
+	{
+		const UPhysicalMaterial* Surface = Hit.PhysMaterial.Get();
+		const USurvivalConfig* C = GetDefault<USurvivalConfig>();
+		const float ElevationM = C->ReferenceElevationMeters + float(Hit.ImpactPoint.Z - C->ReferenceWorldZ) / 100.f;
+		if ((Surface && Surface->GetName().Contains(TEXT("Rock"))) || (IsGlacierHard(Hit.ImpactPoint) && ElevationM < 5250.f))
+		{
+			Set = &RubbleSteps;
+		}
+		else if (IsGlacierHard(Hit.ImpactPoint) || SnowSoftness(Hit.ImpactPoint, Hit.ImpactNormal) < 0.15f)
+		{
+			Set = &IceSteps;
+		}
+	}
+	else if (Hit.ImpactNormal.Z < 0.75f)
+	{
+		Set = &IceSteps;     // the steep side of a serac or crevasse lip; their tops carry snow
+	}
+	if (Set->Num() == 0)
+	{
+		return;
+	}
+	// never the same variation twice in a row
+	int32 Pick = FMath::RandRange(0, Set->Num() - 1);
+	if (Set->Num() > 1 && Pick == LastStepVariation)
+	{
+		Pick = (Pick + 1) % Set->Num();
+	}
+	LastStepVariation = Pick;
+	const float Speed = GetOwner()->GetVelocity().Size2D();
+	const float Volume = FootstepVolume * FMath::GetMappedRangeValueClamped(FVector2f(0.f, 450.f), FVector2f(0.6f, 1.2f), Speed);
+	UGameplayStatics::PlaySoundAtLocation(this, (*Set)[Pick], Hit.ImpactPoint, Volume, FMath::FRandRange(0.92f, 1.08f));
 }
 
 bool USnowTrailComponent::IsSnow(const FHitResult& Hit)
@@ -348,7 +482,7 @@ bool USnowTrailComponent::IsSnow(const FHitResult& Hit)
 		return false;
 	}
 	const UPhysicalMaterial* Surface = Hit.PhysMaterial.Get();
-	return !Surface || !Surface->GetName().Contains(TEXT("Rock"));
+	return (!Surface || !Surface->GetName().Contains(TEXT("Rock"))) && !IsGlacierHard(Hit.ImpactPoint);
 }
 
 void USnowTrailComponent::UpdateSinking(float DeltaTime)

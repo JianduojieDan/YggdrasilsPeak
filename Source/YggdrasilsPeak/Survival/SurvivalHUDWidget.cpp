@@ -1,12 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Survival/SurvivalHUDWidget.h"
+#include "Survival/InventoryComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/ExpeditionComponent.h"
 #include "Blueprint/WidgetTree.h"
+#include "Components/Border.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
@@ -79,6 +83,63 @@ void USurvivalHUDWidget::CreateAltitudeText()
 	TextSlot->SetAutoSize(true);
 }
 
+void USurvivalHUDWidget::CreateReadingPanel()
+{
+	UCanvasPanel* Canvas = WidgetTree ? Cast<UCanvasPanel>(WidgetTree->RootWidget) : nullptr;
+	if (ReadingPanel || !Canvas)
+	{
+		return;
+	}
+	ReadingPanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ReadingPanel"));
+	ReadingPanel->SetBrushColor(FLinearColor(0.02f, 0.025f, 0.03f, 0.78f));
+	ReadingPanel->SetPadding(FMargin(36.f, 28.f));
+
+	UVerticalBox* Box = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ReadingBox"));
+	ReadingPanel->SetContent(Box);
+	auto MakeText = [this](const TCHAR* Name, int32 Size, const FLinearColor& Colour)
+	{
+		UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Name);
+		FSlateFontInfo Font = Text->GetFont();
+		Font.Size = Size;
+		Text->SetFont(Font);
+		Text->SetColorAndOpacity(FSlateColor(Colour));
+		Text->SetAutoWrapText(true);
+		return Text;
+	};
+	ReadingTitle = MakeText(TEXT("ReadingTitle"), 22, FLinearColor(1.f, 0.86f, 0.6f, 1.f));
+	ReadingBody = MakeText(TEXT("ReadingBody"), 15, FLinearColor(0.92f, 0.94f, 0.96f, 1.f));
+	Box->AddChildToVerticalBox(ReadingTitle)->SetPadding(FMargin(0.f, 0.f, 0.f, 14.f));
+	Box->AddChildToVerticalBox(ReadingBody);
+	UTextBlock* Hint = MakeText(TEXT("ReadingHint"), 11, FLinearColor(0.7f, 0.74f, 0.78f, 0.8f));
+	Hint->SetText(NSLOCTEXT("HUD", "CloseReading", "[E] close"));
+	Box->AddChildToVerticalBox(Hint)->SetPadding(FMargin(0.f, 18.f, 0.f, 0.f));
+
+	UCanvasPanelSlot* PanelSlot = Canvas->AddChildToCanvas(ReadingPanel);
+	PanelSlot->SetAnchors(FAnchors(0.5f, 0.5f));
+	PanelSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+	PanelSlot->SetSize(FVector2D(720.f, 0.f));
+	PanelSlot->SetAutoSize(true);
+	ReadingPanel->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void USurvivalHUDWidget::HandleReading(const FText& Title, const FText& Body, bool bOpen)
+{
+	CreateReadingPanel();
+	if (!ReadingPanel)
+	{
+		return;
+	}
+	if (bOpen)
+	{
+		ReadingTitle->SetText(Title);
+		ReadingBody->SetText(Body);
+		// wrap the body at the panel's width (auto-sized panels otherwise grow to one long line)
+		ReadingBody->SetWrapTextAt(660.f);
+		ReadingTitle->SetWrapTextAt(660.f);
+	}
+	ReadingPanel->SetVisibility(bOpen ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+}
+
 void USurvivalHUDWidget::NativeDestruct()
 {
 	Unbind();
@@ -105,6 +166,7 @@ void USurvivalHUDWidget::TryBind()
 	if (Expedition.IsValid())
 	{
 		Expedition->OnMessage.AddDynamic(this, &USurvivalHUDWidget::HandleExpeditionMessage);
+		Expedition->OnReading.AddDynamic(this, &USurvivalHUDWidget::HandleReading);
 	}
 
 	if (Found)
@@ -127,6 +189,7 @@ void USurvivalHUDWidget::Unbind()
 	if (UExpeditionComponent* BoundExpedition = Expedition.Get())
 	{
 		BoundExpedition->OnMessage.RemoveDynamic(this, &USurvivalHUDWidget::HandleExpeditionMessage);
+		BoundExpedition->OnReading.RemoveDynamic(this, &USurvivalHUDWidget::HandleReading);
 	}
 	Survival.Reset();
 	Expedition.Reset();
@@ -322,6 +385,14 @@ void USurvivalHUDWidget::UpdateAltitudeText(const FSurvivalSnapshot& Snapshot) c
 	if (Snapshot.bSheltered)
 	{
 		Status.Add(TEXT("camp"));
+	}
+	if (const APawn* Pawn = GetOwningPlayerPawn())
+	{
+		if (const UInventoryComponent* Pack = Pawn->FindComponentByClass<UInventoryComponent>())
+		{
+			Status.Add(FString::Printf(TEXT("pack %d/%d kg  ·  food %d [1]  ·  water %d [2]"), FMath::RoundToInt(Pack->GetLoadKg()),
+				FMath::RoundToInt(Pack->MaxKg), Pack->GetCount(TEXT("Ration")), Pack->GetCount(TEXT("Water"))));
+		}
 	}
 	const FString StatusLine = FString::Join(Status, TEXT("  ·  "));
 

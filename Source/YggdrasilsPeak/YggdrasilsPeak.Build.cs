@@ -18,7 +18,8 @@ public class YggdrasilsPeak : ModuleRules
 			"StateTreeModule",
 			"GameplayStateTreeModule",
 			"UMG",
-			"Slate"
+			"Slate",
+			"SlateCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "Landscape", "AnimationCore", "Niagara" });

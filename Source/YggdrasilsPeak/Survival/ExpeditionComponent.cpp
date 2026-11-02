@@ -2,11 +2,19 @@
 
 #include "Survival/ExpeditionComponent.h"
 
+#include "Survival/InventoryComponent.h"
+#include "Survival/ClimbingComponent.h"
+#include "Survival/CompassComponent.h"
+#include "Survival/SanityComponent.h"
 #include "Survival/SnowTrailComponent.h"
 #include "Survival/SpindriftComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalConfig.h"
+#include "Survival/YggSaveGame.h"
+#include "Survival/YggTime.h"
 #include "Environment/FixedRope.h"
+#include "Environment/TrailCheckpoint.h"
+#include "Survival/StoryClue.h"
 #include "Environment/RouteLandmark.h"
 #include "Camera/CameraComponent.h"
 #include "Engine/World.h"
@@ -14,8 +22,20 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/WorldSettings.h"
 #include "HAL/IConsoleManager.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+
+static TAutoConsoleVariable<int32> CVarLoadOnStart(TEXT("ygg.Save.LoadOnStart"), 1,
+	TEXT("1 = starting the game continues from the last camp saved on disk, 0 = always a fresh start."));
+
+static FAutoConsoleCommand CmdNewGame(TEXT("ygg.NewGame"), TEXT("Deletes the expedition save; the next start is a new game."),
+	FConsoleCommandDelegate::CreateLambda([]()
+	{
+		UGameplayStatics::DeleteGameInSlot(UYggSaveGame::SlotName, 0);
+		UE_LOG(LogTemp, Display, TEXT("Expedition save deleted - restart to begin a new game."));
+	}));
 
 UExpeditionComponent::UExpeditionComponent()
 {
@@ -40,6 +60,10 @@ void UExpeditionComponent::BeginPlay()
 	{
 		Ropes.Add(*It);
 	}
+	for (TActorIterator<ATrailCheckpoint> It(GetWorld()); It; ++It)
+	{
+		TrailCheckpoints.Add(*It);
+	}
 	if (const ACharacter* Character = Cast<ACharacter>(GetOwner()))
 	{
 		DefaultWalkableFloorAngle = Character->GetCharacterMovement()->GetWalkableFloorAngle();
@@ -52,6 +76,24 @@ void UExpeditionComponent::BeginPlay()
 		USnowTrailComponent* Trails = NewObject<USnowTrailComponent>(GetOwner(), TEXT("SnowTrails"));
 		Trails->RegisterComponent();
 	}
+	// The mind: sanity, hallucinations.
+	if (Pawn && Pawn->IsLocallyControlled() && !GetOwner()->FindComponentByClass<USanityComponent>())
+	{
+		USanityComponent* Mind = NewObject<USanityComponent>(GetOwner(), TEXT("Sanity"));
+		Mind->RegisterComponent();
+	}
+	// Father's rune compass, held up with Q.
+	if (Pawn && Pawn->IsLocallyControlled() && !GetOwner()->FindComponentByClass<UCompassComponent>())
+	{
+		UCompassComponent* Compass = NewObject<UCompassComponent>(GetOwner(), TEXT("Compass"));
+		Compass->RegisterComponent();
+	}
+	// Climbing steep faces (not part of the Blueprint either).
+	if (Pawn && !GetOwner()->FindComponentByClass<UClimbingComponent>())
+	{
+		UClimbingComponent* Climbing = NewObject<UClimbingComponent>(GetOwner(), TEXT("Climbing"));
+		Climbing->RegisterComponent();
+	}
 	// Blowing snow around the local player, driven by the wind read in UpdateWeather.
 	if (Pawn && Pawn->IsLocallyControlled() && !GetOwner()->FindComponentByClass<USpindriftComponent>())
 	{
@@ -60,11 +102,21 @@ void UExpeditionComponent::BeginPlay()
 	}
 
 	Survival = GetOwner()->FindComponentByClass<USurvivalComponent>();
+	// The pack (supplies and weight), unless the Blueprint already has one.
+	if (Pawn && Pawn->IsLocallyControlled() && !GetOwner()->FindComponentByClass<UInventoryComponent>())
+	{
+		UInventoryComponent* Pack = NewObject<UInventoryComponent>(GetOwner(), TEXT("Pack"));
+		Pack->RegisterComponent();
+	}
 	if (Survival.IsValid())
 	{
 		Survival->OnDeath.AddDynamic(this, &UExpeditionComponent::HandleDeath);
 	}
 	StartTime = GetWorld()->GetTimeSeconds();
+	if (CVarLoadOnStart.GetValueOnGameThread() != 0 && Pawn && Pawn->IsLocallyControlled())
+	{
+		GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UExpeditionComponent::LoadSavedExpedition);
+	}
 
 	// Ultra Dynamic Weather is a Blueprint; find it by class name so the code has no hard dependency on it.
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
@@ -169,11 +221,25 @@ void UExpeditionComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// Fell through the world (a gap in the terrain, pushed out of geometry): back to the last checkpoint before the
+	// engine's kill height deletes the climber, which would leave the game without a player.
+	if (GetOwner()->GetActorLocation().Z < GetWorld()->GetWorldSettings()->KillZ * 0.5f)
+	{
+		AActor* Back = LastCheckpoint.IsValid() ? LastCheckpoint.Get() : (Camps.Num() > 0 ? static_cast<AActor*>(Camps[0].Get()) : nullptr);
+		if (Back)
+		{
+			TeleportNear(Back);
+			Say(FText::Format(NSLOCTEXT("Expedition", "FellOut", "You fell out of the world - back to {0}."),
+				FText::FromString(LastCheckpoint.IsValid() ? LastCheckpointName : Camps[0]->LandmarkName)), 5.f);
+		}
+	}
+
 	CampCheckTimer -= DeltaTime;
 	if (CampCheckTimer <= 0.f)
 	{
 		CampCheckTimer = 0.5f;
 		UpdateCamps();
+		UpdateTrailCheckpoints();
 		UpdateWeather();
 	}
 	RopeCheckTimer -= DeltaTime;
@@ -259,6 +325,7 @@ void UExpeditionComponent::UpdateCamps()
 	{
 		bSummitReached = true;
 		LastCamp = Inside;
+		SaveCheckpoint(Inside, Inside->LandmarkName);
 		Say(FText::Format(NSLOCTEXT("Expedition", "Summit", "SUMMIT - {0}. Now get back down alive."), FText::FromString(Inside->LandmarkName)), 10.f);
 		return;
 	}
@@ -266,17 +333,19 @@ void UExpeditionComponent::UpdateCamps()
 	if (Inside->bFinishLine && bSummitReached && !bFinished)
 	{
 		bFinished = true;
-		const int32 Seconds = FMath::RoundToInt(GetWorld()->GetTimeSeconds() - StartTime);
+		const int32 Seconds = FMath::RoundToInt(SavedPlaySeconds + GetWorld()->GetTimeSeconds() - StartTime);
 		Say(FText::Format(NSLOCTEXT("Expedition", "Finished", "EXPEDITION COMPLETE - summit and back in {0}h {1}m, {2} deaths."),
 			FText::AsNumber(Seconds / 3600), FText::AsNumber((Seconds / 60) % 60), FText::AsNumber(Deaths)), 20.f);
 		LastCamp = Inside;
+		SaveCheckpoint(Inside, Inside->LandmarkName);
 		return;
 	}
 
 	const bool bNew = LastCamp.Get() != Inside;
 	LastCamp = Inside;
-	Say(FText::Format(bNew ? NSLOCTEXT("Expedition", "CampNew", "{0} - shelter. Checkpoint saved.")
-		: NSLOCTEXT("Expedition", "Camp", "{0} - shelter."), FText::FromString(Inside->LandmarkName)), 5.f);
+	SaveCheckpoint(Inside, Inside->LandmarkName);
+	Say(FText::Format(bNew ? NSLOCTEXT("Expedition", "CampNew", "{0} - shelter. Checkpoint saved.  [R] rest")
+		: NSLOCTEXT("Expedition", "Camp", "{0} - shelter.  [R] rest"), FText::FromString(Inside->LandmarkName)), 5.f);
 }
 
 void UExpeditionComponent::HandleDeath()
@@ -289,7 +358,7 @@ void UExpeditionComponent::HandleDeath()
 
 	const FText Cause = Survival.IsValid() && !Survival->GetDeathCause().IsEmpty() ? Survival->GetDeathCause()
 		: NSLOCTEXT("Expedition", "Died", "You died.");
-	const FText Where = LastCamp.IsValid() ? FText::FromString(LastCamp->LandmarkName) : NSLOCTEXT("Expedition", "Start", "the start");
+	const FText Where = LastCheckpoint.IsValid() ? FText::FromString(LastCheckpointName) : NSLOCTEXT("Expedition", "Start", "the start");
 	Say(FText::Format(NSLOCTEXT("Expedition", "Death", "{0} Back to {1}..."), Cause, Where), RespawnDelay + 2.f);
 
 	GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &UExpeditionComponent::Respawn, FMath::Max(RespawnDelay, 0.1f));
@@ -297,9 +366,13 @@ void UExpeditionComponent::HandleDeath()
 
 void UExpeditionComponent::Respawn()
 {
-	if (LastCamp.IsValid())
+	if (LastCheckpoint.IsValid())
 	{
-		TeleportToCamp(LastCamp.Get());
+		TeleportNear(LastCheckpoint.Get());
+	}
+	else if (Camps.Num() > 0 && Camps[0].IsValid())
+	{
+		TeleportNear(Camps[0].Get());   // no checkpoint yet: don't revive where you died (e.g. inside a crevasse)
 	}
 	if (ACharacter* Character = Cast<ACharacter>(GetOwner()))
 	{
@@ -308,18 +381,180 @@ void UExpeditionComponent::Respawn()
 	if (Survival.IsValid())
 	{
 		Survival->Revive(RespawnNeedsPercent);
+		Survival->SetCarriedBottles(CheckpointBottles);
+	}
+	// Supplies used or found since the camp are rolled back with you.
+	if (UInventoryComponent* Pack = GetOwner()->FindComponentByClass<UInventoryComponent>())
+	{
+		Pack->RestoreCheckpoint();
+	}
+}
+
+void UExpeditionComponent::SaveCheckpoint(AActor* Where, const FString& Name)
+{
+	LastCheckpoint = Where;
+	LastCheckpointName = Name;
+	if (UInventoryComponent* Pack = GetOwner()->FindComponentByClass<UInventoryComponent>())
+	{
+		Pack->SaveCheckpoint();
+		CheckpointItems = Pack->GetItems();
+	}
+	CheckpointBottles = Survival.IsValid() ? Survival->GetCarriedBottles() : 0;
+	CheckpointStats.Reset();
+	if (Survival.IsValid())
+	{
+		for (uint8 i = 0; i <= uint8(ESurvivalStat::Oxygen); ++i)
+		{
+			CheckpointStats.Add(Survival->GetStatValue(ESurvivalStat(i)));
+		}
+	}
+	WriteSave();
+}
+
+void UExpeditionComponent::WriteSave()
+{
+	UYggSaveGame* Save = Cast<UYggSaveGame>(UGameplayStatics::CreateSaveGameObject(UYggSaveGame::StaticClass()));
+	Save->CampName = LastCheckpointName;
+	Save->Stats = CheckpointStats;
+	Save->Items = CheckpointItems;
+	Save->CarriedBottles = CheckpointBottles;
+	Save->bSummitReached = bSummitReached;
+	Save->Deaths = Deaths;
+	Save->PlaySeconds = SavedPlaySeconds + GetWorld()->GetTimeSeconds() - StartTime;
+	Save->Clues = FoundClues.Array();
+	UGameplayStatics::AsyncSaveGameToSlot(Save, UYggSaveGame::SlotName, 0);
+}
+
+void UExpeditionComponent::UpdateTrailCheckpoints()
+{
+	const FVector Here = GetOwner()->GetActorLocation();
+	for (const TWeakObjectPtr<ATrailCheckpoint>& Point : TrailCheckpoints)
+	{
+		if (Point.IsValid() && Point.Get() != LastCheckpoint.Get()
+			&& FVector::DistSquared2D(Here, Point->GetActorLocation()) < FMath::Square(Point->Radius))
+		{
+			SaveCheckpoint(Point.Get(), Point->CheckpointName);
+			Say(FText::Format(NSLOCTEXT("Expedition", "TrailCheckpoint", "{0} - checkpoint saved."), FText::FromString(Point->CheckpointName)), 4.f);
+			return;
+		}
+	}
+}
+
+void UExpeditionComponent::LoadSavedExpedition()
+{
+	const UYggSaveGame* Save = Cast<UYggSaveGame>(UGameplayStatics::LoadGameFromSlot(UYggSaveGame::SlotName, 0));
+	if (!Save || Save->Version != GetDefault<UYggSaveGame>()->Version)
+	{
+		return;
+	}
+	// What was found stays found, even without a checkpoint yet.
+	FoundClues = TSet<FName>(Save->Clues);
+
+	AActor* Where = nullptr;
+	for (const TWeakObjectPtr<ARouteLandmark>& It : Camps)
+	{
+		if (It.IsValid() && It->LandmarkName == Save->CampName)
+		{
+			Where = It.Get();
+			LastCamp = It.Get();
+		}
+	}
+	for (const TWeakObjectPtr<ATrailCheckpoint>& It : TrailCheckpoints)
+	{
+		if (!Where && It.IsValid() && It->CheckpointName == Save->CampName)
+		{
+			Where = It.Get();
+		}
+	}
+	if (!Where)
+	{
+		return;
+	}
+
+	TeleportNear(Where);
+	LastCheckpoint = Where;
+	LastCheckpointName = Save->CampName;
+	bSummitReached = Save->bSummitReached;
+	Deaths = Save->Deaths;
+	SavedPlaySeconds = Save->PlaySeconds;
+	StartTime = GetWorld()->GetTimeSeconds();
+	CheckpointStats = Save->Stats;
+	CheckpointItems = Save->Items;
+	CheckpointBottles = Save->CarriedBottles;
+	if (Survival.IsValid())
+	{
+		for (int32 i = 0; i < Save->Stats.Num() && i <= int32(ESurvivalStat::Oxygen); ++i)
+		{
+			Survival->SetStat(ESurvivalStat(i), Save->Stats[i]);
+		}
+		Survival->SetCarriedBottles(Save->CarriedBottles);
+	}
+	if (UInventoryComponent* Pack = GetOwner()->FindComponentByClass<UInventoryComponent>())
+	{
+		Pack->SetItems(Save->Items);
+		Pack->SaveCheckpoint();
+	}
+	Say(FText::Format(NSLOCTEXT("Expedition", "Continue", "Continuing from {0}. (Console: ygg.NewGame for a fresh start.)"),
+		FText::FromString(Save->CampName)), 6.f);
+}
+
+void UExpeditionComponent::SetReadableClue(AStoryClue* Clue)
+{
+	ReadableClue = Clue;
+	const bool bKnown = FoundClues.Contains(Clue->ClueId);
+	Say(FText::Format(bKnown ? NSLOCTEXT("Expedition", "ReadAgain", "[E] Read again: {0}") : NSLOCTEXT("Expedition", "Read", "[E] Read: {0}"),
+		Clue->Title), 4.f);
+}
+
+void UExpeditionComponent::ClearReadableClue(AStoryClue* Clue)
+{
+	if (ReadableClue.Get() != Clue)
+	{
+		return;
+	}
+	ReadableClue.Reset();
+	if (bReading)
+	{
+		ToggleReading();
+	}
+}
+
+void UExpeditionComponent::ToggleReading()
+{
+	if (bReading)
+	{
+		bReading = false;
+		OnReading.Broadcast(FText::GetEmpty(), FText::GetEmpty(), false);
+		return;
+	}
+	const AStoryClue* Clue = ReadableClue.Get();
+	if (!Clue || (Survival.IsValid() && Survival->IsDead()))
+	{
+		return;
+	}
+	bReading = true;
+	OnReading.Broadcast(Clue->Title, Clue->Body, true);
+	if (!FoundClues.Contains(Clue->ClueId))
+	{
+		FoundClues.Add(Clue->ClueId);
+		WriteSave();
 	}
 }
 
 void UExpeditionComponent::TeleportToCamp(ARouteLandmark* Camp)
 {
+	TeleportNear(Camp);
+}
+
+void UExpeditionComponent::TeleportNear(AActor* Where)
+{
 	ACharacter* Character = Cast<ACharacter>(GetOwner());
-	if (!Character || !Camp)
+	if (!Character || !Where)
 	{
 		return;
 	}
-	// Beside the camp, a little above the ground so the capsule drops onto it.
-	const FVector Target = Camp->GetActorLocation() + FVector(-400.f, 0.f, Character->GetSimpleCollisionHalfHeight() + 150.f);
+	// Beside the checkpoint, a little above the ground so the capsule drops onto it.
+	const FVector Target = Where->GetActorLocation() + FVector(-400.f, 0.f, Character->GetSimpleCollisionHalfHeight() + 150.f);
 	Character->TeleportTo(Target, Character->GetActorRotation(), false, true);
 	Character->GetCharacterMovement()->StopMovementImmediately();
 	CurrentCamp.Reset();
@@ -377,4 +612,61 @@ namespace
 				Expedition->TeleportToCamp(Camps[Index].Get());
 			}
 		}));
+}
+
+void UExpeditionComponent::Rest()
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	APlayerController* PC = Character ? Cast<APlayerController>(Character->GetController()) : nullptr;
+	if (!Character || !Survival.IsValid() || bResting || Survival->IsDead())
+	{
+		return;
+	}
+	if (!Survival->IsSheltered())
+	{
+		Say(NSLOCTEXT("Expedition", "NoRest", "Nowhere to rest out here. Find a camp."), 3.f);
+		return;
+	}
+	bResting = true;
+	Character->GetCharacterMovement()->DisableMovement();
+	if (PC && PC->PlayerCameraManager)
+	{
+		PC->PlayerCameraManager->StartCameraFade(0.f, 1.f, 1.5f, FLinearColor::Black, false, true);
+	}
+	GetWorld()->GetTimerManager().SetTimer(RestTimer, this, &UExpeditionComponent::FinishRest, 2.f);
+}
+
+void UExpeditionComponent::FinishRest()
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	APlayerController* PC = Character ? Cast<APlayerController>(Character->GetController()) : nullptr;
+	bResting = false;
+	if (!Character || !Survival.IsValid())
+	{
+		return;
+	}
+	// afternoon or night: sleep until the cold early hours (the Icefall is safest then); otherwise a short rest
+	const float Now = YggTime::Get(GetWorld());
+	const bool bSleep = Now >= 1500.f || Now < 400.f;
+	const float Wake = bSleep ? 450.f : Now + 300.f;
+	const float Hours = FMath::Fmod(Wake - Now + 2400.f, 2400.f) / 100.f;
+	YggTime::Set(GetWorld(), Wake);
+	const USurvivalConfig* C = GetDefault<USurvivalConfig>();
+	Survival->SetStat(ESurvivalStat::Stamina, Survival->GetStatMax(ESurvivalStat::Stamina));
+	Survival->SetStat(ESurvivalStat::BodyTemperature, C->NormalTemperature);
+	Survival->SetStat(ESurvivalStat::Satiety, FMath::Max(5.f, Survival->GetStatValue(ESurvivalStat::Satiety) - 2.5f * Hours));
+	Survival->SetStat(ESurvivalStat::Hydration, FMath::Max(5.f, Survival->GetStatValue(ESurvivalStat::Hydration) - 3.f * Hours));
+	Survival->SetStat(ESurvivalStat::Health, FMath::Min(Survival->GetStatMax(ESurvivalStat::Health), Survival->GetStatValue(ESurvivalStat::Health) + 5.f * Hours));
+	if (USanityComponent* Mind = GetOwner()->FindComponentByClass<USanityComponent>())
+	{
+		Mind->SetSanity(Mind->GetSanity() + 6.f * Hours);
+	}
+	Character->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	if (PC && PC->PlayerCameraManager)
+	{
+		PC->PlayerCameraManager->StartCameraFade(1.f, 0.f, 2.5f, FLinearColor::Black, false, false);
+	}
+	WriteSave();
+	Say(bSleep ? FText::Format(NSLOCTEXT("Expedition", "Slept", "You sleep badly, the tent cracking in the wind. {0} - cold, dark, the ice at its quietest. Time to go."), FText::FromString(YggTime::Clock(Wake)))
+		: FText::Format(NSLOCTEXT("Expedition", "Rested", "You rest a few hours. {0}."), FText::FromString(YggTime::Clock(Wake))), 6.f);
 }

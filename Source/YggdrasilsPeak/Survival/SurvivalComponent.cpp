@@ -160,7 +160,7 @@ void USurvivalComponent::StepSimulation(float Dt)
 	{
 		Stamina -= (C->SprintStaminaDrainPerSecond + SnowDrain) * Dt;
 	}
-	else if (!IsAirborne())
+	else if (!IsAirborne() && !bClimbing)   // hanging on a face is no rest (UClimbingComponent spends stamina itself)
 	{
 		float Recover = bMoving ? C->WalkStaminaRecoverPerSecond : C->IdleStaminaRecoverPerSecond;
 		if (bPenalised)
@@ -262,7 +262,7 @@ void USurvivalComponent::StepSimulation(float Dt)
 
 void USurvivalComponent::RefreshSprintState()
 {
-	bSprinting = bSprintRequested && !bDead && !bExhausted && Stamina > 0.f && IsMoving();
+	bSprinting = bSprintRequested && !bDead && !bExhausted && Stamina > 0.f && FootingSpeedMultiplier >= 1.f && IsMoving();
 }
 
 void USurvivalComponent::UpdateWarnings()
@@ -319,6 +319,15 @@ void USurvivalComponent::NotifyChanges()
 		const float Old = LastNotified[Index] < 0.f ? Value : LastNotified[Index];
 		LastNotified[Index] = Value;
 		OnStatChanged.Broadcast(Stat, Value, Old);
+	}
+}
+
+void USurvivalComponent::KillBy(const FText& Cause)
+{
+	if (!bDead)
+	{
+		DeathCause = Cause;
+		Die();
 	}
 }
 
@@ -448,7 +457,7 @@ float USurvivalComponent::GetTerrainSpeedMultiplier() const
 	const float OxygenFatigue = FMath::Clamp((C->OxygenFatigueBelow - Oxygen) / FMath::Max(C->OxygenFatigueBelow - C->OxygenDamageBelow, 1.f), 0.f, 1.f);
 	const float Weather = bOnRope ? FMath::Lerp(WeatherSpeedMultiplier, 1.f, C->RopeWeatherRelief) : WeatherSpeedMultiplier;
 	const float Snow = FMath::Lerp(1.f, C->DeepSnowSpeedMultiplier, SnowDepth);
-	return Uphill * FMath::Lerp(1.f, C->LowOxygenSpeedMultiplier, OxygenFatigue) * Weather * Snow;
+	return Uphill * FMath::Lerp(1.f, C->LowOxygenSpeedMultiplier, OxygenFatigue) * Weather * Snow * LoadSpeedMultiplier * FootingSpeedMultiplier;
 }
 
 // ---- Stat access ----
@@ -606,6 +615,11 @@ bool USurvivalComponent::AddCarriedBottle()
 	}
 	++CarriedBottles;
 	return true;
+}
+
+void USurvivalComponent::SetCarriedBottles(int32 Count)
+{
+	CarriedBottles = FMath::Clamp(Count, 0, GetCfg()->MaxCarriedBottles);
 }
 
 void USurvivalComponent::Revive(float NeedsPercent)

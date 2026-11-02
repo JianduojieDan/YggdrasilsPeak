@@ -7,15 +7,19 @@
 #include "ExpeditionComponent.generated.h"
 
 class AFixedRope;
+class AStoryClue;
+class ATrailCheckpoint;
 class ARouteLandmark;
 class USurvivalComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnExpeditionMessage, const FText&, Message, float, Seconds);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnExpeditionReading, const FText&, Title, const FText&, Body, bool, bOpen);
 
 /**
  *  The expedition layer on top of survival: camps are shelters and checkpoints, the summit is the
  *  turning point, getting back down to the finish camp wins. On death the player is brought back at
- *  the last camp reached. Thin air also shows on screen (vignette, washed-out colour) through the
+ *  the last camp reached, with the pack as it was there; every camp is also saved to disk and the game
+ *  continues from it next time (UYggSaveGame). Thin air also shows on screen (vignette, washed-out colour) through the
  *  owner's camera.
  */
 UCLASS(ClassGroup=(Survival), meta=(BlueprintSpawnableComponent))
@@ -96,6 +100,33 @@ public:
 	/** Moves the player next to a camp (debug / respawn). */
 	void TeleportToCamp(ARouteLandmark* Camp);
 
+	/** Moves the player beside any checkpoint actor (camp or trail checkpoint). */
+	void TeleportNear(AActor* Where);
+
+	// ---- Story clues
+	/** HUD listens to open / close the reading panel. */
+	UPROPERTY(BlueprintAssignable, Category="Expedition")
+	FOnExpeditionReading OnReading;
+
+	/** A clue came into / left reading range (AStoryClue). */
+	void SetReadableClue(AStoryClue* Clue);
+	void ClearReadableClue(AStoryClue* Clue);
+
+	/** E: reads the clue in range, or closes what is being read. */
+	UFUNCTION(BlueprintCallable, Category="Expedition")
+	void ToggleReading();
+
+	/** In a camp's shelter: sleep - the screen goes dark, time passes (to 04:30 if it is afternoon or later, else
+	 *  three hours), stamina, warmth and the mind come back, food and water go down. Outside: nothing. */
+	UFUNCTION(BlueprintCallable, Category="Expedition")
+	void Rest();
+
+	UFUNCTION(BlueprintPure, Category="Expedition")
+	bool HasFoundClue(FName ClueId) const { return FoundClues.Contains(ClueId); }
+
+	/** Remembers a story event (kept with the found clues in the save, written at once). */
+	void MarkStoryEvent(FName EventId) { if (!FoundClues.Contains(EventId)) { FoundClues.Add(EventId); WriteSave(); } }
+
 protected:
 
 	virtual void BeginPlay() override;
@@ -108,6 +139,13 @@ private:
 
 	void Respawn();
 	void UpdateCamps();
+	/** Checkpoint (camp or trail checkpoint): pack, body and bottles for the next respawn, and the save game on disk. */
+	void SaveCheckpoint(AActor* Where, const FString& Name);
+	/** Writes the save game: the last checkpoint as it was, the clues as they are now. */
+	void WriteSave();
+	void UpdateTrailCheckpoints();
+	/** Continues from the save game on disk, if there is one (ygg.Save.LoadOnStart). */
+	void LoadSavedExpedition();
 	/** Clips the player onto the nearest fixed rope when close enough, and unclips when they wander off. */
 	void UpdateRope();
 	void UpdateScreenEffect(float DeltaTime);
@@ -119,6 +157,15 @@ private:
 
 	TArray<TWeakObjectPtr<ARouteLandmark>> Camps;
 	TArray<TWeakObjectPtr<AFixedRope>> Ropes;
+	TArray<TWeakObjectPtr<ATrailCheckpoint>> TrailCheckpoints;
+	/** Where the player comes back after a death, and its name in the save game. */
+	TWeakObjectPtr<AActor> LastCheckpoint;
+	FString LastCheckpointName;
+	TArray<float> CheckpointStats;
+	TMap<FName, int32> CheckpointItems;
+	TSet<FName> FoundClues;
+	TWeakObjectPtr<AStoryClue> ReadableClue;
+	bool bReading = false;
 	bool bOnRope = false;
 	bool bRopeExplained = false;
 	float DefaultWalkableFloorAngle = 0.f;
@@ -136,10 +183,16 @@ private:
 	bool bLoggedNoState = false;
 
 	FTimerHandle RespawnTimer;
+	FTimerHandle RestTimer;
+	bool bResting = false;
+	void FinishRest();
 	float CampCheckTimer = 0.f;
 	float DisplayedHypoxia = 0.f;
 	float StartTime = 0.f;
 	int32 Deaths = 0;
+	int32 CheckpointBottles = 0;
+	/** Play time carried over from the save game. */
+	float SavedPlaySeconds = 0.f;
 	bool bSummitReached = false;
 	bool bFinished = false;
 };

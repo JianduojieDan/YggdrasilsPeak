@@ -7,6 +7,7 @@
 #include "Survival/SurvivalTypes.h"
 #include "SurvivalHUDWidget.generated.h"
 
+class UBorder;
 class UImage;
 class UProgressBar;
 class UTextBlock;
@@ -193,6 +194,20 @@ private:
 
 	UFUNCTION()
 	void HandleExpeditionMessage(const FText& Message, float Seconds);
+
+	/** Journal pages and discoveries (UExpeditionComponent::OnReading): a panel in the middle of the screen. */
+	UFUNCTION()
+	void HandleReading(const FText& Title, const FText& Body, bool bOpen);
+	void CreateReadingPanel();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBorder> ReadingPanel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ReadingTitle;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ReadingBody;
 
 	void CreateAltitudeText();
 	void UpdateAltitudeText(const FSurvivalSnapshot& Snapshot) const;

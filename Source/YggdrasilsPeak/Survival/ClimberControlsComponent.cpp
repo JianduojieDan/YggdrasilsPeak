@@ -2,6 +2,9 @@
 
 #include "Survival/ClimberControlsComponent.h"
 
+#include "Survival/BackpackWidget.h"
+#include "Survival/ExpeditionComponent.h"
+#include "Survival/InventoryComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
@@ -63,7 +66,27 @@ bool UClimberControlsComponent::TryBindInput()
 		SprintMapping = NewObject<UInputMappingContext>(this);
 		SprintMapping->MapKey(SprintAction, EKeys::LeftShift);
 		SprintMapping->MapKey(SprintAction, EKeys::Gamepad_LeftThumbstick);
+		EatAction = NewObject<UInputAction>(this, TEXT("IA_Eat"));
+		DrinkAction = NewObject<UInputAction>(this, TEXT("IA_Drink"));
+		SprintMapping->MapKey(EatAction, EKeys::One);
+		SprintMapping->MapKey(EatAction, EKeys::Gamepad_DPad_Left);
+		SprintMapping->MapKey(DrinkAction, EKeys::Two);
+		SprintMapping->MapKey(DrinkAction, EKeys::Gamepad_DPad_Right);
+		InteractAction = NewObject<UInputAction>(this, TEXT("IA_Interact"));
+		SprintMapping->MapKey(InteractAction, EKeys::E);
+		SprintMapping->MapKey(InteractAction, EKeys::Gamepad_FaceButton_Left);
+		RestAction = NewObject<UInputAction>(this, TEXT("IA_Rest"));
+		SprintMapping->MapKey(RestAction, EKeys::R);
+		SprintMapping->MapKey(RestAction, EKeys::Gamepad_DPad_Down);
+		Input->BindAction(RestAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnRest);
+		PackAction = NewObject<UInputAction>(this, TEXT("IA_Pack"));
+		SprintMapping->MapKey(PackAction, EKeys::Tab);
+		SprintMapping->MapKey(PackAction, EKeys::Gamepad_Special_Left);
 		Subsystem->AddMappingContext(SprintMapping, 1);
+		Input->BindAction(PackAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnPack);
+		Input->BindAction(EatAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnEat);
+		Input->BindAction(DrinkAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnDrink);
+		Input->BindAction(InteractAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnInteract);
 	}
 	Input->BindAction(SprintAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnSprintStarted);
 	Input->BindAction(SprintAction, ETriggerEvent::Completed, this, &UClimberControlsComponent::OnSprintStopped);
@@ -104,5 +127,42 @@ void UClimberControlsComponent::OnSprintStopped()
 	if (USurvivalComponent* Survival = GetOwner()->FindComponentByClass<USurvivalComponent>())
 	{
 		Survival->SetSprintRequested(false);
+	}
+}
+
+void UClimberControlsComponent::OnEat()
+{
+	if (UInventoryComponent* Pack = GetOwner()->FindComponentByClass<UInventoryComponent>())
+	{
+		Pack->Use(TEXT("Ration"));
+	}
+}
+
+void UClimberControlsComponent::OnDrink()
+{
+	if (UInventoryComponent* Pack = GetOwner()->FindComponentByClass<UInventoryComponent>())
+	{
+		Pack->Use(TEXT("Water"));
+	}
+}
+
+void UClimberControlsComponent::OnRest()
+{
+	if (UExpeditionComponent* Expedition = GetOwner()->FindComponentByClass<UExpeditionComponent>())
+	{
+		Expedition->Rest();
+	}
+}
+
+void UClimberControlsComponent::OnPack()
+{
+	UBackpackWidget::Toggle(Cast<APlayerController>(Cast<APawn>(GetOwner())->GetController()));
+}
+
+void UClimberControlsComponent::OnInteract()
+{
+	if (UExpeditionComponent* Expedition = GetOwner()->FindComponentByClass<UExpeditionComponent>())
+	{
+		Expedition->ToggleReading();
 	}
 }

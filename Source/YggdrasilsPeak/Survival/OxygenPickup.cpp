@@ -3,6 +3,7 @@
 #include "Survival/OxygenPickup.h"
 
 #include "Survival/ExpeditionComponent.h"
+#include "Survival/InventoryComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalConfig.h"
 #include "Components/SphereComponent.h"
@@ -48,6 +49,17 @@ void AOxygenPickup::NotifyActorBeginOverlap(AActor* OtherActor)
 	}
 
 	UExpeditionComponent* Expedition = Pawn->FindComponentByClass<UExpeditionComponent>();
+	// A bottle weighs about 3 kg; it has to fit in the pack.
+	const UInventoryComponent* Pack = Pawn->FindComponentByClass<UInventoryComponent>();
+	if (Pack && !Pack->CanCarryKg(Pack->OxygenBottleKg))
+	{
+		if (Expedition && GetWorld()->GetTimeSeconds() >= NextFullMessageTime)
+		{
+			NextFullMessageTime = GetWorld()->GetTimeSeconds() + 30.f;
+			Expedition->ShowMessage(NSLOCTEXT("Expedition", "BottleTooHeavy", "Your pack is too heavy for another oxygen bottle."), 3.f);
+		}
+		return;
+	}
 	if (!Survival->AddCarriedBottle())
 	{
 		if (Expedition && GetWorld()->GetTimeSeconds() >= NextFullMessageTime)

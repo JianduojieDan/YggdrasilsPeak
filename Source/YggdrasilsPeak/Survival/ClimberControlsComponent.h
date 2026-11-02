@@ -12,7 +12,8 @@ class UUserWidget;
 
 /**
  *  The climber's extras that are not part of a stock character Blueprint: sprint (Left Shift / left stick click,
- *  feeding USurvivalComponent::SetSprintRequested) and the survival HUD widget.
+ *  feeding USurvivalComponent::SetSprintRequested), eat / drink from the pack (1 / 2, d-pad left / right) and the
+ *  survival HUD widget.
  *  Lets any character Blueprint (e.g. the First Person template character) become the climber just by adding
  *  this next to the Survival, Expedition and FirstPersonBody components - no Blueprint graph needed.
  *  Move / look / jump stay with the character Blueprint's own input.
@@ -48,6 +49,30 @@ private:
 
 	void OnSprintStarted();
 	void OnSprintStopped();
+	void OnEat();
+	void OnInteract();
+	void OnDrink();
+	void OnPack();
+	void OnRest();
+
+	/** Created at runtime (1 = eat a ration, 2 = drink), mapped alongside sprint. */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> EatAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> DrinkAction;
+
+	/** E / gamepad left face button: read a clue (UExpeditionComponent::ToggleReading). */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> InteractAction;
+
+	/** R / D-pad down: rest in a camp's shelter (UExpeditionComponent::Rest). */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> RestAction;
+
+	/** Tab / gamepad View: open or close the pack (UBackpackWidget). */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> PackAction;
 
 	/** Built at runtime with only the sprint keys, so it can't swallow the character's own move/look keys. */
 	UPROPERTY(Transient)
