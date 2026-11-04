@@ -17,6 +17,9 @@ enum class ERealm : uint8
 	None UMETA(Hidden)
 };
 
+/** What the player is told about a weather. */
+struct FRealmWeatherInfo { const TCHAR* Name; const TCHAR* Warning; int32 Danger; };
+
 /** One realm's mood. Defaults are neutral: nothing changes the world's own light. Table in RealmSky.cpp. */
 struct FRealmLook
 {
@@ -34,6 +37,7 @@ struct FRealmLook
 	float CloudCover = 0.f, CloudSpeed = 5.f, CloudScale = 6.f;   // deck: 0..1, m/s, km per billow
 	FLinearColor CloudDark = FLinearColor(0.3f, 0.32f, 0.36f), CloudLight = FLinearColor::White;
 	float Wind = -1.f;                         // 0..1, spindrift strength; below 0 = the world's own
+	float HealthDrain = 0.f;
 	float Cold = 0.f, StaminaDrain = 0.f, SanityGain = 0.f;   // per second, on the body and mind: degrees C lost, stamina lost, sanity gained
 	static FRealmLook Lerp(const FRealmLook& A, const FRealmLook& B, float T);
 };
@@ -72,6 +76,17 @@ public:
 
 	/** Re-reads Config/RealmLooks.json and re-applies the shown realm (ygg.Realm reload). */
 	void ReloadLooks();
+
+	/** Random weather: the realms come and go in a shuffled bag, 10-12 minutes each, one after another. */
+	void SetScheduled(bool bOn);
+	void ForecastNow();
+	static const FRealmWeatherInfo& GetWeatherInfo(int32 Index);
+	static int32 NumWeathers();
+	bool HasForecast() const { return bScheduled && bForecast && bAnnounced && !bAtSummit; }
+	int32 GetForecastIndex() const { return int32(NextRealm); }
+	float GetForecastSeconds() const { return WeatherLeft; }
+	int32 GetForecastSerial() const { return ForecastSerial; }
+	float GetSkyHoursSinceShown() const;
 
 	/** ygg.Realm route: the realm changes as the player reaches each route landmark (prototype, off by default). */
 	bool bFollowRoute = false;
@@ -112,6 +127,15 @@ private:
 	bool bSkySaved = false;
 	double BaseCloud = 0.9;
 	void SetTargets();
+	void TickWeather(float DeltaSeconds, const FVector& Around);
+	ERealm DrawFromBag();
+	TArray<int32> Bag;
+	bool bScheduled = true, bForecast = false, bAnnounced = false, bAtSummit = false;
+	ERealm NextRealm = ERealm::Midgard;
+	float WeatherLeft = 240.f, ForecastLeft = 45.f, AnnounceIn = -1.f;
+	int32 ForecastSerial = 0;
+	float SkyHours = 0.f, ShownAtHours = 0.f;
+	double LastTod = -1.0;
 	void MakeAsgardRings();
 	UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> Ring;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> RingMat;

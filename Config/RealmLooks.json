@@ -31,7 +31,11 @@
    1.3,
    1.3,
    1.35
-  ]
+  ],
+  "Cold": 0,
+  "StaminaDrain": 0,
+  "SanityGain": 0.1,
+  "HealthDrain": 0
  },
  "Niflheim": {
   "SunScale": 0.8,
@@ -41,7 +45,7 @@
   "Saturation": 0.75,
   "Contrast": 1.2,
   "Exposure": -0.25,
-  "PlanetAlpha": 0.35,
+  "PlanetAlpha": 0.22,
   "Wind": 0.25,
   "PlanetDegrees": 27.811,
   "PlanetYaw": 13.078,
@@ -63,7 +67,11 @@
    0.88,
    0.91,
    0.93
-  ]
+  ],
+  "Cold": 0.015,
+  "StaminaDrain": 0.2,
+  "SanityGain": -0.25,
+  "HealthDrain": 0
  },
  "Muspelheim": {
   "SunScale": 0.9,
@@ -105,6 +113,15 @@
    0.75,
    0.33,
    0.16
+  ],
+  "Cold": -0.02,
+  "StaminaDrain": 0.3,
+  "SanityGain": -0.1,
+  "HealthDrain": 0.06,
+  "FogColor": [
+   0.2,
+   0.1,
+   0.1
   ]
  },
  "Jotunheim": {
@@ -148,7 +165,11 @@
    0.3,
    0.34,
    0.4
-  ]
+  ],
+  "Cold": 0.07,
+  "StaminaDrain": 1.0,
+  "SanityGain": -0.15,
+  "HealthDrain": 0
  },
  "Alfheim": {
   "SunScale": 0.75,
@@ -184,7 +205,11 @@
    1.4,
    1.32,
    1.5
-  ]
+  ],
+  "Cold": 0,
+  "StaminaDrain": -0.5,
+  "SanityGain": 0.6,
+  "HealthDrain": -0.05
  },
  "Vanaheim": {
   "SunScale": 0.12,
@@ -226,7 +251,11 @@
    0.07,
    0.5,
    0.3
-  ]
+  ],
+  "Cold": 0,
+  "StaminaDrain": 0,
+  "SanityGain": 0.8,
+  "HealthDrain": 0
  },
  "Svartalfheim": {
   "SunScale": 0.08,
@@ -259,7 +288,11 @@
    0,
    0,
    0
-  ]
+  ],
+  "Cold": 0.1,
+  "StaminaDrain": 0.3,
+  "SanityGain": -0.2,
+  "HealthDrain": 0
  },
  "Hel": {
   "SunScale": 0.14,
@@ -306,7 +339,11 @@
    0.14,
    0.12,
    0.3
-  ]
+  ],
+  "Cold": 0.015,
+  "StaminaDrain": 0,
+  "SanityGain": -0.5,
+  "HealthDrain": 0
  },
  "Asgard": {
   "SunScale": 0.8,
@@ -348,6 +385,10 @@
    2.2,
    1.7,
    0.9
-  ]
+  ],
+  "Cold": -0.02,
+  "StaminaDrain": -1,
+  "SanityGain": 0.4,
+  "HealthDrain": -0.1
  }
 }

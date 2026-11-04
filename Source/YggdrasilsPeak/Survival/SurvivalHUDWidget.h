@@ -174,6 +174,7 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	virtual int32 NativePaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const override;
 
 private:
 
@@ -233,4 +234,25 @@ private:
 	float WarningStrength[6] = { 0.f, 0.f, 0.f, 0.f, 0.f, 0.f };
 
 	float PulseClock = 0.f;
+	float IconPulse = 1.f;
+
+	/** What NativePaint draws: read from the game in the tick. */
+	struct FPaintState
+	{
+		FSurvivalSnapshot Snapshot;
+		float Temperature = 1.f, Health = 1.f, Stamina = 1.f;
+		bool bExhausted = false, bLowHealth = false;
+		int32 PackKg = 0, PackMax = 0, Food = 0, Water = 0;
+		FString Subtitle;
+		float SubtitleTimer = 0.f;
+		bool bForecast = false;
+		int32 ForecastIndex = 0;
+		float ForecastSeconds = 0.f;
+	} Paint;
+
+	void TickWheel(float DeltaTime);
+	int32 WheelSerial = 0;
+	float WheelTime = 0.f;
+	bool bWheelOn = false;
+	static constexpr float WheelTotal = 4.6f;   // in, spin, slow, result, fade
 };

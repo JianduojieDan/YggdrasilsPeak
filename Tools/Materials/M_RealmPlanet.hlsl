@@ -86,7 +86,7 @@ else if (R == 2) {       // Muspelheim: charcoal-red crust, ONE dominant diagona
   // a few subdued side cracks branching from it
   float2 c = r.Cell(P * 9.0 + n); float side = (1.0 - smoothstep(0.0, 0.02, c.y - c.x)) * (1.0 - smoothstep(0.04, 0.30, abs(d)));
   A *= 1.0 - glow * 0.4;
-  E = float3(1.0, 0.35, 0.06) * (glow * glow * 2.2 + side * 0.9) + float3(1.0, 0.8, 0.5) * core * 6.0;
+  E = float3(1.0, 0.35, 0.06) * (glow * glow * 2.2 + side * 0.35) + float3(1.0, 0.8, 0.5) * core * 6.0;
   amb = 0.08; wash = 0.0;
 }
 else if (R == 3) {       // Jötunheim: layers of slate, broad mineral bands at an angle, pale seams; a storm bank hides the lower edge
@@ -116,7 +116,7 @@ else if (R == 4) {       // Alfheim: pale enough to vanish into the day sky; a n
   float3 swirl = 0.55 + 0.45 * cos(6.2831853 * (film * 2.5 + float3(0.0, 0.33, 0.67)));
   E = pearl * edge * 1.6 + swirl * smoothstep(0.35, 0.85, film) * 0.1 * (0.4 + 0.6 * pow(1.0 - facing, 1.5)) + float3(1, 1, 1) * pow(1.0 - facing, 16.0) * 0.5;
   Op = 1.0;
-  amb = 0.12; lit = 1.0; wash = 0.0;
+  amb = 0.2; wash = 0.0;
 }
 else if (R == 5) {       // Vanaheim: deep jade gas giant - slow marbled currents folding into each other, one pale storm eye
   float3 w1 = float3(r.Fbm(P * 1.6), r.Fbm(P * 1.6 + 5.2), r.Fbm(P * 1.6 + 9.7));
@@ -125,8 +125,8 @@ else if (R == 5) {       // Vanaheim: deep jade gas giant - slow marbled current
   float flow = r.Fbm(float3(P.xy * 1.2, lat * 5.0) + w2 * 2.4);
   float swirl = sin(lat * 9.0 + flow * 9.0);
   float cur = smoothstep(-0.3, 0.6, swirl);
-  A = lerp(float3(0.015, 0.10, 0.06), float3(0.10, 0.42, 0.26), cur);
-  A = lerp(A, float3(0.55, 0.80, 0.62), smoothstep(0.85, 0.99, swirl) * 0.75);    // pale foam where currents meet
+  A = lerp(float3(0.008, 0.055, 0.04), float3(0.05, 0.25, 0.17), cur);
+  A = lerp(A, float3(0.34, 0.56, 0.44), smoothstep(0.9, 0.995, swirl) * 0.55);    // pale foam where currents meet
   float3 eyeC = normalize(float3(0.75, -0.45, -0.25));
   float ed = length(P - eyeC);
   float eye = 1.0 - smoothstep(0.0, 0.14, ed + (r.Fbm(P * 14.0) - 0.5) * 0.04);
@@ -136,28 +136,28 @@ else if (R == 5) {       // Vanaheim: deep jade gas giant - slow marbled current
 }
 else if (R == 6) {       // Svartalfheim: nearly black face; a thin continuous silver ring; one bright bead where light escapes
   float n = r.Fbm(P * 6.0);
-  A = float3(0.004, 0.004, 0.005) * (0.6 + 0.8 * n);   // auto exposure at altitude lifts any grey: keep it near black
-  float ring = pow(1.0 - facing, 14.0);
+  A = float3(0.006, 0.0065, 0.009) * (0.5 + 1.1 * n);   // auto exposure at altitude lifts any grey: keep it near black
+  float ring = pow(1.0 - facing, 34.0) * (0.65 + 0.7 * r.Fbm(N * 7.0)) + pow(1.0 - facing, 9.0) * 0.05;
   float bead = pow(saturate(dot(N, Lp)), 200.0) * pow(1.0 - facing, 10.0);     // on the very edge, towards the sun
   E = float3(0.92, 0.94, 1.0) * ring * 6.0 + float3(1.0, 0.95, 0.85) * bead * 25.0;
   amb = 1.0; lit = 0.0; wash = 0.0;
 }
 else if (R == 7) {       // Hel, the Long Night Star: deep indigo, almost black, a short silver crescent on one side
   float n = r.Fbm(P * 5.0);
-  float vein = 1.0 - smoothstep(0.0, 0.04, abs(r.Fbm(P * 3.0 + n) - 0.5));
-  A = lerp(float3(0.004, 0.005, 0.016), float3(0.035, 0.04, 0.10), vein * 0.35 + n * 0.2);
+  float vein = (1.0 - smoothstep(0.0, 0.018, abs(r.Fbm(P * 3.0 + n * 1.4) - 0.5))) * smoothstep(0.35, 0.65, r.Fbm(P * 2.1 + 5.0));
+  A = lerp(float3(0.010, 0.008, 0.032), float3(0.05, 0.04, 0.13), vein * 0.5 + n * 0.45);
   float cres = pow(1.0 - facing, 3.0) * smoothstep(0.55, 0.98, dot(N, Lp));   // a short crescent on one side only
   E = float3(0.80, 0.84, 0.95) * cres * 1.2 + float3(0.45, 0.4, 0.95) * vein * 0.015;
   amb = 1.0; lit = 0.0; wash = 0.0;
 }
 else if (R == 8) {       // Asgard: pale gold, soft shadow, craters, a brighter upper rim
   float n = r.Fbm(P * 3.0);
-  A = float3(0.80, 0.50, 0.20) * (0.65 + 0.5 * n);
+  A = lerp(float3(0.62, 0.42, 0.20), float3(0.88, 0.76, 0.54), smoothstep(0.3, 0.75, r.Fbm(float3(P.xy * 1.5, P.z * 7.0) + n))) * (0.85 + 0.25 * n);
   A *= lerp(float3(1, 1, 1), float3(1.0, 0.85, 0.7), 1.0 - lit);
   float2 c = r.Cell(P * 4.0 + 2.0);
   float crater = smoothstep(0.20, 0.17, c.x) * smoothstep(0.10, 0.16, c.x);
   float floorC = smoothstep(0.17, 0.12, c.x);
-  A = A * (1.0 - floorC * 0.25) + float3(0.30, 0.22, 0.10) * crater;
+  A = A * (1.0 - floorC * 0.1) + float3(0.12, 0.09, 0.04) * crater;
   E = float3(1.0, 0.80, 0.45) * pow(1.0 - facing, 2.0) * saturate(N.z * 1.5 + 0.4) * 1.6;
   amb = 0.08;
 }

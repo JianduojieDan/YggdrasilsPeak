@@ -21,6 +21,8 @@
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "NiagaraComponent.h"
 #include "Survival/SanityComponent.h"
 #include "Survival/SurvivalComponent.h"
@@ -71,6 +73,9 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRealm(TEXT("ygg.Realm"),
 			return;
 		}
 		if (Args[0].Equals(TEXT("reload"), ESearchCase::IgnoreCase)) { Sky->ReloadLooks(); return; }
+		if (Args[0].Equals(TEXT("auto"), ESearchCase::IgnoreCase)) { Sky->SetScheduled(true); return; }
+		if (Args[0].Equals(TEXT("next"), ESearchCase::IgnoreCase)) { Sky->ForecastNow(); return; }
+		Sky->SetScheduled(false);   // a realm named by hand stays until auto
 		Sky->bFollowRoute = Args[0].Equals(TEXT("route"), ESearchCase::IgnoreCase);
 		if (Sky->bFollowRoute) { return; }
 		if (Args[0].Equals(TEXT("all"), ESearchCase::IgnoreCase)) { Sky->ShowAll(); return; }
@@ -145,6 +150,8 @@ void ARealmSky::BeginPlay()
 		}
 	}
 	MakeAsgardRings();
+	FParse::Value(FCommandLine::Get(), TEXT("YggForecastIn="), AnnounceIn);   // captures: spin the wheel at a known moment
+	ShowRealm(ERealm::Midgard);   // the world starts under a quiet sky
 }
 
 void ARealmSky::MakeAsgardRings()
@@ -174,6 +181,7 @@ void ARealmSky::MakeAsgardRings()
 void ARealmSky::ShowRealm(ERealm Realm)
 {
 	Shown = Realm;
+	ShownAtHours = SkyHours;
 	bAll = false;
 	SetTargets();
 }
@@ -316,7 +324,7 @@ namespace
 			const TPair<const TCHAR*, float*> Floats[] = { {TEXT("Active"), &L.Active}, {TEXT("SunScale"), &L.SunScale}, {TEXT("SkyScale"), &L.SkyScale}, {TEXT("FogDensity"), &L.FogDensity},
 				{TEXT("FogFalloff"), &L.FogFalloff}, {TEXT("FogBelow"), &L.FogBelow}, {TEXT("FogCutoff"), &L.FogCutoff}, {TEXT("Saturation"), &L.Saturation}, {TEXT("Contrast"), &L.Contrast},
 				{TEXT("PlanetAlpha"), &L.PlanetAlpha}, {TEXT("Temp"), &L.Temp}, {TEXT("Exposure"), &L.Exposure}, {TEXT("Bloom"), &L.Bloom}, {TEXT("Vignette"), &L.Vignette},
-				{TEXT("Cold"), &L.Cold}, {TEXT("StaminaDrain"), &L.StaminaDrain}, {TEXT("SanityGain"), &L.SanityGain}, {TEXT("Wind"), &L.Wind}, {TEXT("CloudCover"), &L.CloudCover}, {TEXT("CloudSpeed"), &L.CloudSpeed}, {TEXT("CloudScale"), &L.CloudScale} };
+				{TEXT("Cold"), &L.Cold}, {TEXT("StaminaDrain"), &L.StaminaDrain}, {TEXT("SanityGain"), &L.SanityGain}, {TEXT("HealthDrain"), &L.HealthDrain}, {TEXT("Wind"), &L.Wind}, {TEXT("CloudCover"), &L.CloudCover}, {TEXT("CloudSpeed"), &L.CloudSpeed}, {TEXT("CloudScale"), &L.CloudScale} };
 			for (const auto& F : Floats) { double V; if ((*Row)->TryGetNumberField(F.Key, V)) { *F.Value = float(V); } }
 			const TPair<const TCHAR*, FLinearColor*> Colors[] = { {TEXT("SunColor"), &L.SunColor}, {TEXT("SkyColor"), &L.SkyColor}, {TEXT("FogColor"), &L.FogColor}, {TEXT("Gain"), &L.Gain}, {TEXT("CloudDark"), &L.CloudDark}, {TEXT("CloudLight"), &L.CloudLight} };
 			for (const auto& C : Colors)
@@ -444,6 +452,7 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 	{
 		Body->AddToStat(ESurvivalStat::BodyTemperature, -Row.Cold * DeltaSeconds);
 		Body->AddToStat(ESurvivalStat::Stamina, -Row.StaminaDrain * DeltaSeconds);
+		Body->AddToStat(ESurvivalStat::Health, -Row.HealthDrain * DeltaSeconds);
 		if (USanityComponent* Mind = Player->FindComponentByClass<USanityComponent>())
 		{
 			Mind->SetSanity(Mind->GetSanity() + Row.SanityGain * DeltaSeconds);
@@ -460,6 +469,92 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 	P.BloomIntensity = Look.Bloom;
 	P.VignetteIntensity = Look.Vignette;
 	Grade->BlendWeight = A;
+}
+
+namespace
+{
+	// What the player reads: never the realm's own name. Danger: 0 harmless, 1 risky, 2 deadly without shelter.
+	const FRealmWeatherInfo GInfo[NumRealms] = {
+		{ TEXT("QUIET SKY"), TEXT("Clear skies ahead"), 0 },
+		{ TEXT("VEIL OF MIST"), TEXT("Whiteout approaching"), 1 },
+		{ TEXT("EMBERFALL"), TEXT("Burning ash approaching"), 1 },
+		{ TEXT("WINTER\u2019S VEIL"), TEXT("Snowstorm approaching"), 2 },
+		{ TEXT("PEARL LIGHT"), TEXT("Soft light ahead"), 0 },
+		{ TEXT("JADE TIDE"), TEXT("Aurora rising"), 0 },
+		{ TEXT("SILVER ECLIPSE"), TEXT("Killing cold approaching"), 2 },
+		{ TEXT("STARFALL FROST"), TEXT("The mind grows cold"), 1 },
+		{ TEXT("GOLDEN HUSH"), TEXT("Warm light ahead"), 0 },
+	};
+}
+
+const FRealmWeatherInfo& ARealmSky::GetWeatherInfo(int32 Index) { return GInfo[FMath::Clamp(Index, 0, NumRealms - 1)]; }
+int32 ARealmSky::NumWeathers() { return NumRealms; }
+
+ERealm ARealmSky::DrawFromBag()
+{
+	if (Bag.Num() == 0)
+	{
+		for (int32 i = 0; i < NumRealms; ++i) { Bag.Add(i); }
+		for (int32 i = Bag.Num() - 1; i > 0; --i) { Bag.Swap(i, FMath::RandRange(0, i)); }
+		if (Bag.Last() == int32(Shown) && Bag.Num() > 1) { Bag.Swap(0, Bag.Num() - 1); }   // never the same one twice running
+	}
+	return ERealm(Bag.Pop());
+}
+
+void ARealmSky::SetScheduled(bool bOn)
+{
+	bScheduled = bOn;
+	bForecast = false;
+	if (bOn) { WeatherLeft = FMath::Min(WeatherLeft, 30.f); }
+}
+
+void ARealmSky::ForecastNow()
+{
+	bScheduled = true;
+	bForecast = false;
+	WeatherLeft = 0.f;
+}
+
+void ARealmSky::TickWeather(float DeltaSeconds, const FVector& Around)
+{
+	// All nine together belong to the summit alone: nothing else happens up there
+	const bool bSummit = FVector::DistXY(Around, PlacedAround) < 60000.0;
+	if (bSummit != bAtSummit)
+	{
+		bAtSummit = bSummit;
+		bForecast = false;
+		if (bSummit) { ShowAll(); } else { ShowRealm(Bag.Num() ? ERealm(Bag.Last()) : ERealm::Midgard); WeatherLeft = FMath::FRandRange(600.f, 720.f); }
+	}
+	if (!bScheduled || bAtSummit) { return; }
+	WeatherLeft -= DeltaSeconds;
+	if (!bForecast)
+	{
+		NextRealm = DrawFromBag();
+		bForecast = true;
+		// dangerous weather gives time to reach shelter; harmless weather arrives with less notice
+		ForecastLeft = GInfo[int32(NextRealm)].Danger > 0 ? 150.f : 45.f;
+		WeatherLeft = FMath::Max(WeatherLeft, ForecastLeft) ;
+		if (AnnounceIn >= 0.f) { WeatherLeft = AnnounceIn + ForecastLeft; AnnounceIn = -1.f; }
+		ForecastSerial += (WeatherLeft <= ForecastLeft + 0.5f) ? 1 : 0;
+		bAnnounced = WeatherLeft <= ForecastLeft + 0.5f;
+	}
+	if (!bAnnounced && WeatherLeft <= ForecastLeft)
+	{
+		bAnnounced = true;
+		++ForecastSerial;   // the wheel spins once for this
+	}
+	if (WeatherLeft <= 0.f)
+	{
+		ShowRealm(NextRealm);
+		bForecast = false;
+		WeatherLeft = FMath::FRandRange(600.f, 720.f);
+		UE_LOG(LogTemp, Display, TEXT("RealmSky: weather %s for %.0f s"), GInfo[int32(Shown)].Name, WeatherLeft);
+	}
+}
+
+float ARealmSky::GetSkyHoursSinceShown() const
+{
+	return SkyHours;
 }
 
 void ARealmSky::ReloadLooks()
@@ -566,7 +661,23 @@ void ARealmSky::Tick(float DeltaSeconds)
 	// keep the sky centred on the player: 5000 km away, a planet would otherwise drift as you walk 30 km
 	const APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
 	const FVector Around = Pawn ? Pawn->GetActorLocation() : PlacedAround;
+	TickWeather(DeltaSeconds, Around);
 	ApplyLook(DeltaSeconds, Around);
+	// The planets cross the sky with the sky's own clock, a little slower than the sun
+	if (AActor* SkyActor = FindSky(GetWorld()))
+	{
+		if (FDoubleProperty* Tod = CastField<FDoubleProperty>(SkyActor->GetClass()->FindPropertyByName(TEXT("Time of Day"))))
+		{
+			const double Now = Tod->GetPropertyValue_InContainer(SkyActor);
+			if (LastTod >= 0.0)
+			{
+				double Step = Now - LastTod;
+				if (Step < -1200.0) { Step += 2400.0; }
+				if (FMath::Abs(Step) < 300.0) { SkyHours += float(Step / 100.0); }
+			}
+			LastTod = Now;
+		}
+	}
 	if (bFollowRoute) { UpdateRouteRealm(Around); }
 	// Alfheim's prism bow: only while Alfheim is up, only from the one spot on the route
 	if (const AActor* Bow = Planets[AlfheimBow].Actor.Get())
@@ -603,7 +714,9 @@ void ARealmSky::Tick(float DeltaSeconds)
 			{
 				const FPlanetSky& Sky = PlanetSky(Index);
 				const double Dist = P.Offset.Size();
-				const FVector Dir = FRotator(Sky.Pitch, Sky.Yaw, 0.f).Vector();
+				// 12 degrees per sky hour along a slow arc, from where the reference shot has it
+				const float Drift = FMath::Fmod(SkyHours - ShownAtHours, 24.f) * 12.f;
+				const FVector Dir = FRotator(Sky.Pitch + 14.f * FMath::Sin(FMath::DegreesToRadians(Drift)), Sky.Yaw + Drift, 0.f).Vector();
 				A->SetActorLocation(Around + Dir * Dist);
 				A->SetActorScale3D(FVector(Dist * FMath::Tan(FMath::DegreesToRadians(Sky.Degrees * 0.5f)) / 100.0));
 				if (Index == int32(ERealm::Asgard) && Ring)
