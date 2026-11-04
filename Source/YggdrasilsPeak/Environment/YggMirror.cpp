@@ -93,6 +93,11 @@ void AYggMirror::Tick(float DeltaSeconds)
 	{
 		return;   // behind the mirror or far away: nothing to show
 	}
+	// A capture draws the whole world again: only while the glass is really on screen, and every other frame
+	if (!Glass->WasRecentlyRendered(0.2f) || (++FrameSkip & 1))
+	{
+		return;
+	}
 
 	// Render target follows the screen's shape and size (scaled), so the screen-space lookup on the glass is 1:1.
 	FVector2D ScreenSize;

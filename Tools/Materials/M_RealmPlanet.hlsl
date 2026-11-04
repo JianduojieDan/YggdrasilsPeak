@@ -136,8 +136,8 @@ else if (R == 5) {       // Vanaheim: deep jade gas giant - slow marbled current
 }
 else if (R == 6) {       // Svartalfheim: nearly black face; a thin continuous silver ring; one bright bead where light escapes
   float n = r.Fbm(P * 6.0);
-  A = float3(0.006, 0.0065, 0.009) * (0.5 + 1.1 * n);   // auto exposure at altitude lifts any grey: keep it near black
-  float ring = pow(1.0 - facing, 34.0) * (0.65 + 0.7 * r.Fbm(N * 7.0)) + pow(1.0 - facing, 9.0) * 0.05;
+  A = float3(0.003, 0.0032, 0.0045) * (0.5 + 1.1 * n);   // auto exposure at altitude lifts any grey: keep it near black
+  float ring = pow(1.0 - facing, 34.0) * (0.65 + 0.7 * r.Fbm(N * 7.0)) + pow(1.0 - facing, 12.0) * 0.012;
   float bead = pow(saturate(dot(N, Lp)), 200.0) * pow(1.0 - facing, 10.0);     // on the very edge, towards the sun
   E = float3(0.92, 0.94, 1.0) * ring * 6.0 + float3(1.0, 0.95, 0.85) * bead * 25.0;
   amb = 1.0; lit = 0.0; wash = 0.0;
@@ -145,9 +145,9 @@ else if (R == 6) {       // Svartalfheim: nearly black face; a thin continuous s
 else if (R == 7) {       // Hel, the Long Night Star: deep indigo, almost black, a short silver crescent on one side
   float n = r.Fbm(P * 5.0);
   float vein = (1.0 - smoothstep(0.0, 0.018, abs(r.Fbm(P * 3.0 + n * 1.4) - 0.5))) * smoothstep(0.35, 0.65, r.Fbm(P * 2.1 + 5.0));
-  A = lerp(float3(0.010, 0.008, 0.032), float3(0.05, 0.04, 0.13), vein * 0.5 + n * 0.45);
+  A = lerp(float3(0.006, 0.005, 0.022), float3(0.022, 0.016, 0.06), n);
   float cres = pow(1.0 - facing, 3.0) * smoothstep(0.55, 0.98, dot(N, Lp));   // a short crescent on one side only
-  E = float3(0.80, 0.84, 0.95) * cres * 1.2 + float3(0.45, 0.4, 0.95) * vein * 0.015;
+  E = float3(0.80, 0.84, 0.95) * cres * 1.2 + float3(0.62, 0.55, 0.95) * vein * 0.16;
   amb = 1.0; lit = 0.0; wash = 0.0;
 }
 else if (R == 8) {       // Asgard: pale gold, soft shadow, craters, a brighter upper rim

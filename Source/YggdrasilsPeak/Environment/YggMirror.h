@@ -38,7 +38,7 @@ public:
 
 	/** The mirror only renders while the player's camera is closer than this, cm. */
 	UPROPERTY(EditAnywhere, Category="Mirror", meta=(ClampMin="100"))
-	float CaptureDistance = 3000.f;
+	float CaptureDistance = 1500.f;
 
 	/** Unlit material sampling "Reflection" (texture parameter) at the flipped screen position. */
 	UPROPERTY(EditAnywhere, Category="Mirror")
@@ -61,6 +61,7 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category="Mirror")
 	TObjectPtr<USceneCaptureComponent2D> Capture;
+	int32 FrameSkip = 0;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextureRenderTarget2D> Target;

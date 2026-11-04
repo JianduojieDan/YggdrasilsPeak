@@ -128,6 +128,12 @@ private:
 	double BaseCloud = 0.9;
 	void SetTargets();
 	void TickWeather(float DeltaSeconds, const FVector& Around);
+	void TickTour(float DeltaSeconds);
+	TArray<FString> PerfSteps;
+	float PerfTime = 0.f, PerfFrame = 0.f, PerfGpu = 0.f, PerfRender = 0.f;
+	int32 PerfFrames = 0;
+	int32 TourIndex = -1, TourFrames = 0;
+	float TourTime = 0.f, TourFrame = 0.f, TourGame = 0.f, TourRender = 0.f, TourGpu = 0.f;
 	ERealm DrawFromBag();
 	TArray<int32> Bag;
 	bool bScheduled = true, bForecast = false, bAnnounced = false, bAtSummit = false;

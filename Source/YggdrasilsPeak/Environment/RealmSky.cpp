@@ -11,6 +11,7 @@
 #include "EngineUtils.h"
 #include "Engine/StaticMeshActor.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -23,6 +24,8 @@
 #include "Serialization/JsonSerializer.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "RHI.h"
+#include "RenderTimer.h"
 #include "NiagaraComponent.h"
 #include "Survival/SanityComponent.h"
 #include "Survival/SurvivalComponent.h"
@@ -152,6 +155,13 @@ void ARealmSky::BeginPlay()
 	MakeAsgardRings();
 	FParse::Value(FCommandLine::Get(), TEXT("YggForecastIn="), AnnounceIn);   // captures: spin the wheel at a known moment
 	ShowRealm(ERealm::Midgard);   // the world starts under a quiet sky
+	if (FParse::Param(FCommandLine::Get(), TEXT("YggPerfSteps")))
+	{
+		FFileHelper::LoadFileToStringArray(PerfSteps, *(FPaths::ProjectSavedDir() / TEXT("perf_steps.txt")));
+		bScheduled = false;
+		ShowRealm(ERealm::None);
+	}
+	if (FParse::Param(FCommandLine::Get(), TEXT("YggTour"))) { TourIndex = 0; bScheduled = false; ShowRealm(ERealm::None); }
 }
 
 void ARealmSky::MakeAsgardRings()
@@ -557,6 +567,41 @@ float ARealmSky::GetSkyHoursSinceShown() const
 	return SkyHours;
 }
 
+// -YggTour: one launch visits every realm and logs its frame times, then quits (no realm first, as the baseline)
+void ARealmSky::TickTour(float DeltaSeconds)
+{
+	if (PerfSteps.Num())
+	{
+		// -YggPerfSteps: runs Saved/perf_steps.txt, one console command per line, logging the frame cost after each
+		PerfTime += DeltaSeconds;
+		if (PerfTime > 10.f) { ++PerfFrames; PerfFrame += DeltaSeconds * 1000.f; PerfGpu += FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles()); PerfRender += FPlatformTime::ToMilliseconds(GRenderThreadTime); }
+		if (PerfTime > 20.f)
+		{
+			const int32 N = FMath::Max(PerfFrames, 1);
+			UE_LOG(LogTemp, Display, TEXT("STEP [%s] fps %.0f frame %.1f render %.1f gpu %.1f"), *PerfSteps[0], N / (PerfFrame / 1000.f), PerfFrame / N, PerfRender / N, PerfGpu / N);
+			PerfSteps.RemoveAt(0);
+			PerfTime = 0.f; PerfFrames = 0; PerfFrame = PerfGpu = PerfRender = 0.f;
+			if (PerfSteps.Num() == 0) { FPlatformMisc::RequestExit(false); return; }
+			if (APlayerController* PC = GetWorld()->GetFirstPlayerController()) { PC->ConsoleCommand(PerfSteps[0]); }
+		}
+		return;
+	}
+	if (TourIndex < 0) { return; }
+	constexpr float Settle = 14.f, Measure = 15.f;
+	TourTime += DeltaSeconds;
+	if (TourTime > Settle)
+	{
+		++TourFrames; TourFrame += DeltaSeconds * 1000.f;
+		TourRender += FPlatformTime::ToMilliseconds(GRenderThreadTime); TourGame += FPlatformTime::ToMilliseconds(GGameThreadTime); TourGpu += FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles());
+	}
+	if (TourTime < Settle + Measure) { return; }
+	const int32 F = FMath::Max(TourFrames, 1);
+	UE_LOG(LogTemp, Display, TEXT("TOUR %s fps %.0f frame %.1f game %.1f render %.1f gpu %.1f"), TourIndex == 0 ? TEXT("none") : RealmLabels[TourIndex - 1], F / (TourFrame / 1000.f), TourFrame / F, TourGame / F, TourRender / F, TourGpu / F);
+	TourTime = 0.f; TourFrames = 0; TourFrame = TourGame = TourRender = TourGpu = 0.f;
+	if (++TourIndex > NumRealms) { FPlatformMisc::RequestExit(false); return; }
+	ShowRealm(ERealm(TourIndex - 1));
+}
+
 void ARealmSky::ReloadLooks()
 {
 	LoadLookOverrides();
@@ -661,6 +706,7 @@ void ARealmSky::Tick(float DeltaSeconds)
 	// keep the sky centred on the player: 5000 km away, a planet would otherwise drift as you walk 30 km
 	const APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
 	const FVector Around = Pawn ? Pawn->GetActorLocation() : PlacedAround;
+	TickTour(DeltaSeconds);
 	TickWeather(DeltaSeconds, Around);
 	ApplyLook(DeltaSeconds, Around);
 	// The planets cross the sky with the sky's own clock, a little slower than the sun
