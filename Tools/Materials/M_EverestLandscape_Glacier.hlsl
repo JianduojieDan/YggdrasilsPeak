@@ -39,13 +39,27 @@ float steep = 1.0 - smoothstep(0.72, 0.92, n.z);
 // ---- moraine rubble (two scales, rotated against each other so the tiling never lines up)
 float2 p1 = WP.xy / 450.0;
 float2 p2 = gf.Rot(WP.xy, 1.13) / 1700.0 + 0.37;
-float mip1 = clamp(log2(dist / 140.0), 0.0, 11.0);
-float mip2 = clamp(log2(dist / 530.0), 0.0, 11.0);
+// explicit mips (no derivatives in RT hit shaders) went by distance only: on slopes seen at a low angle the rubble
+// was undersampled and smeared into streaks - also blur with the grazing angle
+float graze = 0.5 * log2(1.0 / max(abs(dot(normalize(WP - Cam), n)), 0.12));
+float mip1 = clamp(log2(dist / 140.0) + graze, 0.0, 11.0);
+float mip2 = clamp(log2(dist / 530.0) + graze, 0.0, 11.0);
+// biplanar: projected straight down on flat ground, from the side on slopes (straight-down projection stretched the
+// rubble into downslope streaks on the valley walls)
+float3 an = abs(n);
+float wTop = smoothstep(0.6, 0.8, an.z);
+float2 side = (an.x > an.y ? WP.yz : WP.xz) * float2(1.0, -1.0);
 float3 c1 = MorC.SampleLevel(MorCSampler, p1, mip1).rgb;
 float3 c2 = MorC.SampleLevel(MorCSampler, p2, mip2).rgb;
+if (wTop < 0.999)
+{
+  float m1 = clamp(log2(dist / 140.0), 0.0, 11.0), m2 = clamp(log2(dist / 530.0), 0.0, 11.0);
+  c1 = lerp(MorC.SampleLevel(MorCSampler, side / 450.0, m1).rgb, c1, wTop);
+  c2 = lerp(MorC.SampleLevel(MorCSampler, gf.Rot(side, 1.13) / 1700.0 + 0.37, m2).rgb, c2, wTop);
+}
 float mixA = smoothstep(0.25, 0.75, gf.Fbm(WP.xy / 1300.0 + 3.3));
 float2 p3 = gf.Rot(WP.xy, 2.41) / 6500.0 + 0.71;
-float3 c3 = MorC.SampleLevel(MorCSampler, p3, clamp(log2(dist / 2000.0), 0.0, 11.0)).rgb;
+float3 c3 = MorC.SampleLevel(MorCSampler, p3, clamp(log2(dist / 2000.0) + graze, 0.0, 11.0)).rgb;
 float far = smoothstep(1200.0, 6000.0, dist);                       // beyond ~20 m the 4.5 m tile shows as a grid: fade to big scales
 float3 mc = lerp(lerp(c1, c2, mixA), lerp(c2, c3, 0.6), far);
 mc = lerp(dot(mc, float3(0.3, 0.59, 0.11)).xxx, mc, 0.2) * float3(0.98, 0.97, 0.96); // Khumbu granite is grey
@@ -86,8 +100,8 @@ float iR = lerp(0.32, 0.08, clear);
 // ---- where the old snow stays: hollows and flats keep the existing snow surface (Col/N/Rgh)
 // crisp, ragged edges: a fine noise breaks the border so rubble pokes through the snow
 float patchN = gf.Fbm(WP.xy / 1400.0 + 11.0) + (gf.Fbm(WP.xy / 90.0 + 3.0) - 0.5) * 0.16 + (gf.VN(WP.xy / 25.0) - 0.5) * 0.05;
-float snowKeepDebris = smoothstep(0.63, 0.655, patchN + (n.z - 0.9) * 0.6);
-float snowKeepBare = smoothstep(0.55, 0.575, patchN + (n.z - 0.85) * 0.8);
+float snowKeepDebris = smoothstep(0.61, 0.68, patchN + (n.z - 0.9) * 0.6);   // 2026-11-03: was 0.63-0.655, read as paper cut-outs
+float snowKeepBare = smoothstep(0.53, 0.60, patchN + (n.z - 0.85) * 0.8);
 
 // debris tongue: rubble, with dark old ice on its steep faces
 float3 dCol = lerp(mc, float3(0.32, 0.38, 0.44), steep * 0.6);
@@ -101,8 +115,11 @@ float bR = lerp(iR, mR, med * 0.7);
 // snow-covered upper glacier: only steep ice shows
 float3 uCol = ic * 0.95;
 
-float aD = g * debris * (1.0 - snowKeepDebris);
-float aB = g * bare * (1.0 - snowKeepBare);
+// rubble/ice textures are projected flat (xy): on the valley walls they smear into streaks - keep them to the
+// glacier floor and let the snow/rock surface (triplanar) carry the steeper sides
+float floorOnly = smoothstep(0.55, 0.75, n.z);   // biplanar rubble holds up on moderate slopes now
+float aD = g * debris * (1.0 - snowKeepDebris) * floorOnly;
+float aB = g * bare * (1.0 - snowKeepBare) * lerp(0.35, 1.0, floorOnly);
 float aU = g * (1.0 - debris - bare) * steep * 0.6;
 float3 outC = Col;
 outC = lerp(outC, dCol, aD);

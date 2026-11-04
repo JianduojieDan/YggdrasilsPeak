@@ -55,7 +55,7 @@ public:
 
 	/** Prayer flag size in metres (width, height). */
 	UPROPERTY(EditAnywhere, Category="Landmark")
-	FVector2D FlagSize = FVector2D(0.45f, 0.32f);
+	FVector2D FlagSize = FVector2D(0.3f, 0.4f);
 
 	/** Changes the tent layout and colours. */
 	UPROPERTY(EditAnywhere, Category="Landmark")

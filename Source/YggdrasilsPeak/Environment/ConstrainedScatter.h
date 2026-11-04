@@ -33,6 +33,14 @@ struct FScatterMesh
 	/** Sunk this fraction of its height into the ground (hides the cut base on slopes). */
 	UPROPERTY(EditAnywhere, Category="Scatter", meta=(ClampMin="0", ClampMax="0.9"))
 	float EmbedFraction = 0.15f;
+
+	/** Random extra lean, up to this many degrees, in a random direction. */
+	UPROPERTY(EditAnywhere, Category="Scatter", meta=(ClampMin="0", ClampMax="45"))
+	float MaxLeanDeg = 0.f;
+
+	/** 0 = uniform scale; 1 = widths/heights vary roughly 0.5x..2x (slabs to towers). */
+	UPROPERTY(EditAnywhere, Category="Scatter", meta=(ClampMin="0", ClampMax="1"))
+	float ShapeVariance = 0.f;
 };
 
 /** Why candidates were rejected, in rule priority order (thesis evaluation: one count per reason). */

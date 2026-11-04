@@ -350,3 +350,130 @@ void ALandscapeRebuilder::RaiseSummit()
 	UE_LOG(LogTemp, Display, TEXT("LandscapeRebuilder: %s"), *LastResult);
 #endif
 }
+
+void ALandscapeRebuilder::SculptHighRidges()
+{
+#if WITH_EDITOR
+	ALandscape* Landscape = Cast<ALandscape>(BuiltLandscape.Get());
+	ULandscapeInfo* Info = Landscape ? Landscape->GetLandscapeInfo() : nullptr;
+	int32 MinX, MinY, MaxX, MaxY;
+	if (!Info || !Info->GetLandscapeExtent(MinX, MinY, MaxX, MaxY))
+	{
+		LastResult = TEXT("SculptHighRidges: no BuiltLandscape.");
+		return;
+	}
+	const int32 W = MaxX - MinX + 1;
+	const int32 H = MaxY - MinY + 1;
+
+	TOptional<FScopedSetLandscapeEditingLayer> LayerScope;
+	if (const ULandscapeEditLayerBase* Layer = Landscape->GetEditLayerConst(0))
+	{
+		LayerScope.Emplace(Landscape, Layer->GetGuid(), [Landscape] { Landscape->RequestLayersContentUpdateForceAll(); });
+	}
+	TArray<uint16> Heights;
+	Heights.SetNumZeroed(W * H);
+	FLandscapeEditDataInterface Edit(Info);
+	{
+		int32 X1 = MinX, Y1 = MinY, X2 = MaxX, Y2 = MaxY;
+		Edit.GetHeightData(X1, Y1, X2, Y2, Heights.GetData(), W);
+	}
+
+	const FTransform LandscapeTransform = Landscape->GetActorTransform();
+	const FVector Scale = LandscapeTransform.GetScale3D();
+	const double CmPerUnit = Scale.Z / 128.0;
+	const double SpacingM = Scale.X / 100.0;
+	const USurvivalConfig* Cfg = GetDefault<USurvivalConfig>();
+	auto ElevationM = [&](double Value)
+	{
+		const double Z = LandscapeTransform.GetLocation().Z + (Value - 32768.0) * CmPerUnit;
+		return Cfg->ReferenceElevationMeters + (Z - Cfg->ReferenceWorldZ) / 100.0;
+	};
+	uint16 Top = 0;
+	FIntPoint Peak(0, 0);
+	for (int32 I = 0; I < Heights.Num(); ++I) { if (Heights[I] > Top) { Top = Heights[I]; Peak = FIntPoint(I % W, I / W); } }
+
+	// Ridged noise: 1 - |n| makes sharp crests and rounded troughs; two octaves, the second turned against the first.
+	auto RidgeNoise = [&](double XM, double YM)
+	{
+		double Sum = 0.0, Norm = 0.0, Amp = 1.0, F = 1.0 / SculptWavelengthM;
+		for (int32 O = 0; O < 2; ++O)
+		{
+			const double C = FMath::Cos(0.9 * O), S = FMath::Sin(0.9 * O);
+			const double N = ValueNoise((XM * C - YM * S) * F, (XM * S + YM * C) * F, Seed + 101 + O);
+			const double R = 1.0 - FMath::Abs(N);
+			Sum += Amp * (R * R - 0.45);
+			Norm += Amp;
+			Amp *= 0.5;
+			F *= 2.1;
+		}
+		return Sum / Norm;
+	};
+	TArray<float> Delta;                      // cm, per sample - also used to move props with the ground
+	Delta.SetNumZeroed(W * H);
+	const TArray<uint16> Base = Heights;
+	ParallelFor(H, [&](int32 Y)
+	{
+		for (int32 X = 0; X < W; ++X)
+		{
+			const double V = Base[Y * W + X];
+			const double Fade = FMath::SmoothStep(double(SculptAboveM), double(SculptFullAboveM), ElevationM(V));
+			if (Fade <= 0.0) { continue; }
+			const double Keep = FMath::SmoothStep(double(SculptKeepSummitM), SculptKeepSummitM * 3.0, FVector2D::Distance(FVector2D(X, Y), FVector2D(Peak)) * SpacingM);
+			const auto At = [&](int32 DX, int32 DY) { return double(Base[FMath::Clamp(Y + DY, 0, H - 1) * W + FMath::Clamp(X + DX, 0, W - 1)]); };
+			const double Slope = FVector2D(At(1, 0) - At(-1, 0), At(0, 1) - At(0, -1)).Size() * CmPerUnit / (2.0 * Scale.X);
+			const double Steep = FMath::Lerp(0.25, 1.0, FMath::SmoothStep(0.25, 1.0, Slope));
+			const double OffsetCm = RidgeNoise(X * SpacingM, Y * SpacingM) * SculptHeightM * 100.0 * Steep * Fade * Keep;
+			Delta[Y * W + X] = float(OffsetCm);
+			Heights[Y * W + X] = (uint16)FMath::Clamp(FMath::RoundToInt(V + OffsetCm / CmPerUnit), 0, 65535);
+		}
+	});
+	Edit.SetHeightData(MinX, MinY, MaxX, MaxY, Heights.GetData(), W, true);
+	Edit.Flush();
+	LayerScope.Reset();
+	Landscape->Modify();
+
+	// Props, rope points: move with the ground under them (bilinear delta at their spot).
+	auto DeltaAt = [&](const FVector& P)
+	{
+		const FVector L = LandscapeTransform.InverseTransformPosition(P) - FVector(MinX, MinY, 0.0);
+		const int32 X0 = FMath::FloorToInt32(L.X), Y0 = FMath::FloorToInt32(L.Y);
+		if (X0 < 0 || Y0 < 0 || X0 >= W - 1 || Y0 >= H - 1) { return 0.0; }
+		const double FX = L.X - X0, FY = L.Y - Y0;
+		const auto D = [&](int32 X, int32 Y) { return double(Delta[Y * W + X]); };
+		return FMath::Lerp(FMath::Lerp(D(X0, Y0), D(X0 + 1, Y0), FX), FMath::Lerp(D(X0, Y0 + 1), D(X0 + 1, Y0 + 1), FX), FY);
+	};
+	int32 Moved = 0;
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (Actor == this || Actor->IsA<ALandscapeProxy>())
+		{
+			continue;
+		}
+		if (AFixedRope* Rope = Cast<AFixedRope>(Actor))
+		{
+			bool bChanged = false;
+			for (FVector& P : Rope->RopePoints)
+			{
+				const double D = DeltaAt(P);
+				if (FMath::Abs(D) > 1.0) { if (!bChanged) { Rope->Modify(); } P.Z += D; bChanged = true; }
+			}
+			if (bChanged) { Rope->RerunConstructionScripts(); ++Moved; }
+			continue;
+		}
+		FVector Origin, Extent;
+		Actor->GetActorBounds(false, Origin, Extent);
+		const double D = DeltaAt(Actor->GetActorLocation());
+		if (FMath::Abs(D) > 1.0 && Extent.Size2D() < 5000.0)
+		{
+			Actor->Modify();
+			Actor->SetActorLocation(Actor->GetActorLocation() + FVector(0.0, 0.0, D));
+			++Moved;
+		}
+	}
+	float MaxD = 0.f;
+	for (float D : Delta) { MaxD = FMath::Max(MaxD, FMath::Abs(D)); }
+	LastResult = FString::Printf(TEXT("SculptHighRidges: above %.0f m, up to %.1f m, %d actors moved with the ground."), SculptAboveM, MaxD / 100.0, Moved);
+	UE_LOG(LogTemp, Display, TEXT("LandscapeRebuilder: %s"), *LastResult);
+#endif
+}

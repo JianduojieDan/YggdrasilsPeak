@@ -96,6 +96,34 @@ public:
 	UFUNCTION(CallInEditor, Category="Summit")
 	void RaiseSummit();
 
+	/** Ridge sculpting starts at this elevation (m) and is at full strength from SculptFullAboveM. */
+	UPROPERTY(EditAnywhere, Category="Summit")
+	float SculptAboveM = 7300.f;
+
+	UPROPERTY(EditAnywhere, Category="Summit")
+	float SculptFullAboveM = 7800.f;
+
+	/** Height of the wind-cut ridges and gullies on steep ground (m); flat ground gets a quarter of it. */
+	UPROPERTY(EditAnywhere, Category="Summit", meta=(ClampMin="0"))
+	float SculptHeightM = 6.f;
+
+	/** Size of the largest ridge / gully pattern (m); a second octave at roughly half that. */
+	UPROPERTY(EditAnywhere, Category="Summit", meta=(ClampMin="40"))
+	float SculptWavelengthM = 150.f;
+
+	/** Standing spot left untouched around the summit (m). */
+	UPROPERTY(EditAnywhere, Category="Summit", meta=(ClampMin="0"))
+	float SculptKeepSummitM = 25.f;
+
+	/**
+	 *  High up the 34 m/px source (and the smooth RaiseSummit bump) leave big flat triangles whose straight edges cast
+	 *  stepped, saw-tooth shadows. This carves ridged noise - sharp crests, rounded gullies, stronger on steep faces -
+	 *  into BuiltLandscape above SculptAboveM, then moves props and fixed-rope points by the same amount so nothing
+	 *  floats or sinks. Run once (running again sculpts again).
+	 */
+	UFUNCTION(CallInEditor, Category="Summit")
+	void SculptHighRidges();
+
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif

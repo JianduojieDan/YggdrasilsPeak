@@ -109,7 +109,8 @@ public:
 	UPROPERTY(EditAnywhere, Category="Climbing", meta=(ClampMin="0"))
 	float HandContactGap = 3.f;
 
-	/** ...and lifted so the boots stay at least this far above the ground under them (cm), never in it. */
+	/** ...and moved up or down so the lower boot rests this far above the ground under it (cm): never in it, never
+	 *  hovering over a snow slope. */
 	UPROPERTY(EditAnywhere, Category="Climbing", meta=(ClampMin="0"))
 	float FootClearance = 3.f;
 
@@ -208,6 +209,7 @@ private:
 	TWeakObjectPtr<class UCameraComponent> FirstPersonCamera;
 	bool bClimbView = false;
 	float MeshShift = 0.f;
+	float MeshLift = 0.f;            // body up (+) / down (-) from the capsule so the boots meet the ground
 	TArray<FVector> MeshBaseLocations;
 	void FitBodyToFace(const FHitResult& Face, float DeltaTime);
 	bool bBodyWasOwnerNoSee = true;

@@ -25,7 +25,7 @@ c = cap.capture_component2d
 c.set_editor_property("texture_target", rt)
 c.set_editor_property("capture_source", unreal.SceneCaptureSource.SCS_FINAL_TONE_CURVE_HDR)
 c.set_editor_property("capture_every_frame", False)
-c.set_editor_property("fov_angle", 90.0)
+c.set_editor_property("fov_angle", globals().get("FOV", 90.0))
 for name, loc, yaw, pitch in views:
     cap.set_actor_location_and_rotation(loc, unreal.Rotator(roll=0, pitch=pitch, yaw=yaw), False, True)
     for _ in range(3):  # a few captures so exposure / streaming settle

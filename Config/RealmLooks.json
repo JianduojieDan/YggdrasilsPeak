@@ -1,0 +1,353 @@
+{
+ "Midgard": {
+  "Active": 1,
+  "SunScale": 0.85,
+  "Saturation": 1.0,
+  "Contrast": 1.08,
+  "Exposure": -0.35,
+  "Wind": 0.12,
+  "FogDensity": 0.002,
+  "FogFalloff": 0.05,
+  "FogColor": [
+   0.6,
+   0.7,
+   0.85
+  ],
+  "Bloom": 0.5,
+  "Vignette": 0.3,
+  "PlanetDegrees": 20.181,
+  "PlanetYaw": 13.072,
+  "PlanetPitch": 26.331,
+  "SkyScale": 1.6,
+  "CloudCover": 0.32,
+  "CloudSpeed": 8,
+  "CloudScale": 12,
+  "CloudDark": [
+   0.55,
+   0.6,
+   0.7
+  ],
+  "CloudLight": [
+   1.3,
+   1.3,
+   1.35
+  ]
+ },
+ "Niflheim": {
+  "SunScale": 0.8,
+  "SkyScale": 1.2,
+  "FogDensity": 0.025,
+  "FogFalloff": 0.008,
+  "Saturation": 0.75,
+  "Contrast": 1.2,
+  "Exposure": -0.25,
+  "PlanetAlpha": 0.35,
+  "Wind": 0.25,
+  "PlanetDegrees": 27.811,
+  "PlanetYaw": 13.078,
+  "PlanetPitch": 29.169,
+  "CloudCover": 0,
+  "CloudSpeed": 2,
+  "CloudScale": 8,
+  "CloudDark": [
+   0.6,
+   0.6,
+   0.6
+  ],
+  "CloudLight": [
+   1,
+   1,
+   1
+  ],
+  "FogColor": [
+   0.88,
+   0.91,
+   0.93
+  ]
+ },
+ "Muspelheim": {
+  "SunScale": 0.9,
+  "SunColor": [
+   1,
+   0.62,
+   0.4
+  ],
+  "SkyScale": 1.3,
+  "SkyColor": [
+   0.75,
+   0.82,
+   1
+  ],
+  "FogDensity": 0.006,
+  "Saturation": 1.05,
+  "Contrast": 1.12,
+  "Gain": [
+   1,
+   0.97,
+   0.93
+  ],
+  "Temp": 5800,
+  "Exposure": -0.5,
+  "Bloom": 2.2,
+  "Wind": 0.2,
+  "PlanetDegrees": 30.486,
+  "PlanetYaw": 13.079,
+  "PlanetPitch": 30.166,
+  "CloudCover": 0.5,
+  "CloudSpeed": 10,
+  "CloudScale": 5,
+  "CloudDark": [
+   0.09,
+   0.05,
+   0.05
+  ],
+  "CloudLight": [
+   0.75,
+   0.33,
+   0.16
+  ]
+ },
+ "Jotunheim": {
+  "SunScale": 0.3,
+  "SkyScale": 0.9,
+  "SkyColor": [
+   0.82,
+   0.9,
+   1
+  ],
+  "FogDensity": 0.03,
+  "FogFalloff": 0.015,
+  "FogColor": [
+   0.1,
+   0.12,
+   0.15
+  ],
+  "Saturation": 0.7,
+  "Contrast": 1.2,
+  "Gain": [
+   0.97,
+   0.99,
+   1.02
+  ],
+  "Temp": 7400,
+  "Exposure": -0.9,
+  "Vignette": 0.6,
+  "Wind": 1.0,
+  "PlanetDegrees": 32.136,
+  "PlanetYaw": 13.079,
+  "PlanetPitch": 30.78,
+  "CloudCover": 1.0,
+  "CloudSpeed": 55,
+  "CloudScale": 4,
+  "CloudDark": [
+   0.1,
+   0.12,
+   0.15
+  ],
+  "CloudLight": [
+   0.3,
+   0.34,
+   0.4
+  ]
+ },
+ "Alfheim": {
+  "SunScale": 0.75,
+  "SkyColor": [
+   0.98,
+   0.96,
+   1
+  ],
+  "FogDensity": 0.004,
+  "Saturation": 1.0,
+  "Contrast": 1.05,
+  "Gain": [
+   1,
+   0.99,
+   1.01
+  ],
+  "Exposure": -0.45,
+  "Bloom": 1.4,
+  "Wind": 0.05,
+  "PlanetDegrees": 22.626,
+  "PlanetYaw": 13.074,
+  "PlanetPitch": 27.239,
+  "SkyScale": 1.7,
+  "CloudCover": 0.4,
+  "CloudSpeed": 3,
+  "CloudScale": 14,
+  "CloudDark": [
+   0.62,
+   0.58,
+   0.72
+  ],
+  "CloudLight": [
+   1.4,
+   1.32,
+   1.5
+  ]
+ },
+ "Vanaheim": {
+  "SunScale": 0.12,
+  "SunColor": [
+   0.85,
+   1,
+   0.95
+  ],
+  "SkyScale": 1.5,
+  "SkyColor": [
+   0.82,
+   0.95,
+   1
+  ],
+  "FogDensity": 0.002,
+  "Saturation": 1.0,
+  "Contrast": 1.1,
+  "Gain": [
+   0.98,
+   1,
+   1
+  ],
+  "Temp": 7000,
+  "Exposure": -0.6,
+  "Vignette": 0.45,
+  "Wind": 0.08,
+  "PlanetDegrees": 24.832,
+  "PlanetYaw": 13.076,
+  "PlanetPitch": 28.06,
+  "CloudCover": 0.85,
+  "CloudSpeed": 7,
+  "CloudScale": 20,
+  "CloudDark": [
+   0.004,
+   0.05,
+   0.035
+  ],
+  "CloudLight": [
+   0.07,
+   0.5,
+   0.3
+  ]
+ },
+ "Svartalfheim": {
+  "SunScale": 0.08,
+  "SkyScale": 1.0,
+  "SkyColor": [
+   0.88,
+   0.92,
+   1
+  ],
+  "FogDensity": 0.0003,
+  "FogFalloff": 0.2,
+  "Saturation": 0.5,
+  "Contrast": 1.25,
+  "Temp": 7400,
+  "Exposure": -0.2,
+  "Vignette": 0.8,
+  "Wind": 0.0,
+  "PlanetDegrees": 23.755,
+  "PlanetYaw": 13.075,
+  "PlanetPitch": 27.659,
+  "CloudCover": 0,
+  "CloudSpeed": 0,
+  "CloudScale": 8,
+  "CloudDark": [
+   0,
+   0,
+   0
+  ],
+  "CloudLight": [
+   0,
+   0,
+   0
+  ]
+ },
+ "Hel": {
+  "SunScale": 0.14,
+  "SunColor": [
+   0.8,
+   0.8,
+   1
+  ],
+  "SkyScale": 1.5,
+  "SkyColor": [
+   0.88,
+   0.87,
+   1
+  ],
+  "FogDensity": 0.015,
+  "FogColor": [
+   0.1,
+   0.09,
+   0.2
+  ],
+  "Saturation": 0.75,
+  "Contrast": 1.1,
+  "Gain": [
+   0.99,
+   0.98,
+   1.01
+  ],
+  "Temp": 7800,
+  "Exposure": -0.7,
+  "Vignette": 0.7,
+  "Wind": 0.03,
+  "PlanetDegrees": 28.732,
+  "PlanetYaw": 13.078,
+  "PlanetPitch": 29.512,
+  "CloudCover": 0.5,
+  "CloudSpeed": 1.5,
+  "CloudScale": 9,
+  "CloudDark": [
+   0.02,
+   0.018,
+   0.05
+  ],
+  "CloudLight": [
+   0.14,
+   0.12,
+   0.3
+  ]
+ },
+ "Asgard": {
+  "SunScale": 0.8,
+  "SunColor": [
+   1,
+   0.82,
+   0.58
+  ],
+  "SkyScale": 1.5,
+  "SkyColor": [
+   1,
+   0.95,
+   0.85
+  ],
+  "FogDensity": 0.002,
+  "Saturation": 1.08,
+  "Contrast": 1.15,
+  "Gain": [
+   1.01,
+   0.99,
+   0.95
+  ],
+  "Temp": 5600,
+  "Exposure": -0.9,
+  "Bloom": 1.4,
+  "Wind": 0.3,
+  "PlanetDegrees": 26.856,
+  "PlanetYaw": 13.078,
+  "PlanetPitch": 28.813,
+  "CloudCover": 0.2,
+  "CloudSpeed": 6,
+  "CloudScale": 9,
+  "CloudDark": [
+   0.5,
+   0.34,
+   0.16
+  ],
+  "CloudLight": [
+   2.2,
+   1.7,
+   0.9
+  ]
+ }
+}

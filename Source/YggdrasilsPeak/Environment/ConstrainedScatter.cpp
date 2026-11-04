@@ -302,8 +302,15 @@ void AConstrainedScatter::Generate()
 		// the instance as it will stand: tilted half-way to the ground normal, random yaw, sunk a little
 		const FQuat Tilt = FQuat::FindBetweenNormals(FVector::UpVector, FMath::Lerp(FVector::UpVector, Hit.ImpactNormal, 0.5f).GetSafeNormal());
 		const FQuat Yaw(FVector::UpVector, Rng.FRandRange(0.f, UE_TWO_PI));
-		const float Sink = MB.BoxExtent.Z * 2.f * Scale * M.EmbedFraction;
-		const FTransform T(Tilt * Yaw, Hit.ImpactPoint - Hit.ImpactNormal * Sink - (MB.Origin.Z - MB.BoxExtent.Z) * Scale * FVector::UpVector, FVector(Scale));
+		// a random lean (blocks that have started to topple) and varied proportions (wide slabs .. tall towers), so a
+		// field of one mesh family reads as a jumble rather than rows of the same pillar
+		const float LeanAxis = Rng.FRandRange(0.f, UE_TWO_PI);
+		const FQuat Lean(FVector(FMath::Cos(LeanAxis), FMath::Sin(LeanAxis), 0.f), FMath::DegreesToRadians(Rng.FRandRange(0.f, M.MaxLeanDeg)));
+		const float Wide = 1.f + M.ShapeVariance * Rng.FRandRange(-0.5f, 1.f);
+		const float Tall = 1.f + M.ShapeVariance * Rng.FRandRange(-0.5f, 0.8f);
+		const FVector Scale3D(Scale * Wide, Scale * Wide * Rng.FRandRange(1.f - 0.3f * M.ShapeVariance, 1.f), Scale * Tall);
+		const float Sink = MB.BoxExtent.Z * 2.f * Scale3D.Z * M.EmbedFraction;
+		const FTransform T(Lean * Tilt * Yaw, Hit.ImpactPoint - Hit.ImpactNormal * Sink - (MB.Origin.Z - MB.BoxExtent.Z) * Scale3D.Z * FVector::UpVector, Scale3D);
 		// its real footprint: leaning meshes and the tilt move the top sideways, far beyond the pivot
 		float Footprint = 0.f;
 		const FVector2D P = FootprintOf(MB, T, Footprint);

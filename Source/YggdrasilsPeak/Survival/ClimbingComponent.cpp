@@ -426,6 +426,7 @@ void UClimbingComponent::RestoreAnimation()
 	TakenMeshes.Reset();
 	MeshBaseLocations.Reset();
 	MeshShift = 0.f;
+	MeshLift = 0.f;
 	CurrentClip = nullptr;
 }
 
@@ -451,16 +452,10 @@ void UClimbingComponent::FitBodyToFace(const FHitResult& Face, float DeltaTime)
 	if (N > 0)
 	{
 		MeshShift = FMath::Clamp(MeshShift + (Off - HandContactGap) * FMath::Min(1.f, DeltaTime * 6.f), 0.f, 70.f);
-		// the capsule faces the wall (actor yaw), so +X in its space is towards the face
-		for (int32 i = 0; i < TakenMeshes.Num(); ++i)
-		{
-			if (USkeletalMeshComponent* M = TakenMeshes[i].Key.Get())
-			{
-				M->SetRelativeLocation(MeshBaseLocations[i] + FVector(MeshShift, 0.f, 0.f));
-			}
-		}
 	}
-	// boots never in the ground: lift the climber until the lower foot clears what is under it
+	// boots on the ground: the body moves up or down (relative to the capsule) until the lower boot rests just above
+	// what is under it. Only lifting the whole climber - and never lowering - left them hovering over snow slopes,
+	// with the lift adding up as they moved.
 	float Lowest = 1e9f;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(ClimbFeet), false, Character);
 	for (const FName Foot : { FName(TEXT("LeftFoot")), FName(TEXT("RightFoot")) })
@@ -477,10 +472,25 @@ void UClimbingComponent::FitBodyToFace(const FHitResult& Face, float DeltaTime)
 			Lowest = FMath::Min(Lowest, float(F.Z - Ground.ImpactPoint.Z));
 		}
 	}
-	if (Lowest < FootClearance)
+	if (Lowest > 60.f)
 	{
-		const float Lift = FMath::Min(FootClearance - Lowest, 400.f * DeltaTime);   // a quick step up, not a pop
-		Character->AddActorWorldOffset(FVector(0.f, 0.f, Lift), false);
+		// up a wall, the ground is well below the boots: they stand on the face, not on it - drift back to neutral
+		MeshLift = FMath::FInterpTo(MeshLift, 0.f, DeltaTime, 3.f);
+	}
+	else
+	{
+		// up fast (a quick step, not a pop), down gently; the feet traces read last frame's lift, so ease toward it
+		const float Want = FootClearance - Lowest;
+		const float Step = Want > 0.f ? FMath::Min(Want, 400.f * DeltaTime) : FMath::Max(Want, -150.f * DeltaTime);
+		MeshLift = FMath::Clamp(MeshLift + Step, -60.f, 80.f);
+	}
+	// the capsule faces the wall (actor yaw), so +X in its space is towards the face
+	for (int32 i = 0; i < TakenMeshes.Num(); ++i)
+	{
+		if (USkeletalMeshComponent* M = TakenMeshes[i].Key.Get())
+		{
+			M->SetRelativeLocation(MeshBaseLocations[i] + FVector(MeshShift, 0.f, MeshLift));
+		}
 	}
 }
 

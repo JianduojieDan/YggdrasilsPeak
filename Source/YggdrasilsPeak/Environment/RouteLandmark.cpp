@@ -96,7 +96,10 @@ void ARouteLandmark::OnConstruction(const FTransform& Transform)
 	Label->SetText(FText::FromString(LandmarkName));
 
 	UMaterialInterface* TentColors[] = { LandmarkMaterial(TEXT("Orange")), LandmarkMaterial(TEXT("Yellow")), LandmarkMaterial(TEXT("Red")), LandmarkMaterial(TEXT("Green")) };
-	UMaterialInterface* FlagColors[] = { LandmarkMaterial(TEXT("Blue")), LandmarkMaterial(TEXT("White")), LandmarkMaterial(TEXT("Red")), LandmarkMaterial(TEXT("Green")), LandmarkMaterial(TEXT("Yellow")) };
+	const auto FlagMaterial = [](const TCHAR* Name) { return LoadObject<UMaterialInterface>(nullptr, *FString::Printf(TEXT("/Game/Environment/Landmarks/MI_PrayerFlag_%s.MI_PrayerFlag_%s"), Name, Name)); };
+	UMaterialInterface* FlagColors[] = { FlagMaterial(TEXT("Blue")), FlagMaterial(TEXT("White")), FlagMaterial(TEXT("Red")), FlagMaterial(TEXT("Green")), FlagMaterial(TEXT("Yellow")) };
+	UStaticMesh* Cloth = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/Environment/Landmarks/SM_PrayerFlag.SM_PrayerFlag"));
+	if (!Cloth) { Cloth = PlaneMesh; }
 	UMaterialInterface* Wood = LandmarkMaterial(TEXT("Wood"));
 	UMaterialInterface* Metal = LandmarkMaterial(TEXT("Metal"));
 	UMaterialInterface* White = LandmarkMaterial(TEXT("White"));
@@ -124,13 +127,27 @@ void ARouteLandmark::OnConstruction(const FTransform& Transform)
 		const float Dir = (S / float(Strings)) * 2.f * PI + 0.4f;
 		const FVector Anchor(FMath::Cos(Dir) * 900.f, FMath::Sin(Dir) * 900.f, 0.f);
 		const int32 Flags = 14;
-		for (int32 F = 1; F <= Flags; ++F)
+		// Height above local ground: from the pole top down to the anchor, with a little sag.
+		const auto StringHeight = [PoleHeight](float T) { return FMath::Lerp(PoleHeight, 40.f, T) - FMath::Sin(T * PI) * 60.f; };
+		const auto StringPoint = [&](float T)
 		{
-			const float T = F / float(Flags + 1);
-			// Height above local ground: from the pole top down to the anchor, with a little sag.
-			const float Height = FMath::Lerp(PoleHeight, 40.f, T) - FMath::Sin(T * PI) * 60.f;
-			AddPiece(PlaneMesh, FlagColors[F % UE_ARRAY_COUNT(FlagColors)], Anchor * T, Height,
-				FRotator(0.f, FMath::RadiansToDegrees(Dir) + 90.f, 90.f), FVector(FlagSize.X, FlagSize.Y, 1.f), false);
+			const FVector W = GetActorTransform().TransformPosition(Anchor * T);
+			return FVector(W.X, W.Y, GroundZ(FVector2D(W)) + StringHeight(T));
+		};
+		for (int32 F = 0; F <= Flags; ++F)
+		{
+			const float T0 = F / float(Flags + 1), T1 = (F + 1) / float(Flags + 1);
+			const FVector P0 = StringPoint(T0), P1 = StringPoint(T1);
+			if (UStaticMeshComponent* Cord = AddPiece(CylinderMesh, White, Anchor * T0, 0.f, FRotator::ZeroRotator, FVector::OneVector, false))
+			{
+				Cord->SetWorldTransform(FTransform(FRotationMatrix::MakeFromZ(P1 - P0).Rotator(), (P0 + P1) * 0.5, FVector(0.012f, 0.012f, (P1 - P0).Size() / 100.f)));
+			}
+			if (F > 0)
+			{
+				// Hangs from the cord; the free edge is the material's to swing.
+				AddPiece(Cloth, FlagColors[F % UE_ARRAY_COUNT(FlagColors)], Anchor * T0, StringHeight(T0) - FlagSize.Y * 50.f,
+					FRotator(0.f, FMath::RadiansToDegrees(Dir) + 90.f, 90.f), FVector(FlagSize.X, FlagSize.Y, 1.f), false);
+			}
 		}
 	}
 
