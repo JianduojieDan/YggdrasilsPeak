@@ -111,6 +111,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Survival")
 	void SetSnowDepth(float Depth01) { SnowDepth = FMath::Clamp(Depth01, 0.f, 1.f); }
 
+	/** The weather's own cold, degrees per second outdoors at any altitude (below 0 warms). The body cannot warm itself against it. */
+	void SetWeatherCold(float DegreesPerSecond) { WeatherCold = DegreesPerSecond; }
+
 	/** Brings the player back after death (or any time) with full health/stamina/oxygen and needs at NeedsPercent. */
 	UFUNCTION(BlueprintCallable, Category="Survival")
 	void Revive(float NeedsPercent = 60.f);
@@ -235,6 +238,7 @@ private:
 	uint32 ActiveWarnings = 0;
 
 	float ColdExposure = 0.f;
+	float WeatherCold = 0.f;
 	float StepAccumulator = 0.f;
 	float LogTimer = 0.f;
 

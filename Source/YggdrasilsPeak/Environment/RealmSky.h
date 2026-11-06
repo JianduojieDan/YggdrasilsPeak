@@ -82,9 +82,15 @@ public:
 	void ForecastNow();
 	static const FRealmWeatherInfo& GetWeatherInfo(int32 Index);
 	static int32 NumWeathers();
-	bool HasForecast() const { return bScheduled && bForecast && bAnnounced && !bAtSummit; }
+	bool HasForecast() const { return DemoIndex >= 0 ? bDemoAnnounced : (bScheduled && bForecast && bAnnounced && !bAtSummit); }
 	int32 GetForecastIndex() const { return int32(NextRealm); }
-	float GetForecastSeconds() const { return WeatherLeft; }
+	/** The weather the wheel lands on: the forecast, or a realm named by hand. */
+	int32 GetWheelIndex() const { return WheelIndex; }
+	void PlayWheel(ERealm Realm) { WheelIndex = int32(Realm); ++ForecastSerial; }
+	bool IsDemo() const { return DemoIndex >= 0; }
+	int32 GetShownIndex() const { return int32(Shown); }
+	void LogStatus() const;
+	float GetForecastSeconds() const { return DemoIndex >= 0 ? DemoLeft : WeatherLeft; }
 	int32 GetForecastSerial() const { return ForecastSerial; }
 	float GetSkyHoursSinceShown() const;
 
@@ -109,6 +115,7 @@ private:
 	};
 	TArray<FPlanet> Planets;                   // index = ERealm, plus Hel's trail at the end
 	ERealm Shown = ERealm::None;
+	bool bTimeLapseOn = false;
 	bool bAll = false;
 	FVector PlacedAround = FVector::ZeroVector;
 	FRealmLook Look;                           // what is on screen now, gliding towards the shown realm's row
@@ -129,6 +136,12 @@ private:
 	void SetTargets();
 	void TickWeather(float DeltaSeconds, const FVector& Around);
 	void TickTour(float DeltaSeconds);
+	void TickDemo(float DeltaSeconds);
+	int32 DemoIndex = -1, WheelIndex = 0;
+	bool bDemoAnnounced = false;
+	float DemoLeft = 0.f, SavedTau = 3.5f, SavedFade = 6.f;
+	bool bStartTimeSet = false;
+	TWeakObjectPtr<AActor> SkyCached;
 	TArray<FString> PerfSteps;
 	float PerfTime = 0.f, PerfFrame = 0.f, PerfGpu = 0.f, PerfRender = 0.f;
 	int32 PerfFrames = 0;

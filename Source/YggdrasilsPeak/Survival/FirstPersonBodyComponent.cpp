@@ -12,6 +12,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/Character.h"
+#include "Survival/ClimbingComponent.h"
 #include "TwoBoneIK.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -200,8 +201,46 @@ void UFirstPersonBodyComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		CameraBoom->SetRelativeLocation(FMath::VInterpTo(CameraBoom->GetRelativeLocation(), Target, DeltaTime, FollowSpeed));
 	}
 
+	UpdateFootDrop(DeltaTime);
+
 	// After the camera has moved, so the fist sits at its spot in this frame's view.
 	PoseViewBody(DeltaTime);
+}
+
+void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
+{
+	// On a slope the capsule rests on its curve and the animation assumes flat ground, so the downhill boot hangs in the air.
+	// Lower the world body towards the ground; the uphill boot goes a little into the snow, which suits deep snow.
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
+	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	const UClimbingComponent* Climbing = Character ? Character->FindComponentByClass<UClimbingComponent>() : nullptr;
+	if (!Mesh || !Movement || (Climbing && Climbing->IsClimbing()) || !(Movement->IsMovingOnGround() || Movement->IsFalling()))
+	{
+		return;   // climbing places the body itself; standing on a too-steep slope counts as falling, and still needs its boots down
+	}
+	constexpr float SoleHeight = 10.f, Share = 0.9f, MaxDrop = 120.f;
+	float Gap = 0.f;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(FootDrop), false, Character);
+	for (const FName* Leg : { LeftLegBones, RightLegBones })
+	{
+		if (Mesh->GetBoneIndex(Leg[2]) == INDEX_NONE) { continue; }
+		const FVector Foot = Mesh->GetSocketLocation(Leg[2]);
+		FHitResult Ground;
+		if (GetWorld()->LineTraceSingleByChannel(Ground, Foot + FVector(0.f, 0.f, 60.f), Foot - FVector(0.f, 0.f, 200.f), ECC_Visibility, Params))
+		{
+			Gap = FMath::Max(Gap, float(Foot.Z - Ground.ImpactPoint.Z) - SoleHeight);
+		}
+	}
+	// The trace reads the body where it is now, so the gap is measured on top of the current drop.
+	const float Want = FMath::Clamp(FootDrop + Gap * Share, 0.f, MaxDrop);
+	FootDrop = FMath::FInterpTo(FootDrop, Gap > 0.f ? Want : FMath::Max(FootDrop + Gap, 0.f), DeltaTime, 6.f);
+	const FVector Down(0.f, 0.f, SinkDepth + FootDrop);
+	Mesh->SetRelativeLocation(WorldBodyBaseLocation - Down);
+	if (ShadowMesh)
+	{
+		ShadowMesh->SetRelativeLocation(BodyBaseLocation - Down);
+	}
 }
 
 void UFirstPersonBodyComponent::SetSinkDepth(float Centimetres)

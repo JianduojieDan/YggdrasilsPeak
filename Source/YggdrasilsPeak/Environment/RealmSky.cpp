@@ -29,6 +29,7 @@
 #include "NiagaraComponent.h"
 #include "Survival/SanityComponent.h"
 #include "Survival/SurvivalComponent.h"
+#include "Survival/YggTime.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "UObject/UnrealType.h"
@@ -38,6 +39,7 @@ namespace
 	const TCHAR* RealmLabels[] = { TEXT("Midgard"), TEXT("Niflheim"), TEXT("Muspelheim"), TEXT("Jotunheim"), TEXT("Alfheim"),
 		TEXT("Vanaheim"), TEXT("Svartalfheim"), TEXT("Hel"), TEXT("Asgard"), TEXT("HelTrail"), TEXT("AsgardPillar"), TEXT("AlfheimBow") };
 	constexpr int32 NumRealms = 9;
+	FString GOrdinaryWeather = TEXT("Clear_Skies");   // the Ultra Dynamic preset used between realms
 	constexpr int32 HelTrail = 9;
 	constexpr int32 AsgardPillar = 10;
 	constexpr int32 AlfheimBow = 11;
@@ -66,6 +68,41 @@ namespace
 	const FPlanetSky& PlanetSky(int32 Index) { return GPlanetSky[Index]; }
 }
 
+static TAutoConsoleVariable<float> CVarRealmDemo(TEXT("ygg.Realm.Demo"), 0.f,
+	TEXT("Presentation: shows all nine realms in order, this many seconds each, looping (set before or during Play). 0 = back to the random schedule."));
+
+static TAutoConsoleVariable<int32> CVarRealmLook(TEXT("ygg.Realm.LookAt"), 0, TEXT("Checking the sky: holds the camera on 1 the sun, 2 the moon, 3 the realm planet."));
+static TAutoConsoleVariable<float> CVarRealmStart(TEXT("ygg.Realm.StartTime"), -1.f, TEXT("Checking the sky: the clock starts here, 0..2400 (set on the command line)."));
+
+static TAutoConsoleVariable<float> CVarTimeLapse(TEXT("ygg.Realm.TimeLapse"), 0.f, TEXT("Watching the sky: one full 24 hour day takes this many seconds (15 = a day in 15 s). 0 = normal time."));
+
+// Short forms for checking: "r 3" or "r mu" shows a realm, "r 0" ordinary weather, "r a" all nine, "tl 15" a day in 15 s, "tl 0" normal time.
+static FAutoConsoleCommandWithWorldAndArgs CmdRealmShort(TEXT("r"),
+	TEXT("r <1-9|mi ni mu jo al va sv he as|0|a>: 1 Midgard 2 Niflheim 3 Muspelheim 4 Jotunheim 5 Alfheim 6 Vanaheim 7 Svartalfheim 8 Hel 9 Asgard, 0 none, a all"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (Args.Num() == 0 || !GEngine) { return; }
+		static const TCHAR* const Short[] = { TEXT("mi"), TEXT("ni"), TEXT("mu"), TEXT("jo"), TEXT("al"), TEXT("va"), TEXT("sv"), TEXT("he"), TEXT("as") };
+		FString Name;
+		if (Args[0] == TEXT("0") || Args[0].Equals(TEXT("no"), ESearchCase::IgnoreCase)) { Name = TEXT("none"); }
+		else if (Args[0].Equals(TEXT("a"), ESearchCase::IgnoreCase)) { Name = TEXT("all"); }
+		else
+		{
+			const int32 N = FCString::Atoi(*Args[0]);
+			for (int32 i = 0; i < NumRealms; ++i)
+			{
+				if (N == i + 1 || Args[0].Equals(Short[i], ESearchCase::IgnoreCase)) { Name = RealmLabels[i]; }
+			}
+		}
+		if (!Name.IsEmpty()) { GEngine->Exec(World, *(TEXT("ygg.Realm ") + Name)); }
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdTimeLapseShort(TEXT("tl"), TEXT("tl <seconds>: one 24 hour day takes this long; tl 0 is normal time"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld*)
+	{
+		CVarTimeLapse->Set(Args.Num() ? FCString::Atof(*Args[0]) : 0.f, ECVF_SetByConsole);
+	}));
+
 static FAutoConsoleCommandWithWorldAndArgs CmdRealm(TEXT("ygg.Realm"),
 	TEXT("Shows a realm planet in the sky: ygg.Realm <Midgard|Niflheim|Muspelheim|Jotunheim|Alfheim|Vanaheim|Svartalfheim|Hel|Asgard|none|all>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
@@ -77,6 +114,9 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRealm(TEXT("ygg.Realm"),
 		}
 		if (Args[0].Equals(TEXT("reload"), ESearchCase::IgnoreCase)) { Sky->ReloadLooks(); return; }
 		if (Args[0].Equals(TEXT("auto"), ESearchCase::IgnoreCase)) { Sky->SetScheduled(true); return; }
+		if (Args[0].Equals(TEXT("status"), ESearchCase::IgnoreCase)) { Sky->LogStatus(); return; }
+		if (Args[0].Equals(TEXT("demo"), ESearchCase::IgnoreCase)) { CVarRealmDemo->Set(Args.Num() > 1 ? FCString::Atof(*Args[1]) : 10.f, ECVF_SetByConsole); return; }
+		if (Args[0].Equals(TEXT("time"), ESearchCase::IgnoreCase)) { if (Args.Num() > 1) { YggTime::Set(World, FCString::Atof(*Args[1])); } return; }
 		if (Args[0].Equals(TEXT("next"), ESearchCase::IgnoreCase)) { Sky->ForecastNow(); return; }
 		Sky->SetScheduled(false);   // a realm named by hand stays until auto
 		Sky->bFollowRoute = Args[0].Equals(TEXT("route"), ESearchCase::IgnoreCase);
@@ -84,7 +124,7 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRealm(TEXT("ygg.Realm"),
 		if (Args[0].Equals(TEXT("all"), ESearchCase::IgnoreCase)) { Sky->ShowAll(); return; }
 		for (int32 i = 0; i < NumRealms; ++i)
 		{
-			if (Args[0].Equals(RealmLabels[i], ESearchCase::IgnoreCase)) { Sky->ShowRealm(ERealm(i)); return; }
+			if (Args[0].Equals(RealmLabels[i], ESearchCase::IgnoreCase)) { Sky->ShowRealm(ERealm(i)); Sky->PlayWheel(ERealm(i)); return; }
 		}
 		Sky->ShowRealm(ERealm::None);
 	}));
@@ -154,7 +194,7 @@ void ARealmSky::BeginPlay()
 	}
 	MakeAsgardRings();
 	FParse::Value(FCommandLine::Get(), TEXT("YggForecastIn="), AnnounceIn);   // captures: spin the wheel at a known moment
-	ShowRealm(ERealm::Midgard);   // the world starts under a quiet sky
+	ShowRealm(ERealm::None);   // the world starts in ordinary clear weather
 	if (FParse::Param(FCommandLine::Get(), TEXT("YggPerfSteps")))
 	{
 		FFileHelper::LoadFileToStringArray(PerfSteps, *(FPaths::ProjectSavedDir() / TEXT("perf_steps.txt")));
@@ -249,7 +289,7 @@ void ARealmSky::SetTargets()
 		SetSkyBool(Sky, TEXT("Use Auroras"), bAurora);
 		if (bAurora)
 		{
-			SetSkyFloat(Sky, TEXT("Aurora Intensity"), 2.5);
+			SetSkyFloat(Sky, TEXT("Aurora Intensity"), 8.0);
 			SetSkyColor(Sky, TEXT("Aurora Color 1"), FLinearColor(0.45f, 0.10f, 0.85f));
 			SetSkyColor(Sky, TEXT("Aurora Color 2"), FLinearColor(0.10f, 1.0f, 0.35f));
 			SetSkyColor(Sky, TEXT("Aurora Color 3"), FLinearColor(0.05f, 0.6f, 0.30f));
@@ -383,6 +423,16 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 		}
 	}
 	UDirectionalLightComponent* S = Sun.Get(); USkyLightComponent* L = SkyLight.Get(); UExponentialHeightFogComponent* F = Fog.Get();
+	// Above 7,000 m the air is clear and the whole world can be seen: height fog fades away by 8,000 m, unless a realm brings its own.
+	if (F)
+	{
+		const float ElevationM = 6326.3f + float(Around.Z - 129770.0) / 100.f;
+		const float High = FMath::SmoothStep(7000.f, 8000.f, ElevationM);
+		const float RealmFog = FMath::Clamp(LookOf(Shown, bAll).FogDensity / 0.02f, 0.f, 1.f) * Look.Active;
+		// Low down too the fog stays a thin veil: full height fog buried the middle distance in a dark band while the far strip stayed bright.
+		const float Opacity = FMath::Lerp(0.3f * (1.f - High), 1.f, RealmFog);
+		if (!FMath::IsNearlyEqual(F->FogMaxOpacity, Opacity, 0.002f)) { F->SetFogMaxOpacity(Opacity); }
+	}
 	// The realm's wind: 0 is dead still, 1 a full gale; spindrift, the snow streaks and the flags all read it. Below 0 = the world's own.
 	if (static IConsoleVariable* WindVar = IConsoleManager::Get().FindConsoleVariable(TEXT("ygg.Snow.Spindrift")))
 	{
@@ -407,6 +457,15 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 			DeckMat = Deck->CreateAndSetMaterialInstanceDynamicFromMaterial(0, Mat);
 		}
 	}
+	// How far up the sun is. The sky's own clock moves it; every value below that is scaled from a daytime base follows it.
+	float DayK = 1.f, LowSun = 0.f;
+	if (S)
+	{
+		const float Elevation = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(-S->GetForwardVector().Z, -1.f, 1.f)));
+		DayK = FMath::SmoothStep(-3.f, 6.f, Elevation);
+		LowSun = 1.f - FMath::SmoothStep(3.f, 25.f, Elevation);
+	}
+	const FLinearColor NightDeck = FLinearColor(1.f, 1.f, 1.f) * FMath::Lerp(0.08f, 1.f, DayK);
 	if (Deck && DeckMat)
 	{
 		Deck->SetVisibility(Look.CloudCover > 0.01f);
@@ -414,15 +473,16 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 		DeckMat->SetScalarParameterValue(TEXT("Cover"), Look.CloudCover);
 		DeckMat->SetScalarParameterValue(TEXT("Speed"), Look.CloudSpeed);
 		DeckMat->SetScalarParameterValue(TEXT("Scale"), Look.CloudScale);
-		DeckMat->SetVectorParameterValue(TEXT("Dark"), bFlash ? FLinearColor(0.75f, 0.9f, 1.2f) : Look.CloudDark);   // lightning lights the deck from inside, same frames as the ground
-		DeckMat->SetVectorParameterValue(TEXT("Light"), bFlash ? FLinearColor(1.5f, 1.8f, 2.2f) : Look.CloudLight);
+		DeckMat->SetVectorParameterValue(TEXT("Dark"), bFlash ? FLinearColor(0.75f, 0.9f, 1.2f) : Look.CloudDark * NightDeck);   // lightning lights the deck from inside, same frames as the ground
+		DeckMat->SetVectorParameterValue(TEXT("Light"), bFlash ? FLinearColor(1.5f, 1.8f, 2.2f) : Look.CloudLight * NightDeck);
 	}
 	// UDS only rewrites its lights when they change enough, and this ticks after it: remember its values while no realm
 	// runs and set ours from those - never compound a scale on top of an earlier one
 	if (!bBasesKnown || (A <= 0.f && !bFlash && !bLookOn))
 	{
-		if (S) { SunBase = S->Intensity; SunColor = S->GetLightColor(); }
-		if (L) { SkyBase = L->Intensity; }
+		// only a daytime reading is a base: a save loaded at night must not leave every later day dark
+		if (S && DayK >= 1.f) { SunBase = S->Intensity; SunColor = S->GetLightColor(); }
+		if (L && DayK >= 1.f) { SkyBase = L->Intensity; }
 		if (F) { FogBase = F->FogDensity; FalloffBase = F->FogHeightFalloff; FogColorBase = F->FogInscatteringLuminance; FogLocation = F->GetComponentLocation(); CutoffBase = F->FogCutoffDistance; }
 		bBasesKnown = S && L && F;
 	}
@@ -439,18 +499,22 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 		return;
 	}
 	bLookOn = true;
-	if (S) { S->SetIntensity(SunBase * Look.SunScale); S->SetLightColor(FMath::Lerp(SunColor, Look.SunColor, A)); }
+	if (S)
+	{
+		S->SetIntensity(SunBase * Look.SunScale * DayK);
+		S->SetLightColor(FMath::Lerp(SunColor, Look.SunColor, A) * FMath::Lerp(FLinearColor::White, FLinearColor(1.f, 0.66f, 0.42f), LowSun * 0.7f));
+	}
 	if (L)
 	{
 		L->SetLightColor(bFlash ? FLinearColor(0.6f, 0.8f, 1.f) : Look.SkyColor);   // the colour of the shadows
-		L->SetIntensity(SkyBase * Look.SkyScale * (bFlash ? 6.f : 1.f));
+		L->SetIntensity(SkyBase * Look.SkyScale * FMath::Lerp(0.2f, 1.f, DayK) * (bFlash ? 6.f : 1.f));
 	}
 	if (F)
 	{
 		F->SetFogDensity(FMath::Lerp(FogBase, Look.FogDensity, A));
 		F->SetFogHeightFalloff(FMath::Lerp(FalloffBase, Look.FogFalloff, A));
 		F->SetFogCutoffDistance(Look.FogCutoff < 1.f ? 0.f : CutoffBase);   // 0: the fog takes the sky too, a real white-out
-		F->SetFogInscatteringColor(FMath::Lerp(FogColorBase, Look.FogColor, A));
+		F->SetFogInscatteringColor(FMath::Lerp(FogColorBase, Look.FogColor, A) * FMath::Lerp(0.03f, 1.f, DayK));
 		// height fog is measured from its own height: keep the layer around the player, wherever on the mountain
 		F->SetWorldLocation(FVector(FogLocation.X, FogLocation.Y, FMath::Lerp(FogLocation.Z, Around.Z - Look.FogBelow, A)));
 	}
@@ -458,9 +522,12 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 	const FRealmLook& Row = LookOf(Shown, bAll);
 	const APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0);
 	USurvivalComponent* Body = Player ? Player->FindComponentByClass<USurvivalComponent>() : nullptr;
-	if (Body && A > 0.5f && !Body->IsSheltered() && !Body->IsDead())
+	// A presentation must not kill the presenter
+	const bool bFelt = A > 0.5f && DemoIndex < 0;
+	if (Body) { Body->SetWeatherCold(bFelt ? Row.Cold : 0.f); }
+	if (Body && DemoIndex >= 0 && !Body->IsDead()) { Body->AddToStat(ESurvivalStat::Health, 100.f); }
+	if (Body && bFelt && !Body->IsSheltered() && !Body->IsDead())
 	{
-		Body->AddToStat(ESurvivalStat::BodyTemperature, -Row.Cold * DeltaSeconds);
 		Body->AddToStat(ESurvivalStat::Stamina, -Row.StaminaDrain * DeltaSeconds);
 		Body->AddToStat(ESurvivalStat::Health, -Row.HealthDrain * DeltaSeconds);
 		if (USanityComponent* Mind = Player->FindComponentByClass<USanityComponent>())
@@ -527,16 +594,30 @@ void ARealmSky::ForecastNow()
 
 void ARealmSky::TickWeather(float DeltaSeconds, const FVector& Around)
 {
+	if (DemoIndex >= 0) { return; }   // the demo decides, wherever it is shown from
 	// All nine together belong to the summit alone: nothing else happens up there
 	const bool bSummit = FVector::DistXY(Around, PlacedAround) < 60000.0;
 	if (bSummit != bAtSummit)
 	{
 		bAtSummit = bSummit;
 		bForecast = false;
-		if (bSummit) { ShowAll(); } else { ShowRealm(Bag.Num() ? ERealm(Bag.Last()) : ERealm::Midgard); WeatherLeft = FMath::FRandRange(600.f, 720.f); }
+		if (bSummit) { ShowAll(); } else { ShowRealm(ERealm::None); WeatherLeft = FMath::FRandRange(360.f, 600.f); }
 	}
 	if (!bScheduled || bAtSummit) { return; }
 	WeatherLeft -= DeltaSeconds;
+	// A realm passes like a storm, then ordinary weather returns: normal sun, no planet.
+	if (Shown != ERealm::None)
+	{
+		if (WeatherLeft <= 0.f)
+		{
+			GOrdinaryWeather = FMath::RandBool() ? TEXT("Clear_Skies") : TEXT("Snow_Light");
+			ShowRealm(ERealm::None);
+			bForecast = false;
+			WeatherLeft = FMath::FRandRange(360.f, 600.f);
+			UE_LOG(LogTemp, Display, TEXT("RealmSky: ordinary weather %s for %.0f s"), *GOrdinaryWeather, WeatherLeft);
+		}
+		return;
+	}
 	if (!bForecast)
 	{
 		NextRealm = DrawFromBag();
@@ -602,6 +683,84 @@ void ARealmSky::TickTour(float DeltaSeconds)
 	ShowRealm(ERealm(TourIndex - 1));
 }
 
+// ygg.Realm.Demo <seconds>: the nine realms in order. Each turn ends the way real weather comes: the wheel spins, lands on
+// the next realm, counts down, and that realm arrives. The fades are shortened so each one arrives within its turn.
+void ARealmSky::TickDemo(float DeltaSeconds)
+{
+	const float Seconds = CVarRealmDemo.GetValueOnGameThread();
+	if (Seconds <= 0.f)
+	{
+		if (DemoIndex >= 0)
+		{
+			DemoIndex = -1;
+			bDemoAnnounced = false;
+			TransitionTau = SavedTau;
+			FadeSeconds = SavedFade;
+			SetScheduled(true);
+		}
+		return;
+	}
+	const float Lead = FMath::Min(4.2f, Seconds * 0.6f);   // the wheel's own length
+	if (DemoIndex < 0)
+	{
+		SavedTau = TransitionTau;
+		SavedFade = FadeSeconds;
+		TransitionTau = FMath::Min(TransitionTau, Seconds / 6.f);
+		FadeSeconds = FMath::Min(FadeSeconds, Seconds / 3.f);
+		SetScheduled(false);
+		bAtSummit = false;
+		DemoIndex = NumRealms - 1;   // the next is the first
+		DemoLeft = Lead;
+		bDemoAnnounced = false;
+	}
+	DemoLeft -= DeltaSeconds;
+	if (!bDemoAnnounced && DemoLeft <= Lead)
+	{
+		bDemoAnnounced = true;
+		NextRealm = ERealm((DemoIndex + 1) % NumRealms);
+		PlayWheel(NextRealm);
+	}
+	if (DemoLeft > 0.f) { return; }
+	DemoLeft = Seconds;
+	bDemoAnnounced = false;
+	DemoIndex = (DemoIndex + 1) % NumRealms;
+	ShowRealm(ERealm(DemoIndex));
+	UE_LOG(LogTemp, Display, TEXT("RealmSky: demo %d/%d %s"), DemoIndex + 1, NumRealms, RealmLabels[DemoIndex]);
+	LogStatus();
+}
+
+// ygg.Realm status: what the plugins really hold now, for checking by log
+void ARealmSky::LogStatus() const
+{
+	const auto Read = [](const UObject* O, const TCHAR* Name) -> double
+	{
+		const FProperty* P = O ? O->GetClass()->FindPropertyByName(Name) : nullptr;
+		if (const FDoubleProperty* D = CastField<FDoubleProperty>(P)) { return D->GetPropertyValue_InContainer(O); }
+		if (const FFloatProperty* F = CastField<FFloatProperty>(P)) { return F->GetPropertyValue_InContainer(O); }
+		if (const FBoolProperty* B = CastField<FBoolProperty>(P)) { return B->GetPropertyValue_InContainer(O) ? 1.0 : 0.0; }
+		return -999.0;
+	};
+	const AActor* Sky = SkyCached.Get();
+	UE_LOG(LogTemp, Display, TEXT("RealmSky status: shown %d tod %.1f animate %.0f skyhours %.2f sun %.2f sky %.2f fog %.4f"), int32(Shown), Read(Sky, TEXT("Time of Day")), Read(Sky, TEXT("Animate Time of Day")), SkyHours,
+		Sun.IsValid() ? Sun->Intensity : -1.f, SkyLight.IsValid() ? SkyLight->Intensity : -1.f, Fog.IsValid() ? Fog->FogDensity : -1.f);
+	if (Sky)
+	{
+		TArray<UActorComponent*> Comps;
+		Sky->GetComponents(Comps);
+		FString Names;
+		for (const UActorComponent* C : Comps) { if (C->GetName().Contains(TEXT("Moon")) || C->GetName().Contains(TEXT("Sun"))) { Names += C->GetName() + TEXT("(") + C->GetClass()->GetName() + TEXT(") "); } }
+		UE_LOG(LogTemp, Display, TEXT("RealmSky status: bodies %s"), *Names);
+	}
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		if (!It->GetClass()->GetName().Contains(TEXT("Ultra_Dynamic_Weather"))) { continue; }
+		const FObjectPropertyBase* P = CastField<FObjectPropertyBase>(It->GetClass()->FindPropertyByName(TEXT("Local Weather State")));
+		const UObject* State = P ? P->GetObjectPropertyValue_InContainer(*It) : nullptr;
+		UE_LOG(LogTemp, Display, TEXT("RealmSky status: local cloud %.2f snow %.2f fog %.2f wind %.2f (state %d)"), Read(State, TEXT("Cloud Coverage")), Read(State, TEXT("Snow")), Read(State, TEXT("Fog")), Read(State, TEXT("Wind Intensity")), State != nullptr);
+		break;
+	}
+}
+
 void ARealmSky::ReloadLooks()
 {
 	LoadLookOverrides();
@@ -617,7 +776,7 @@ void ARealmSky::ChangeWeather()
 		if (It->GetClass()->GetName().Contains(TEXT("Ultra_Dynamic_Weather"))) { Udw = *It; break; }
 	}
 	if (!Udw) { return; }
-	const FString Name = !bAll && Shown != ERealm::None ? GWeather[int32(Shown)] : TEXT("Partly_Cloudy");
+	const FString Name = bAll ? FString(TEXT("Partly_Cloudy")) : Shown != ERealm::None ? GWeather[int32(Shown)] : GOrdinaryWeather;
 	if (Name == LastWeather) { return; }
 	LastWeather = Name;
 	const FString Call = FString::Printf(TEXT("\"Change Weather\" /Game/UltraDynamicSky/Blueprints/Weather_Effects/Weather_Presets/%s.%s %f"), *Name, *Name, TransitionTau * 3.f);
@@ -675,6 +834,21 @@ void ARealmSky::SetParticles(TObjectPtr<UNiagaraComponent>& Comp, const TCHAR* P
 void ARealmSky::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	// ygg.Realm.TimeLapse: the sky's lights normally update only in steps (cheap); while watching a fast day they must follow every frame.
+	const float Lapse = CVarTimeLapse.GetValueOnGameThread();
+	if (AActor* LapseSky = (Lapse > 0.f || bTimeLapseOn) ? FindSky(GetWorld()) : nullptr)
+	{
+		if (Lapse > 0.f)
+		{
+			YggTime::Set(GetWorld(), YggTime::Get(GetWorld()) + 2400.f * DeltaSeconds / Lapse);
+		}
+		if ((Lapse > 0.f) != bTimeLapseOn)
+		{
+			bTimeLapseOn = Lapse > 0.f;
+			SetSkyFloat(LapseSky, TEXT("Lights Update Period"), bTimeLapseOn ? 0.0 : 4.0);
+			SetSkyFloat(LapseSky, TEXT("Lights Update Degree Threshold"), bTimeLapseOn ? 0.0 : 0.4);
+		}
+	}
 	// Jotunheim's Icevein storm: an ice-blue flash in the storm bank, thunder 3-5 s later from that direction
 	if (Shown == ERealm::Jotunheim && Planets[int32(ERealm::Jotunheim)].Fade > 0.5f)
 	{
@@ -707,10 +881,30 @@ void ARealmSky::Tick(float DeltaSeconds)
 	const APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
 	const FVector Around = Pawn ? Pawn->GetActorLocation() : PlacedAround;
 	TickTour(DeltaSeconds);
+	TickDemo(DeltaSeconds);
+	if (const int32 LookAt = CVarRealmLook.GetValueOnGameThread())
+	{
+		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+		{
+			UDirectionalLightComponent* S = Sun.Get();
+			TArray<UDirectionalLightComponent*> Lights;
+			if (SkyCached.IsValid()) { SkyCached->GetComponents(Lights); }
+			for (UDirectionalLightComponent* L : Lights) { if (LookAt == 2 && L->GetName() == TEXT("Moon")) { S = L; } }
+			const AActor* Planet = Shown != ERealm::None ? Planets[int32(Shown)].Actor.Get() : nullptr;
+			if (LookAt == 3 && Planet) { PC->SetControlRotation((Planet->GetActorLocation() - Around).Rotation()); }
+			else if (S) { PC->SetControlRotation((-S->GetForwardVector()).Rotation()); }
+		}
+	}
 	TickWeather(DeltaSeconds, Around);
 	ApplyLook(DeltaSeconds, Around);
 	// The planets cross the sky with the sky's own clock, a little slower than the sun
-	if (AActor* SkyActor = FindSky(GetWorld()))
+	if (!SkyCached.IsValid()) { SkyCached = FindSky(GetWorld()); }
+	if (!bStartTimeSet)
+	{
+		bStartTimeSet = true;
+		if (CVarRealmStart.GetValueOnGameThread() >= 0.f) { YggTime::Set(GetWorld(), CVarRealmStart.GetValueOnGameThread()); }
+	}
+	if (AActor* SkyActor = SkyCached.Get())
 	{
 		if (FDoubleProperty* Tod = CastField<FDoubleProperty>(SkyActor->GetClass()->FindPropertyByName(TEXT("Time of Day"))))
 		{
@@ -762,7 +956,13 @@ void ARealmSky::Tick(float DeltaSeconds)
 				const double Dist = P.Offset.Size();
 				// 12 degrees per sky hour along a slow arc, from where the reference shot has it
 				const float Drift = FMath::Fmod(SkyHours - ShownAtHours, 24.f) * 12.f;
-				const FVector Dir = FRotator(Sky.Pitch + 14.f * FMath::Sin(FMath::DegreesToRadians(Drift)), Sky.Yaw + Drift, 0.f).Vector();
+				// The planet is on the sun's own daily circle, about 2.7 hours behind it: it rises and sets as the sun and moon do. Computed
+				// from the clock, because the sun light itself only updates in steps, which made the planet jump. Circle measured from
+				// the sky at three times of day: axis (0.866, 0, 0.5), 15 degrees an hour, sun at this direction at 08:01.
+				static const FVector SunAxis(0.866, 0.0, 0.5);
+				static const FVector SunAt0801(-0.2488, 0.8676, 0.4305);
+				const float TimeOfDay = YggTime::Get(GetWorld());
+				const FVector Dir = SunAt0801.RotateAngleAxis((TimeOfDay - 801.7f) / 100.f * 15.f - 40.f, SunAxis).GetSafeNormal();
 				A->SetActorLocation(Around + Dir * Dist);
 				A->SetActorScale3D(FVector(Dist * FMath::Tan(FMath::DegreesToRadians(Sky.Degrees * 0.5f)) / 100.0));
 				if (Index == int32(ERealm::Asgard) && Ring)

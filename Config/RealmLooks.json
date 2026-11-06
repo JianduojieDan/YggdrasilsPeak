@@ -38,7 +38,7 @@
   "HealthDrain": 0
  },
  "Niflheim": {
-  "SunScale": 0.8,
+  "SunScale": 0.55,
   "SkyScale": 1.2,
   "FogDensity": 0.025,
   "FogFalloff": 0.008,
@@ -68,35 +68,45 @@
    0.91,
    0.93
   ],
-  "Cold": 0.015,
-  "StaminaDrain": 0.2,
-  "SanityGain": -0.25,
-  "HealthDrain": 0
+  "Cold": 0.004,
+  "StaminaDrain": 1,
+  "SanityGain": -0.06,
+  "HealthDrain": 0,
+  "SunColor": [
+   0.86,
+   0.93,
+   1.0
+  ],
+  "SkyColor": [
+   0.88,
+   0.94,
+   1.0
+  ]
  },
  "Muspelheim": {
-  "SunScale": 0.9,
+  "SunScale": 1.15,
   "SunColor": [
-   1,
-   0.62,
-   0.4
+   1.0,
+   0.42,
+   0.16
   ],
   "SkyScale": 1.3,
   "SkyColor": [
-   0.75,
-   0.82,
-   1
+   1.0,
+   0.62,
+   0.48
   ],
   "FogDensity": 0.006,
   "Saturation": 1.05,
   "Contrast": 1.12,
   "Gain": [
-   1,
-   0.97,
-   0.93
+   1.04,
+   0.92,
+   0.82
   ],
-  "Temp": 5800,
+  "Temp": 4800,
   "Exposure": -0.5,
-  "Bloom": 2.2,
+  "Bloom": 1.0,
   "Wind": 0.2,
   "PlanetDegrees": 30.486,
   "PlanetYaw": 13.079,
@@ -114,10 +124,10 @@
    0.33,
    0.16
   ],
-  "Cold": -0.02,
-  "StaminaDrain": 0.3,
-  "SanityGain": -0.1,
-  "HealthDrain": 0.06,
+  "Cold": -0.01,
+  "StaminaDrain": 2,
+  "SanityGain": -0.05,
+  "HealthDrain": 0.3,
   "FogColor": [
    0.2,
    0.1,
@@ -125,12 +135,12 @@
   ]
  },
  "Jotunheim": {
-  "SunScale": 0.3,
+  "SunScale": 0.25,
   "SkyScale": 0.9,
   "SkyColor": [
-   0.82,
-   0.9,
-   1
+   0.62,
+   0.78,
+   1.0
   ],
   "FogDensity": 0.03,
   "FogFalloff": 0.015,
@@ -166,25 +176,30 @@
    0.34,
    0.4
   ],
-  "Cold": 0.07,
-  "StaminaDrain": 1.0,
-  "SanityGain": -0.15,
-  "HealthDrain": 0
+  "Cold": 0.018,
+  "StaminaDrain": 5,
+  "SanityGain": -0.1,
+  "HealthDrain": 0,
+  "SunColor": [
+   0.58,
+   0.74,
+   1.0
+  ]
  },
  "Alfheim": {
-  "SunScale": 0.75,
+  "SunScale": 0.85,
   "SkyColor": [
-   0.98,
-   0.96,
-   1
+   0.9,
+   0.82,
+   1.0
   ],
   "FogDensity": 0.004,
   "Saturation": 1.0,
   "Contrast": 1.05,
   "Gain": [
-   1,
-   0.99,
-   1.01
+   1.0,
+   0.97,
+   1.03
   ],
   "Exposure": -0.45,
   "Bloom": 1.4,
@@ -207,30 +222,35 @@
    1.5
   ],
   "Cold": 0,
-  "StaminaDrain": -0.5,
+  "StaminaDrain": -2,
   "SanityGain": 0.6,
-  "HealthDrain": -0.05
+  "HealthDrain": -0.05,
+  "SunColor": [
+   1.0,
+   0.86,
+   1.0
+  ]
  },
  "Vanaheim": {
-  "SunScale": 0.12,
+  "SunScale": 0.3,
   "SunColor": [
-   0.85,
-   1,
-   0.95
+   0.42,
+   1.0,
+   0.66
   ],
-  "SkyScale": 1.5,
+  "SkyScale": 1.1,
   "SkyColor": [
-   0.82,
-   0.95,
-   1
+   0.42,
+   1.0,
+   0.72
   ],
   "FogDensity": 0.002,
-  "Saturation": 1.0,
+  "Saturation": 1.15,
   "Contrast": 1.1,
   "Gain": [
-   0.98,
-   1,
-   1
+   0.93,
+   1.03,
+   0.97
   ],
   "Temp": 7000,
   "Exposure": -0.6,
@@ -239,7 +259,7 @@
   "PlanetDegrees": 24.832,
   "PlanetYaw": 13.076,
   "PlanetPitch": 28.06,
-  "CloudCover": 0.85,
+  "CloudCover": 0.3,
   "CloudSpeed": 7,
   "CloudScale": 20,
   "CloudDark": [
@@ -259,18 +279,18 @@
  },
  "Svartalfheim": {
   "SunScale": 0.08,
-  "SkyScale": 1.0,
+  "SkyScale": 0.4,
   "SkyColor": [
-   0.88,
-   0.92,
-   1
+   0.7,
+   0.78,
+   1.0
   ],
   "FogDensity": 0.0003,
   "FogFalloff": 0.2,
   "Saturation": 0.5,
   "Contrast": 1.25,
   "Temp": 7400,
-  "Exposure": -0.2,
+  "Exposure": -1.0,
   "Vignette": 0.8,
   "Wind": 0.0,
   "PlanetDegrees": 23.755,
@@ -289,23 +309,33 @@
    0,
    0
   ],
-  "Cold": 0.1,
-  "StaminaDrain": 0.3,
+  "Cold": 0.024,
+  "StaminaDrain": 2,
   "SanityGain": -0.2,
-  "HealthDrain": 0
+  "HealthDrain": 0,
+  "FogColor": [
+   0.02,
+   0.022,
+   0.03
+  ],
+  "SunColor": [
+   0.62,
+   0.72,
+   1.0
+  ]
  },
  "Hel": {
-  "SunScale": 0.14,
+  "SunScale": 0.25,
   "SunColor": [
-   0.8,
-   0.8,
-   1
+   0.56,
+   0.44,
+   1.0
   ],
   "SkyScale": 1.5,
   "SkyColor": [
-   0.88,
-   0.87,
-   1
+   0.62,
+   0.5,
+   1.0
   ],
   "FogDensity": 0.015,
   "FogColor": [
@@ -316,9 +346,9 @@
   "Saturation": 0.75,
   "Contrast": 1.1,
   "Gain": [
-   0.99,
-   0.98,
-   1.01
+   0.97,
+   0.93,
+   1.05
   ],
   "Temp": 7800,
   "Exposure": -0.7,
@@ -340,33 +370,33 @@
    0.12,
    0.3
   ],
-  "Cold": 0.015,
+  "Cold": 0.004,
   "StaminaDrain": 0,
-  "SanityGain": -0.5,
+  "SanityGain": -0.2,
   "HealthDrain": 0
  },
  "Asgard": {
-  "SunScale": 0.8,
+  "SunScale": 1.1,
   "SunColor": [
-   1,
-   0.82,
-   0.58
+   1.0,
+   0.7,
+   0.32
   ],
   "SkyScale": 1.5,
   "SkyColor": [
-   1,
-   0.95,
-   0.85
+   1.0,
+   0.84,
+   0.58
   ],
   "FogDensity": 0.002,
   "Saturation": 1.08,
   "Contrast": 1.15,
   "Gain": [
-   1.01,
-   0.99,
-   0.95
+   1.04,
+   0.98,
+   0.88
   ],
-  "Temp": 5600,
+  "Temp": 5000,
   "Exposure": -0.9,
   "Bloom": 1.4,
   "Wind": 0.3,
@@ -387,7 +417,7 @@
    0.9
   ],
   "Cold": -0.02,
-  "StaminaDrain": -1,
+  "StaminaDrain": -4,
   "SanityGain": 0.4,
   "HealthDrain": -0.1
  }

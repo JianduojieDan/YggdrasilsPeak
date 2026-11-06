@@ -19,7 +19,7 @@ ASupplyPickup::ASupplyPickup()
 
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
 	Mesh->SetupAttachment(GetRootComponent());
-	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Mesh->SetCollisionProfileName(TEXT("BlockAll"));
 
 	Trigger = CreateDefaultSubobject<USphereComponent>(TEXT("Trigger"));
 	Trigger->SetupAttachment(GetRootComponent());
@@ -80,5 +80,6 @@ void ASupplyPickup::NotifyActorBeginOverlap(AActor* OtherActor)
 void ASupplyPickup::SetAvailable(bool bAvailable)
 {
 	Mesh->SetVisibility(bAvailable);
+	Mesh->SetCollisionEnabled(bAvailable ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
 	Trigger->SetCollisionEnabled(bAvailable ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
 }

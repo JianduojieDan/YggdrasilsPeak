@@ -30,6 +30,9 @@
 static TAutoConsoleVariable<int32> CVarLoadOnStart(TEXT("ygg.Save.LoadOnStart"), 1,
 	TEXT("1 = starting the game continues from the last camp saved on disk, 0 = always a fresh start."));
 
+static TAutoConsoleVariable<int32> CVarLoadInEditor(TEXT("ygg.Save.LoadInEditor"), 0,
+	TEXT("0 = the editor's Play button ignores the save and starts at the PlayerStart, 1 = it continues from the save like the real game."));
+
 static FAutoConsoleCommand CmdNewGame(TEXT("ygg.NewGame"), TEXT("Deletes the expedition save; the next start is a new game."),
 	FConsoleCommandDelegate::CreateLambda([]()
 	{
@@ -113,7 +116,9 @@ void UExpeditionComponent::BeginPlay()
 		Survival->OnDeath.AddDynamic(this, &UExpeditionComponent::HandleDeath);
 	}
 	StartTime = GetWorld()->GetTimeSeconds();
-	if (CVarLoadOnStart.GetValueOnGameThread() != 0 && Pawn && Pawn->IsLocallyControlled())
+	// Play in the editor starts where the level says, so the world can be checked from anywhere; ygg.Save.LoadInEditor 1 tests the save itself.
+	const bool bAllowLoad = GetWorld()->WorldType != EWorldType::PIE || CVarLoadInEditor.GetValueOnGameThread() != 0;
+	if (bAllowLoad && CVarLoadOnStart.GetValueOnGameThread() != 0 && Pawn && Pawn->IsLocallyControlled())
 	{
 		GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UExpeditionComponent::LoadSavedExpedition);
 	}

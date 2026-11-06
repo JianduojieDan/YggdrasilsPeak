@@ -11,10 +11,14 @@ namespace YggTime
 {
 	inline AActor* FindSky(UWorld* World)
 	{
+		// walking every actor by name is too dear to do each frame
+		static TWeakObjectPtr<AActor> Cached;
+		if (Cached.IsValid() && Cached->GetWorld() == World) { return Cached.Get(); }
 		for (TActorIterator<AActor> It(World); It; ++It)
 		{
 			if (It->GetClass()->GetName().Contains(TEXT("Ultra_Dynamic_Sky")))
 			{
+				Cached = *It;
 				return *It;
 			}
 		}

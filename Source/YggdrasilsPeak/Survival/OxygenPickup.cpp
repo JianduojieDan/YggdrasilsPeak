@@ -24,7 +24,7 @@ AOxygenPickup::AOxygenPickup()
 	Bottle = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Bottle"));
 	Bottle->SetupAttachment(GetRootComponent());
 	Bottle->SetStaticMesh(Tank.Object);
-	Bottle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Bottle->SetCollisionProfileName(TEXT("BlockAll"));
 
 	// The imported bottle sits about a metre from its pivot, so centre the trigger on the bottle itself.
 	Trigger = CreateDefaultSubobject<USphereComponent>(TEXT("Trigger"));
@@ -85,5 +85,6 @@ void AOxygenPickup::NotifyActorBeginOverlap(AActor* OtherActor)
 void AOxygenPickup::SetAvailable(bool bAvailable)
 {
 	Bottle->SetVisibility(bAvailable);
+	Bottle->SetCollisionEnabled(bAvailable ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
 	Trigger->SetCollisionEnabled(bAvailable ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
 }

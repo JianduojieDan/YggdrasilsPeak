@@ -197,9 +197,10 @@ void USurvivalComponent::StepSimulation(float Dt)
 		}
 	}
 	const float TargetTemperature = FMath::Lerp(C->NormalTemperature, C->FullExposureTargetTemperature, Exposure);
+	const float WeatherNow = bSheltered ? 0.f : WeatherCold;
 	const float TemperatureRate = TargetTemperature < BodyTemperature ? C->CoolingPerSecond
-		: C->WarmingPerSecond * (bSheltered ? C->ShelterWarmingMultiplier : 1.f);
-	BodyTemperature = FMath::Clamp(FMath::FInterpConstantTo(BodyTemperature, TargetTemperature, Dt, TemperatureRate),
+		: (WeatherNow > 0.f ? 0.f : C->WarmingPerSecond * (bSheltered ? C->ShelterWarmingMultiplier : 1.f));
+	BodyTemperature = FMath::Clamp(FMath::FInterpConstantTo(BodyTemperature, TargetTemperature, Dt, TemperatureRate) - WeatherNow * Dt,
 		C->MinTemperature, C->NormalTemperature);
 
 	// 3. Apply stage effects: damaging conditions only hurt after a grace period.

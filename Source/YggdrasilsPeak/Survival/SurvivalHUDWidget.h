@@ -247,6 +247,9 @@ private:
 		float SubtitleTimer = 0.f;
 		bool bForecast = false;
 		int32 ForecastIndex = 0;
+		int32 WheelIndex = 0;
+		int32 DemoIndex = -1;
+		float DemoCaption = 0.f;
 		float ForecastSeconds = 0.f;
 	} Paint;
 
@@ -254,5 +257,5 @@ private:
 	int32 WheelSerial = 0;
 	float WheelTime = 0.f;
 	bool bWheelOn = false;
-	static constexpr float WheelTotal = 4.6f;   // in, spin, slow, result, fade
+	static constexpr float WheelTotal = 4.2f;   // in 0.3, spin 1.0, slow 0.8, result ~2, fade 0.4
 };

@@ -9,6 +9,11 @@
 #include "EngineUtils.h"
 #include "Environment/FixedRope.h"
 #include "Survival/SurvivalConfig.h"
+#include "Dom/JsonObject.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 #if WITH_EDITOR
 #include "LandscapeEdit.h"
@@ -474,6 +479,281 @@ void ALandscapeRebuilder::SculptHighRidges()
 	float MaxD = 0.f;
 	for (float D : Delta) { MaxD = FMath::Max(MaxD, FMath::Abs(D)); }
 	LastResult = FString::Printf(TEXT("SculptHighRidges: above %.0f m, up to %.1f m, %d actors moved with the ground."), SculptAboveM, MaxD / 100.0, Moved);
+	UE_LOG(LogTemp, Display, TEXT("LandscapeRebuilder: %s"), *LastResult);
+#endif
+}
+
+void ALandscapeRebuilder::ApplyTerrainMath()
+{
+#if WITH_EDITOR
+	ALandscape* Landscape = Cast<ALandscape>(BuiltLandscape.Get());
+	ULandscapeInfo* Info = Landscape ? Landscape->GetLandscapeInfo() : nullptr;
+	int32 MinX, MinY, MaxX, MaxY;
+	if (!Info || !Info->GetLandscapeExtent(MinX, MinY, MaxX, MaxY))
+	{
+		LastResult = TEXT("ApplyTerrainMath: no BuiltLandscape.");
+		return;
+	}
+	const int32 W = MaxX - MinX + 1;
+	const int32 H = MaxY - MinY + 1;
+
+	TOptional<FScopedSetLandscapeEditingLayer> LayerScope;
+	if (const ULandscapeEditLayerBase* Layer = Landscape->GetEditLayerConst(0))
+	{
+		LayerScope.Emplace(Landscape, Layer->GetGuid(), [Landscape] { Landscape->RequestLayersContentUpdateForceAll(); });
+	}
+	TArray<uint16> Current;
+	Current.SetNumZeroed(W * H);
+	FLandscapeEditDataInterface Edit(Info);
+	{
+		int32 X1 = MinX, Y1 = MinY, X2 = MaxX, Y2 = MaxY;
+		Edit.GetHeightData(X1, Y1, X2, Y2, Current.GetData(), W);
+	}
+
+	// The clean heights: saved the first time, read back every time after, so each run replaces the last.
+	const FString BasePath = FPaths::ProjectSavedDir() / TEXT("TerrainMathBase.bin");
+	TArray<uint8> Bytes;
+	TArray<uint16> Base;
+	if (FFileHelper::LoadFileToArray(Bytes, *BasePath) && Bytes.Num() == W * H * int32(sizeof(uint16)))
+	{
+		Base.SetNumUninitialized(W * H);
+		FMemory::Memcpy(Base.GetData(), Bytes.GetData(), Bytes.Num());
+	}
+	else
+	{
+		Base = Current;
+		Bytes.SetNumUninitialized(W * H * sizeof(uint16));
+		FMemory::Memcpy(Bytes.GetData(), Base.GetData(), Bytes.Num());
+		if (!FFileHelper::SaveArrayToFile(Bytes, *BasePath))
+		{
+			LastResult = TEXT("ApplyTerrainMath: could not save the clean heights, nothing changed.");
+			return;
+		}
+	}
+
+	const FTransform LandscapeTransform = Landscape->GetActorTransform();
+	const FVector Scale = LandscapeTransform.GetScale3D();
+	const double CmPerUnit = Scale.Z / 128.0;
+	const double SpacingM = Scale.X / 100.0;
+	const USurvivalConfig* Cfg = GetDefault<USurvivalConfig>();
+	auto ElevationM = [&](double Value)
+	{
+		const double Z = LandscapeTransform.GetLocation().Z + (Value - 32768.0) * CmPerUnit;
+		return Cfg->ReferenceElevationMeters + (Z - Cfg->ReferenceWorldZ) / 100.0;
+	};
+	uint16 Top = 0;
+	FIntPoint Peak(0, 0);
+	for (int32 I = 0; I < Base.Num(); ++I) { if (Base[I] > Top) { Top = Base[I]; Peak = FIntPoint(I % W, I / W); } }
+
+	// Protection map: 1 = full strength, 0 = untouched. Stamped around the route, ropes and camps.
+	TArray<float> Protect;
+	Protect.Init(1.f, W * H);
+	auto Stamp = [&](const FVector& World, double ClearM, double FullM)
+	{
+		const FVector L = LandscapeTransform.InverseTransformPosition(World) - FVector(MinX, MinY, 0.0);
+		const int32 Reach = FMath::CeilToInt32(FullM / SpacingM);
+		for (int32 Y = FMath::Max(0, FMath::FloorToInt32(L.Y) - Reach); Y <= FMath::Min(H - 1, FMath::CeilToInt32(L.Y) + Reach); ++Y)
+		{
+			for (int32 X = FMath::Max(0, FMath::FloorToInt32(L.X) - Reach); X <= FMath::Min(W - 1, FMath::CeilToInt32(L.X) + Reach); ++X)
+			{
+				const double D = FVector2D(X - L.X, Y - L.Y).Size() * SpacingM;
+				float& P = Protect[Y * W + X];
+				P = FMath::Min(P, float(FMath::SmoothStep(ClearM, FullM, D)));
+			}
+		}
+	};
+	int32 RoutePoints = 0;
+	FString RouteText;
+	if (FFileHelper::LoadFileToString(RouteText, *(FPaths::ProjectDir() / TEXT("Tools/RoutePlanning/route.json"))))
+	{
+		TArray<TSharedPtr<FJsonValue>> Legs;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(RouteText);
+		if (FJsonSerializer::Deserialize(Reader, Legs))
+		{
+			for (const TSharedPtr<FJsonValue>& Leg : Legs)
+			{
+				const TArray<TSharedPtr<FJsonValue>>* Pts;
+				if (!Leg->AsObject()->TryGetArrayField(TEXT("pts"), Pts)) { continue; }
+				for (const TSharedPtr<FJsonValue>& Pt : *Pts)
+				{
+					const TArray<TSharedPtr<FJsonValue>>& XY = Pt->AsArray();
+					if (XY.Num() >= 2)
+					{
+						Stamp(FVector(XY[0]->AsNumber(), XY[1]->AsNumber(), 0.0), MathRouteClearM, MathRouteClearM * 3.0);
+						++RoutePoints;
+					}
+				}
+			}
+		}
+	}
+	if (RoutePoints == 0)
+	{
+		LastResult = TEXT("ApplyTerrainMath: route.json gave no points, nothing changed.");
+		return;
+	}
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		if (const AFixedRope* Rope = Cast<AFixedRope>(*It))
+		{
+			for (const FVector& P : Rope->RopePoints) { Stamp(P, MathRouteClearM, MathRouteClearM * 3.0); }
+		}
+		else if (It->GetClass()->GetName() == TEXT("RouteLandmark"))
+		{
+			Stamp(It->GetActorLocation(), MathCampClearM, MathCampClearM * 2.5);
+		}
+	}
+
+	// Three octaves, each turned against the last. Sharpness blends smooth noise into ridged noise (sharp crests, round gullies).
+	const double Sharp = MathSharpness;
+	const double SmallestM = SpacingM * 2.0;
+	auto Noise = [&](double XM, double YM)
+	{
+		double Sum = 0.0, Norm = 0.0, Amp = 1.0, F = 1.0 / MathScaleM;
+		for (int32 O = 0; O < 3 && 1.0 / F >= SmallestM; ++O)
+		{
+			const double C = FMath::Cos(0.9 * O), S = FMath::Sin(0.9 * O);
+			const double N = ValueNoise((XM * C - YM * S) * F + 31.7 * O, (XM * S + YM * C) * F - 17.3 * O, MathSeed + 211 + O);
+			const double R = 1.0 - FMath::Abs(N);
+			Sum += Amp * FMath::Lerp(N, (R * R - 0.45) * 2.0, Sharp);
+			Norm += Amp;
+			Amp *= 0.5;
+			F *= 2.1;
+		}
+		return Norm > 0.0 ? Sum / Norm : 0.0;
+	};
+	TArray<uint16> Heights = Base;
+	ParallelFor(H, [&](int32 Y)
+	{
+		for (int32 X = 0; X < W; ++X)
+		{
+			const double V = Base[Y * W + X];
+			const double Fade = FMath::SmoothStep(double(MathAboveM), double(MathFullAboveM), ElevationM(V));
+			if (Fade <= 0.0) { continue; }
+			const double Keep = FMath::SmoothStep(double(MathKeepSummitM), MathKeepSummitM * 3.0, FVector2D::Distance(FVector2D(X, Y), FVector2D(Peak)) * SpacingM);
+			const auto At = [&](int32 DX, int32 DY) { return double(Base[FMath::Clamp(Y + DY, 0, H - 1) * W + FMath::Clamp(X + DX, 0, W - 1)]); };
+			const double Slope = FVector2D(At(1, 0) - At(-1, 0), At(0, 1) - At(0, -1)).Size() * CmPerUnit / (2.0 * Scale.X);
+			const double Steep = FMath::Lerp(double(MathGentleGround), 1.0, FMath::SmoothStep(0.25, 1.0, Slope));
+			const double OffsetCm = Noise(X * SpacingM, Y * SpacingM) * MathRoughnessM * 100.0 * Steep * Fade * Keep * Protect[Y * W + X];
+			Heights[Y * W + X] = (uint16)FMath::Clamp(FMath::RoundToInt(V + OffsetCm / CmPerUnit), 0, 65535);
+		}
+	});
+	// Round the high snow: repeated neighbour averaging, full strength high up, fading out below, the top itself kept.
+	if (MathSmoothPasses > 0)
+	{
+		TArray<float> Soft;
+		Soft.SetNumUninitialized(W * H);
+		for (int32 I = 0; I < Soft.Num(); ++I) { Soft[I] = Heights[I]; }
+		TArray<float> Weight;
+		Weight.SetNumZeroed(W * H);
+		ParallelFor(H, [&](int32 Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				const double High = FMath::SmoothStep(double(MathSmoothAboveM), double(MathSmoothFullAboveM), ElevationM(Base[Y * W + X]));
+				// The walking route is rounded at every altitude; Protect is 0 on the line and around camps.
+				Weight[Y * W + X] = FMath::Max(float(High), (1.f - Protect[Y * W + X]) * 0.85f);
+			}
+		});
+		TArray<float> Next = Soft;
+		for (int32 Pass = 0; Pass < MathSmoothPasses; ++Pass)
+		{
+			ParallelFor(H, [&](int32 Y)
+			{
+				for (int32 X = 0; X < W; ++X)
+				{
+					const float W0 = Weight[Y * W + X];
+					if (W0 <= 0.f) { Next[Y * W + X] = Soft[Y * W + X]; continue; }
+					const auto At = [&](int32 DX, int32 DY) { return Soft[FMath::Clamp(Y + DY, 0, H - 1) * W + FMath::Clamp(X + DX, 0, W - 1)]; };
+					const float Avg = (At(-1, 0) + At(1, 0) + At(0, -1) + At(0, 1)) * 0.25f;
+					Next[Y * W + X] = FMath::Lerp(Soft[Y * W + X], Avg, W0 * 0.7f);
+				}
+			});
+			Swap(Soft, Next);
+		}
+		// Rounding lowers the top: a broad smooth rise brings it back to its true height.
+		float SoftTop = 0.f;
+		for (const float V : Soft) { SoftTop = FMath::Max(SoftTop, V); }
+		const float Lost = float(Top) - SoftTop;
+		ParallelFor(H, [&](int32 Y)
+		{
+			for (int32 X = 0; X < W; ++X)
+			{
+				const double D = FVector2D::Distance(FVector2D(X, Y), FVector2D(Peak)) * SpacingM / 220.0;
+				Heights[Y * W + X] = (uint16)FMath::Clamp(FMath::RoundToInt(Soft[Y * W + X] + Lost * FMath::Exp(-D * D)), 0, 65535);
+			}
+		});
+	}
+	// Real camps stand on dug platforms: the ground under each tent is levelled, with a soft bank around it.
+	int32 Pads = 0;
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		const FString Label = It->GetActorLabel();
+		if (!It->ActorHasTag(TEXT("CampProp")) || Label.Contains(TEXT("KhumbuIcefall")) || !(Label.Contains(TEXT("_Tent")) || Label.Contains(TEXT("DiningTent")) || Label.Contains(TEXT("Stores")))) { continue; }
+		FVector Origin, Extent;
+		It->GetActorBounds(false, Origin, Extent);
+		const FVector L = LandscapeTransform.InverseTransformPosition(Origin) - FVector(MinX, MinY, 0.0);
+		const int32 CX = FMath::RoundToInt32(L.X), CY = FMath::RoundToInt32(L.Y);
+		if (CX < 0 || CY < 0 || CX >= W || CY >= H) { continue; }
+		const double Target = Heights[CY * W + CX];
+		const double Full = Extent.Size2D() / 100.0 + 6.0, Edge = Full + 75.0;   // metres; a short bank made cliffs on the route where tents stand on steep ground
+		const int32 Reach = FMath::CeilToInt32(Edge / SpacingM);
+		for (int32 Y = FMath::Max(0, CY - Reach); Y <= FMath::Min(H - 1, CY + Reach); ++Y)
+		{
+			for (int32 X = FMath::Max(0, CX - Reach); X <= FMath::Min(W - 1, CX + Reach); ++X)
+			{
+				const double D = FVector2D(X - L.X, Y - L.Y).Size() * SpacingM;
+				const double A = 1.0 - FMath::SmoothStep(Full, Edge, D);
+				uint16& V = Heights[Y * W + X];
+				V = (uint16)FMath::Clamp(FMath::RoundToInt(FMath::Lerp(double(V), Target, A)), 0, 65535);
+			}
+		}
+		++Pads;
+	}
+	UE_LOG(LogTemp, Display, TEXT("LandscapeRebuilder: %d tent platforms"), Pads);
+	Edit.SetHeightData(MinX, MinY, MaxX, MaxY, Heights.GetData(), W, true);
+	Edit.Flush();
+	LayerScope.Reset();
+	Landscape->Modify();
+
+	// Props and rope points move by the change since the current ground, so repeated runs stay seated.
+	auto DeltaAt = [&](const FVector& P)
+	{
+		const FVector L = LandscapeTransform.InverseTransformPosition(P) - FVector(MinX, MinY, 0.0);
+		const int32 X0 = FMath::FloorToInt32(L.X), Y0 = FMath::FloorToInt32(L.Y);
+		if (X0 < 0 || Y0 < 0 || X0 >= W - 1 || Y0 >= H - 1) { return 0.0; }
+		const double FX = L.X - X0, FY = L.Y - Y0;
+		const auto D = [&](int32 X, int32 Y) { return (double(Heights[Y * W + X]) - double(Current[Y * W + X])) * CmPerUnit; };
+		return FMath::Lerp(FMath::Lerp(D(X0, Y0), D(X0 + 1, Y0), FX), FMath::Lerp(D(X0, Y0 + 1), D(X0 + 1, Y0 + 1), FX), FY);
+	};
+	int32 Moved = 0;
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (Actor == this || Actor->IsA<ALandscapeProxy>()) { continue; }
+		if (AFixedRope* Rope = Cast<AFixedRope>(Actor))
+		{
+			bool bChanged = false;
+			for (FVector& P : Rope->RopePoints)
+			{
+				const double D = DeltaAt(P);
+				if (FMath::Abs(D) > 1.0) { if (!bChanged) { Rope->Modify(); } P.Z += D; bChanged = true; }
+			}
+			if (bChanged) { Rope->RerunConstructionScripts(); ++Moved; }
+			continue;
+		}
+		FVector Origin, Extent;
+		Actor->GetActorBounds(false, Origin, Extent);
+		const double D = DeltaAt(Actor->GetActorLocation());
+		if (FMath::Abs(D) > 1.0 && Extent.Size2D() < 5000.0)
+		{
+			Actor->Modify();
+			Actor->SetActorLocation(Actor->GetActorLocation() + FVector(0.0, 0.0, D));
+			++Moved;
+		}
+	}
+	double MaxD = 0.0;
+	for (int32 I = 0; I < Heights.Num(); ++I) { MaxD = FMath::Max(MaxD, FMath::Abs(double(Heights[I]) - double(Base[I])) * CmPerUnit); }
+	LastResult = FString::Printf(TEXT("ApplyTerrainMath: up to %.1f m from clean terrain, %d route points kept clear, %d actors moved."), MaxD / 100.0, RoutePoints, Moved);
 	UE_LOG(LogTemp, Display, TEXT("LandscapeRebuilder: %s"), *LastResult);
 #endif
 }

@@ -124,6 +124,64 @@ public:
 	UFUNCTION(CallInEditor, Category="Summit")
 	void SculptHighRidges();
 
+	/** Largest height the maths layer adds or removes on steep ground (m). */
+	UPROPERTY(EditAnywhere, Category="Terrain Math", meta=(ClampMin="0"))
+	float MathRoughnessM = 8.f;
+
+	/** 0 = soft rolling forms, 1 = sharp ridges and gullies. */
+	UPROPERTY(EditAnywhere, Category="Terrain Math", meta=(ClampMin="0", ClampMax="1"))
+	float MathSharpness = 0.5f;
+
+	/** Size of the largest features (m). Smaller octaves stop at twice the landscape's point spacing. */
+	UPROPERTY(EditAnywhere, Category="Terrain Math", meta=(ClampMin="40"))
+	float MathScaleM = 180.f;
+
+	/** Another number gives a different but repeatable pattern. */
+	UPROPERTY(EditAnywhere, Category="Terrain Math")
+	int32 MathSeed = 1;
+
+	/** Share of the roughness that open, gentle snow gets; steep ground gets all of it. */
+	UPROPERTY(EditAnywhere, Category="Terrain Math", meta=(ClampMin="0", ClampMax="1"))
+	float MathGentleGround = 0.3f;
+
+	/** The layer fades in between these elevations (m). */
+	UPROPERTY(EditAnywhere, Category="Terrain Math")
+	float MathAboveM = 3000.f;
+
+	UPROPERTY(EditAnywhere, Category="Terrain Math")
+	float MathFullAboveM = 5000.f;
+
+	/** Nothing changes within this distance of the route and ropes (m); full strength from 3x. */
+	UPROPERTY(EditAnywhere, Category="Terrain Math", meta=(ClampMin="0"))
+	float MathRouteClearM = 30.f;
+
+	/** Nothing changes within this distance of a camp (m); full strength from 2.5x. */
+	UPROPERTY(EditAnywhere, Category="Terrain Math", meta=(ClampMin="0"))
+	float MathCampClearM = 120.f;
+
+	/** Nothing changes within this distance of the summit (m); full strength from 3x. */
+	UPROPERTY(EditAnywhere, Category="Terrain Math", meta=(ClampMin="0"))
+	float MathKeepSummitM = 20.f;
+
+	/** High snow is rounded between these elevations (m): hard triangle creases become soft drifted forms. */
+	UPROPERTY(EditAnywhere, Category="Terrain Math")
+	float MathSmoothAboveM = 8100.f;
+
+	UPROPERTY(EditAnywhere, Category="Terrain Math")
+	float MathSmoothFullAboveM = 8400.f;
+
+	/** How many times high snow is averaged with its neighbours. 0 = off; about 3 m of change per pass at most on sharp creases. */
+	UPROPERTY(EditAnywhere, Category="Terrain Math", meta=(ClampMin="0", ClampMax="64"))
+	int32 MathSmoothPasses = 16;
+
+	/**
+	 *  Mathematical roughness over the satellite terrain. Always computed from a clean copy of the heights, stored in
+	 *  Saved/TerrainMathBase.bin on first use, so a new value replaces the old result instead of adding to it.
+	 *  Props and rope points move with the ground. Save and restart the editor afterwards (the Nanite mesh needs it).
+	 */
+	UFUNCTION(CallInEditor, Category="Terrain Math")
+	void ApplyTerrainMath();
+
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif

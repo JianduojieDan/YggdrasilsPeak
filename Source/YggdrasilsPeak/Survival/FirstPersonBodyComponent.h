@@ -346,4 +346,8 @@ private:
 	/** The body's relative location before any sinking. */
 	FVector BodyBaseLocation = FVector::ZeroVector;
 	float SinkDepth = 0.f;
+
+	/** How far the world body is lowered so its boots meet sloping ground (cm). */
+	float FootDrop = 0.f;
+	void UpdateFootDrop(float DeltaTime);
 };

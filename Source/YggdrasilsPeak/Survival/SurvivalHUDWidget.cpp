@@ -567,12 +567,17 @@ void USurvivalHUDWidget::TickWheel(float DeltaTime)
 	ARealmSky* Sky = ARealmSky::Get(GetWorld());
 	if (!Sky) { return; }
 	const bool bHas = Sky->HasForecast();
-	if (bHas && Sky->GetForecastSerial() != WheelSerial)
+	if (Sky->GetForecastSerial() != WheelSerial)
 	{
 		WheelSerial = Sky->GetForecastSerial();
+		Paint.WheelIndex = bHas ? Sky->GetForecastIndex() : Sky->GetWheelIndex();
 		WheelTime = 0.f;
 		bWheelOn = true;
 	}
+	// In the presentation the weather now is named quietly between wheels; in play the view stays clean
+	const int32 Shown = Sky->IsDemo() ? Sky->GetShownIndex() : -1;
+	if (Shown >= 0 && Shown < ARealmSky::NumWeathers() && !bWheelOn) { Paint.DemoIndex = Shown; Paint.DemoCaption = FMath::Min(1.f, Paint.DemoCaption + DeltaTime * 2.f); }
+	else { Paint.DemoCaption = FMath::Max(0.f, Paint.DemoCaption - DeltaTime * 4.f); }
 	if (bWheelOn) { WheelTime += DeltaTime; if (WheelTime > WheelTotal) { bWheelOn = false; } }
 	Paint.bForecast = bHas;
 	Paint.ForecastIndex = bHas ? Sky->GetForecastIndex() : 0;
@@ -661,41 +666,91 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 		DrawIcon(P, WeatherIcons[Paint.ForecastIndex], FVector2f(RX - P.Width(T, F13) - 16.f, TY + 9.f), 8.f, bDanger ? Amber : Quiet, 1.4f);
 	}
 
+	// Presentation only: the weather now, under the top edge
+	if (Paint.DemoCaption > 0.f && Paint.DemoIndex >= 0)
+	{
+		const FPen DC{ G, Out, Layer, Paint.DemoCaption * 0.9f };
+		const FVector2f At(Size.X * 0.5f, 44.f + (1.f - Paint.DemoCaption) * -8.f);
+		DrawIcon(DC, WeatherIcons[Paint.DemoIndex], At, 13.f, Ivory, 1.4f);
+		DC.TextCentre(ARealmSky::GetWeatherInfo(Paint.DemoIndex).Name, At + FVector2f(0.f, 20.f), FCoreStyle::GetDefaultFontStyle("Regular", 15), Ivory);
+	}
+
 	// Top centre: the wheel. Its centre stays above the screen: a shallow arc, three sectors, one fixed pointer.
 	if (bWheelOn)
 	{
-		const float In = FMath::Clamp(WheelTime / 0.3f, 0.f, 1.f), Fade = FMath::Clamp((WheelTotal - WheelTime) / 0.4f, 0.f, 1.f);
-		const FPen W{ G, Out, Layer, In * Fade };
-		const float Rad = 1150.f, CX = Size.X * 0.5f, Slide = (1.f - In) * -18.f, CY = 132.f - Rad + Slide;
+		const float T = WheelTime;
+		const float In = FMath::Clamp(T / 0.3f, 0.f, 1.f), Fade = FMath::Clamp((WheelTotal - T) / 0.4f, 0.f, 1.f);
+		const float InEased = 1.f - FMath::Square(1.f - In);
+		const FPen W{ G, Out, Layer, InEased * Fade };
+		const float Rad = 1150.f, CX = Size.X * 0.5f, Slide = (1.f - InEased) * -22.f, CY = 132.f - Rad + Slide;
+		const FVector2f Hub(CX, CY);
 		const float Sector = 14.f, Round = Sector * ARealmSky::NumWeathers();   // a big wheel: three sectors fit the arc that shows
-		const float SpinEnd = 2.1f, T01 = FMath::Clamp(WheelTime / SpinEnd, 0.f, 1.f);
-		const float Ease = 1.f - FMath::Pow(1.f - T01, 3.f);
-		const float Turn = (1.f - Ease) * Round * 4.f;                           // spins, slows, lands on the real result
-		const float Stopped = FMath::Clamp((WheelTime - SpinEnd) / 0.25f, 0.f, 1.f);
-		W.Circle(FVector2f(CX, CY), Rad, FLinearColor(Ivory.R, Ivory.G, Ivory.B, 0.7f), 1.f, 90.f - 23.f, 90.f + 23.f);
-				for (int32 i = 0; i < ARealmSky::NumWeathers(); ++i)
+		// Steady spin, then one continuous slow-down (same speed where they join), then a small settle onto the real result
+		constexpr float Spin = 1.0f, Slow = 0.8f, Stop = Spin + Slow;
+		const float Speed = 2.f * Round / (Spin + Slow / 3.f);
+		const float Left = T < Spin ? Speed * (Spin - T) + Speed * Slow / 3.f : Speed * Slow / 3.f * FMath::Pow(1.f - FMath::Clamp((T - Spin) / Slow, 0.f, 1.f), 3.f);
+		const float After = FMath::Max(0.f, T - Stop);
+		const float Turn = Left + (After > 0.f ? 0.8f * FMath::Exp(-After * 7.f) * FMath::Sin(After * 20.f) : 0.f);
+		const float Stopped = FMath::Clamp(After / 0.25f, 0.f, 1.f);
+		const float Land = FMath::Clamp(After / 0.45f, 0.f, 1.f);
+		const FRealmWeatherInfo& Info = ARealmSky::GetWeatherInfo(Paint.WheelIndex);
+		const FLinearColor Verdict = Info.Danger >= 2 ? Coral : Info.Danger == 1 ? Amber : Ivory;
+		const auto Arm = [](float Deg) { const float R = FMath::DegreesToRadians(90.f - Deg); return FVector2f(FMath::Cos(R), FMath::Sin(R)); };
+
+		// Two thin rings carry fine ticks: the outer turns with the wheel, the inner slowly against it
+		const float Inner = Rad - 118.f;
+		W.Circle(Hub, Rad, FLinearColor(Ivory.R, Ivory.G, Ivory.B, 0.7f), 1.f, 90.f - 23.f, 90.f + 23.f);
+		W.Circle(Hub, Inner, FLinearColor(Ivory.R, Ivory.G, Ivory.B, 0.28f), 1.f, 90.f - 23.f, 90.f + 23.f);
+		const float TickStep = Sector / 4.f;
+		const float OuterPhase = FMath::Fmod(Turn, TickStep), InnerPhase = FMath::Fmod(-Turn * 0.35f, TickStep);
+		for (int32 k = -6; k <= 6; ++k)
 		{
-			float Delta = FMath::Fmod((i - Paint.ForecastIndex) * Sector + Turn + Round * 8.f + Round * 0.5f, Round) - Round * 0.5f;
-			if (FMath::Abs(Delta) > 21.f) { continue; }
-			const float Ang = FMath::DegreesToRadians(90.f - Delta);
-			const FVector2f Dir(FMath::Cos(Ang), FMath::Sin(Ang));
-			const float Near = 1.f - FMath::Clamp(FMath::Abs(Delta) / (Sector * 0.5f), 0.f, 1.f);
-			const FLinearColor C(Ivory.R, Ivory.G, Ivory.B, FMath::Lerp(0.42f, 1.f, Near * Stopped + (1.f - Stopped) * 0.6f));
-			const FVector2f IconAt = FVector2f(CX, CY) + Dir * (Rad - 84.f);
-			DrawIcon(W, WeatherIcons[i], IconAt, 15.f, C, 1.4f);
-			const FSlateFontInfo LabelFont = FMath::Abs(Delta) < 3.f ? FCoreStyle::GetDefaultFontStyle("Regular", 17) : FCoreStyle::GetDefaultFontStyle("Light", 11);
-			W.TextCentre(ARealmSky::GetWeatherInfo(i).Name, IconAt + FVector2f(0.f, 24.f), LabelFont, C);
-			// sector divider
-			const float DA = FMath::DegreesToRadians(90.f - Delta - Sector * 0.5f); const FVector2f DD(FMath::Cos(DA), FMath::Sin(DA));
-			if (DD.Y * Rad + CY > 0.f) { W.Line({ FVector2f(CX, CY) + DD * (Rad - 118.f), FVector2f(CX, CY) + DD * Rad }, FLinearColor(Ivory.R, Ivory.G, Ivory.B, 0.3f), 1.f); }
+			const float O = k * TickStep + OuterPhase, I = k * TickStep + InnerPhase;
+			const float OA = 0.38f * FMath::Clamp((23.f - FMath::Abs(O)) / 8.f, 0.f, 1.f), IA = 0.2f * FMath::Clamp((23.f - FMath::Abs(I)) / 8.f, 0.f, 1.f);
+			W.Line({ Hub + Arm(O) * (Rad - 6.f), Hub + Arm(O) * Rad }, FLinearColor(Ivory.R, Ivory.G, Ivory.B, OA), 1.f);
+			W.Line({ Hub + Arm(I) * Inner, Hub + Arm(I) * (Inner + 4.f) }, FLinearColor(Ivory.R, Ivory.G, Ivory.B, IA), 1.f);
 		}
+
+		for (int32 i = 0; i < ARealmSky::NumWeathers(); ++i)
+		{
+			const float Delta = FMath::Fmod((i - Paint.WheelIndex) * Sector + Turn + Round * 8.f + Round * 0.5f, Round) - Round * 0.5f;
+			if (FMath::Abs(Delta) > 23.f) { continue; }
+			const float Edge = FMath::Clamp((23.f - FMath::Abs(Delta)) / 6.f, 0.f, 1.f);         // sectors arrive and leave softly
+			const float Near = 1.f - FMath::Clamp(FMath::Abs(Delta) / (Sector * 0.5f), 0.f, 1.f);
+			const bool bChosen = i == Paint.WheelIndex;
+			const float Lit = FMath::Lerp(0.5f + 0.35f * Near, bChosen ? 1.f : 0.34f, Stopped);    // the two neighbours dim once it lands
+			const FLinearColor Tint = bChosen ? FMath::Lerp(Ivory, Verdict, Stopped) : Ivory;
+			const FLinearColor C(Tint.R, Tint.G, Tint.B, Lit * Edge);
+			const FVector2f IconAt = Hub + Arm(Delta) * (Rad - 84.f);
+			const float Beat = bChosen ? FMath::Sin(Land * PI) * 0.22f : 0.f;                       // one beat as it lands
+			DrawIcon(W, WeatherIcons[i], IconAt, FMath::Lerp(12.f, 15.f, Near) * (1.f + Beat), C, 1.4f);
+			if (bChosen && Land > 0.f && Land < 1.f)
+			{
+				W.Circle(IconAt, FMath::Lerp(16.f, 38.f, Land), FLinearColor(Verdict.R, Verdict.G, Verdict.B, 0.55f * (1.f - Land)), 1.2f);
+			}
+			// the small name gives way to the large one, so the type never jumps
+			const FSlateFontInfo Small = FCoreStyle::GetDefaultFontStyle("Light", 11), Large = FCoreStyle::GetDefaultFontStyle("Regular", 17);
+			const float SmallAlpha = bChosen ? 1.f - Stopped : 1.f;
+			if (SmallAlpha > 0.f) { W.TextCentre(ARealmSky::GetWeatherInfo(i).Name, IconAt + FVector2f(0.f, 24.f), Small, FLinearColor(C.R, C.G, C.B, C.A * SmallAlpha)); }
+			if (bChosen && Stopped > 0.f) { W.TextCentre(Info.Name, IconAt + FVector2f(0.f, 24.f), Large, FLinearColor(C.R, C.G, C.B, Stopped)); }
+			const FVector2f DD = Arm(Delta + Sector * 0.5f);
+			W.Line({ Hub + DD * Inner, Hub + DD * Rad }, FLinearColor(Ivory.R, Ivory.G, Ivory.B, 0.3f * Edge), 1.f);
+		}
+		// The chosen sector's arc opens from the pointer, in the colour of the verdict
+		if (Stopped > 0.f)
+		{
+			const float Half = 7.f * (1.f - FMath::Square(1.f - Stopped));
+			W.Circle(Hub, Rad, Verdict, 2.f, 90.f - Half, 90.f + Half);
+		}
+		// The pointer stays put but flicks as each divider passes under it
 		const float PY = CY + Rad;
-		W.Shape(FVector2f(CX, PY), 1.f, { {-7.f, 9.f}, {0.f, 0.f}, {7.f, 9.f}, {-7.f, 9.f} }, Ivory, 1.2f);
-		// Result line under the wheel: what comes, plainly, and when
-		const FRealmWeatherInfo& Info = ARealmSky::GetWeatherInfo(Paint.ForecastIndex);
-		const FPen WR{ G, Out, Layer, In * Fade * Stopped };
-		const FString Line = FString::Printf(TEXT("%s  \u00B7  %d:%02d"), Info.Warning, FMath::FloorToInt(Paint.ForecastSeconds / 60.f), FMath::FloorToInt(Paint.ForecastSeconds) % 60);
-		WR.TextCentre(Line, FVector2f(CX, PY + 16.f), F13, Info.Danger > 0 ? Amber : Quiet);
+		const float Past = FMath::Fmod(Turn + Sector * 0.5f, Sector);
+		const float Flick = FMath::Exp(-Past * 1.4f) * 5.f * (1.f - Stopped);
+		W.Shape(FVector2f(CX, PY), 1.f, { {-7.f, 9.f}, {-Flick, 0.f}, {7.f, 9.f}, {-7.f, 9.f} }, FMath::Lerp(Ivory, Verdict, Stopped), 1.2f);
+		// Result line under the wheel: what comes, plainly, and when (a realm named by hand has no countdown)
+		const FPen WR{ G, Out, Layer, InEased * Fade * Stopped };
+		const FString When = Paint.bForecast ? FString::Printf(TEXT("  \u00B7  %d:%02d"), FMath::FloorToInt(Paint.ForecastSeconds / 60.f), FMath::FloorToInt(Paint.ForecastSeconds) % 60) : FString();
+		WR.TextCentre(FString(Info.Warning) + When, FVector2f(CX, PY + 16.f + (1.f - Stopped) * 8.f), F13, Info.Danger > 0 ? Verdict : Quiet);
 	}
 	return Layer + 2;
 }
