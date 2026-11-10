@@ -151,7 +151,7 @@ float2 gP=float2(px-p0,py-p0)/e*lerp(80.0,30.0,hard);
 // sastrugi ripples on hard snow only (6 cm tall)
 float es=20.0;
 float s0=hx.Sast(WP.xy), sx1=hx.Sast(WP.xy+float2(es,0)), sy1=hx.Sast(WP.xy+float2(0,es));
-float2 gS=float2(sx1-s0,sy1-s0)/es*6.0*hard;
+float2 gS=float2(sx1-s0,sy1-s0)/es*4.0*hard*lerp(0.2,1.0,hx.Fbm(WP.xy/2500.0+7.7)); // low and patchy: crisp even ripples read as machined metal
 // grain from the snow texture is kept faint: deep powder looks smooth, wind crust a bit rougher
 float3 micro=hx.SN(lerp(n,hx.SN(snowW,n),lerp(0.05,0.28,hard)),n);
 // soft lumps and clumps, strongest in deep powder; clumps fade out where a pixel covers more than ~3 cm (no shimmer far away)
@@ -159,20 +159,20 @@ float fp=length(float2(ddx(WP.x),ddx(WP.y)))+length(float2(ddy(WP.x),ddy(WP.y)))
 float el=20.0, ec=15.0;
 float l0=hx.Lump(WP.xy), lx=hx.Lump(WP.xy+float2(el,0)), ly=hx.Lump(WP.xy+float2(0,el));
 float c0=hx.Clump(WP.xy), cx=hx.Clump(WP.xy+float2(ec,0)), cy=hx.Clump(WP.xy+float2(0,ec));
-float2 gL=float2(lx-l0,ly-l0)/el*lerp(18.0,6.0,hard);
-float2 gC=float2(cx-c0,cy-c0)/ec*lerp(5.0,2.0,hard);
+float2 gL=float2(lx-l0,ly-l0)/el*lerp(18.0,14.0,hard);   // snow keeps lumps up high too; it read as a smooth sheet
+float2 gC=float2(cx-c0,cy-c0)/ec*lerp(5.0,5.0,hard);
 float3 sN=hx.SN(micro-float3(gP.x+gS.x+gL.x+gC.x,gP.y+gS.y+gL.y+gC.y,0.0),n);
 // colour: clean white powder, blue-grey crust, blue ice patches on steep high ground; blue in the hollows
 // bare blue ice only where it is both high and steep (wind strips the snow), in soft-edged patches
 float ice=(1.0-smoothstep(0.6,0.85,n.z))*smoothstep(7000.0,7800.0,elev)*smoothstep(0.45,0.8,hx.Fbm(WP.xy/4000.0+5.0))*0.8;
-float3 sCol=lerp(float3(0.90,0.93,0.97),float3(0.80,0.86,0.93),hard);
+float3 sCol=lerp(float3(0.90,0.93,0.97),float3(0.86,0.90,0.95),hard);
 sCol=lerp(sCol,float3(0.66,0.78,0.89),ice);
 float hollow=saturate((0.55-snowH)*1.6)*0.08+saturate(0.6-p0*0.6)*0.35*(1.0-hard)+saturate(0.45-l0)*0.4*(1.0-hard);
 hollow=saturate(hollow+saturate(rm*(1.0-rm)*4.0)*0.5); // blue edge where snow meets rock: the side of the snow layer
 sCol*=lerp(float3(1,1,1),float3(0.84,0.91,1.0),hollow);
 sCol*=lerp(0.95,1.03,sm3*0.5+sm1*0.5);
-float sRough=lerp(lerp(0.86,0.93,sm1),lerp(0.58,0.68,sm3),hard);
-sRough=lerp(sRough,0.22,ice);
+float sRough=lerp(lerp(0.86,0.93,sm1),lerp(0.80,0.90,sm3),hard); // wind crust is still matte; 0.6 here made a metallic sheen at low sun
+sRough=lerp(sRough,0.45,ice);
 // sparkle: a few ice-crystal facets per square decimetre catch the sun, near the camera only
 float2 gc=floor(WP.xy/1.6); float2 gh=hx.Hash(gc+0.37);
 float spark=step(0.988,gh.x)*(1.0-smoothstep(0.6,1.6,fp))*(1.0-ice);

@@ -182,6 +182,16 @@ public:
 	UFUNCTION(CallInEditor, Category="Terrain Math")
 	void ApplyTerrainMath();
 
+	/**
+	 *  Writes a rectangular height patch into BuiltLandscape (used to sink the landscape under the 1 m detail tiles).
+	 *  File: int32 X0, Y0, W, H (landscape vertex indices from the landscape's min corner), then W*H float32 heights in
+	 *  landscape units (0..65535); a negative value leaves that vertex alone. bOnlyLower: never raise a vertex.
+	 *  The heights it replaces are written to <File>.undo.bin in the same format, so applying that file restores them.
+	 *  Nothing else moves: re-seat props and ropes afterwards. Save and restart the editor (the Nanite mesh needs it).
+	 */
+	UFUNCTION(BlueprintCallable, Category="Terrain Math")
+	FString ApplyHeightPatch(const FString& File, bool bOnlyLower);
+
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif

@@ -32,8 +32,8 @@ float elev = 6326.3 + (WP.z - 129770.0) / 100.0;
 float dist = length(WP - Cam);
 float wob = (gf.Fbm(WP.xy / 9000.0) - 0.5) * 300.0;      // ragged zone borders, not contour lines
 // terrain sits ~85 m below the real elevations around Base Camp (34 m/px DEM), so the real ~5350 m transition is at ~5270
-float debris = 1.0 - smoothstep(5170.0, 5330.0, elev + wob);
-float bare = (1.0 - debris) * (1.0 - smoothstep(5850.0, 6100.0, elev + wob));
+float debris = 1.0 - smoothstep(5050.0, 5230.0, elev + wob);
+float bare = (1.0 - debris) * (1.0 - smoothstep(6450.0, 6800.0, elev + wob));   // ice shows through the Icefall and up the Cwm
 float steep = 1.0 - smoothstep(0.72, 0.92, n.z);
 
 // ---- moraine rubble (two scales, rotated against each other so the tiling never lines up)
@@ -80,35 +80,55 @@ float cr = (1.0 - smoothstep(0.004, 0.02, abs(cs))) * step(0.55, gf.VN(float2(ro
          * smoothstep(0.45, 0.6, gf.Fbm(WP.xy / 2500.0)) * (1.0 - smoothstep(2500.0, 6000.0, dist));
 // old glacier ice is grey-blue, not white: weathered milky surface, clear blue where it is polished
 float clear = smoothstep(0.55, 0.8, gf.Fbm(WP.xy / 900.0 + 1.7));
-float3 ic = lerp(float3(0.62, 0.70, 0.76), float3(0.42, 0.62, 0.78), clear);
-ic *= lerp(0.85, 1.08, gf.Fbm(WP.xy / 2600.0 + 9.2));
-ic = lerp(ic, float3(0.45, 0.45, 0.44), smoothstep(0.55, 0.8, bands) * 0.55);          // dirt bands (ogives)
+float3 ic = lerp(float3(0.68, 0.78, 0.84), float3(0.36, 0.60, 0.78), clear);
+ic *= lerp(0.88, 1.08, gf.Fbm(WP.xy / 2600.0 + 9.2));
+ic = lerp(ic, float3(0.50, 0.52, 0.53), smoothstep(0.62, 0.85, bands) * 0.35 * smoothstep(5900.0, 5500.0, elev)); // dirt bands (ogives), lower ice only
 float grit = smoothstep(0.55, 0.9, dot(MorC.SampleLevel(MorCSampler, WP.xy / 220.0, clamp(log2(dist / 70.0), 0.0, 11.0)).rgb, 0.33.xxx));
-ic = lerp(ic, float3(0.36, 0.35, 0.34), grit * 0.55 * (1.0 - clear));                   // wind-blown grit in the milky ice
+ic = lerp(ic, float3(0.40, 0.40, 0.40), grit * 0.3 * (1.0 - clear) * smoothstep(5900.0, 5500.0, elev));   // wind-blown grit in the milky ice
 ic = lerp(ic, float3(0.16, 0.34, 0.52), cr * 0.85);                                     // cracks: deep blue
-// hummocks (metres) as normal relief, from smooth gradient noise
+// real ice: the scanned ice cliff's own colour and surface, at two scales turned against each other so no tile repeats
+float2 iu1 = gf.Rot(WP.xy, 0.7) / 1100.0;
+float2 iu2 = gf.Rot(WP.xy, 2.3) / 4300.0 + 0.31;
+float im1 = clamp(log2(dist / 340.0) + graze, 0.0, 11.0), im2 = clamp(log2(dist / 1300.0) + graze, 0.0, 11.0);
+float3 sc1 = IceC.SampleLevel(IceCSampler, iu1, im1).rgb, sc2 = IceC.SampleLevel(IceCSampler, iu2, im2).rgb;
+float iceMix = smoothstep(0.3, 0.7, gf.Fbm(WP.xy / 2100.0 + 2.2));
+float3 scan = lerp(sc1, sc2, lerp(iceMix, 1.0, smoothstep(1500.0, 7000.0, dist)));
+float scanL = dot(scan, float3(0.3, 0.59, 0.11));
+// colour from the reference photos, not the dirty Icelandic scan: its detail decides white or blue, blue only where it is darkest
+float scanT = smoothstep(0.05, 0.5, scanL);
+ic = lerp(float3(0.30, 0.60, 0.74), float3(0.90, 0.95, 0.98), scanT);
+ic = lerp(ic, float3(0.16, 0.34, 0.52), cr * 0.6);
+// hummocks (metres) as normal relief, from smooth gradient noise: large swells, plus the sharp ribs and scallops of melting ice
 float e = 30.0;
 float2 q0 = WP.xy / 1100.0;
 float h0 = gf.GF(q0), hx = gf.GF(q0 + float2(e / 1100.0, 0)), hy = gf.GF(q0 + float2(0, e / 1100.0));
-float2 slope = float2(hx - h0, hy - h0) / e * 70.0;
+float2 slope = float2(hx - h0, hy - h0) / e * 110.0;
+float2 qR = gf.Rot(WP.xy, 0.5) / 260.0;
+float r0 = abs(gf.GF(qR)), rx = abs(gf.GF(qR + float2(e / 260.0, 0))), ry = abs(gf.GF(qR + float2(0, e / 260.0)));
+slope += float2(rx - r0, ry - r0) / e * 16.0 * (1.0 - smoothstep(2500.0, 9000.0, dist));
+float2 sn1 = IceN.SampleLevel(IceNSampler, iu1, im1).xy * 2.0 - 1.0, sn2 = IceN.SampleLevel(IceNSampler, iu2, im2).xy * 2.0 - 1.0;
+float2 scanN = lerp(gf.Rot(sn1, -0.7), gf.Rot(sn2, -2.3), iceMix) * float2(1.0, -1.0);
+slope -= scanN * 0.55;
 // fine weathered texture near the camera (borrowed from the rubble normal map, weak)
 float2 mt = MorN.SampleLevel(MorNSampler, gf.Rot(WP.xy, 0.8) / 160.0, clamp(log2(dist / 50.0), 0.0, 11.0)).xy * 2.0 - 1.0;
 float near = 1.0 - smoothstep(1500.0, 5000.0, dist);
 float3 iN = normalize(float3(n.xy - slope + mt * float2(1.0, -1.0) * lerp(0.25, 0.08, clear) * near, n.z));
-float iR = lerp(0.32, 0.08, clear);
+float iR = lerp(0.55, 0.3, clear);   // weathered ice is not a mirror; lower values flashed metallic under a low sun
+iR = lerp(iR, 0.62, smoothstep(0.3, 0.7, scanL));
 
 // ---- where the old snow stays: hollows and flats keep the existing snow surface (Col/N/Rgh)
 // crisp, ragged edges: a fine noise breaks the border so rubble pokes through the snow
 float patchN = gf.Fbm(WP.xy / 1400.0 + 11.0) + (gf.Fbm(WP.xy / 90.0 + 3.0) - 0.5) * 0.16 + (gf.VN(WP.xy / 25.0) - 0.5) * 0.05;
 float snowKeepDebris = smoothstep(0.61, 0.68, patchN + (n.z - 0.9) * 0.6);   // 2026-11-03: was 0.63-0.655, read as paper cut-outs
-float snowKeepBare = smoothstep(0.53, 0.60, patchN + (n.z - 0.85) * 0.8);
+float snowKeepBare = smoothstep(0.44, 0.56, patchN + (n.z - 0.85) * 0.8);   // more bare ice
 
 // debris tongue: rubble, with dark old ice on its steep faces
 float3 dCol = lerp(mc, float3(0.32, 0.38, 0.44), steep * 0.6);
 float3 dN = normalize(lerp(mN, iN, steep * 0.6));
 float dR = lerp(mR, 0.3, steep * 0.6);
 // bare zone: ice, with some rubble streaks (medial moraines) along the flow
-float med = smoothstep(0.62, 0.75, gf.Fbm(float2(WP.x / 7000.0, WP.y / 1800.0) + 6.0));
+// medial moraines stop below the Icefall: higher up they read as a blurred dark smear on the snow (the dark patch near Camp 1)
+float med = smoothstep(0.62, 0.75, gf.Fbm(float2(WP.x / 7000.0, WP.y / 1800.0) + 6.0)) * smoothstep(5750.0, 5500.0, elev + wob);
 float3 bCol = lerp(ic, mc, med * 0.7);
 float3 bN = normalize(lerp(iN, mN, med * 0.7));
 float bR = lerp(iR, mR, med * 0.7);

@@ -757,3 +757,67 @@ void ALandscapeRebuilder::ApplyTerrainMath()
 	UE_LOG(LogTemp, Display, TEXT("LandscapeRebuilder: %s"), *LastResult);
 #endif
 }
+
+FString ALandscapeRebuilder::ApplyHeightPatch(const FString& File, bool bOnlyLower)
+{
+#if WITH_EDITOR
+	ALandscape* Landscape = Cast<ALandscape>(BuiltLandscape.Get());
+	ULandscapeInfo* Info = Landscape ? Landscape->GetLandscapeInfo() : nullptr;
+	int32 MinX, MinY, MaxX, MaxY;
+	if (!Info || !Info->GetLandscapeExtent(MinX, MinY, MaxX, MaxY)) { return LastResult = TEXT("ApplyHeightPatch: no BuiltLandscape."); }
+	TArray<uint8> Bytes;
+	if (!FFileHelper::LoadFileToArray(Bytes, *File) || Bytes.Num() < 16) { return LastResult = TEXT("ApplyHeightPatch: cannot read ") + File; }
+	int32 Hdr[4];
+	FMemory::Memcpy(Hdr, Bytes.GetData(), 16);
+	const int32 PX = Hdr[0], PY = Hdr[1], PW = Hdr[2], PH = Hdr[3];
+	if (PW <= 0 || PH <= 0 || Bytes.Num() != 16 + PW * PH * 4 || PX < 0 || PY < 0 || PX + PW > MaxX - MinX + 1 || PY + PH > MaxY - MinY + 1)
+	{
+		return LastResult = TEXT("ApplyHeightPatch: bad header or size.");
+	}
+	const float* Target = reinterpret_cast<const float*>(Bytes.GetData() + 16);
+
+	TOptional<FScopedSetLandscapeEditingLayer> LayerScope;
+	if (const ULandscapeEditLayerBase* Layer = Landscape->GetEditLayerConst(0))
+	{
+		LayerScope.Emplace(Landscape, Layer->GetGuid(), [Landscape] { Landscape->RequestLayersContentUpdateForceAll(); });
+	}
+	FLandscapeEditDataInterface Edit(Info);
+	const int32 X1 = MinX + PX, Y1 = MinY + PY, X2 = X1 + PW - 1, Y2 = Y1 + PH - 1;
+	TArray<uint16> Heights;
+	Heights.SetNumZeroed(PW * PH);
+	{
+		int32 A = X1, B = Y1, C = X2, D = Y2;
+		Edit.GetHeightData(A, B, C, D, Heights.GetData(), PW);
+	}
+	// undo file: the old heights of every vertex this patch touches
+	TArray<uint8> Undo;
+	Undo.SetNumUninitialized(16 + PW * PH * 4);
+	FMemory::Memcpy(Undo.GetData(), Hdr, 16);
+	float* UndoH = reinterpret_cast<float*>(Undo.GetData() + 16);
+	int32 Changed = 0;
+	double MaxDrop = 0.0;
+	for (int32 I = 0; I < PW * PH; ++I)
+	{
+		const float T = Target[I];
+		UndoH[I] = -1.f;
+		if (T < 0.f) { continue; }
+		const uint16 New = (uint16)FMath::Clamp(FMath::RoundToInt(T), 0, 65535);
+		if (New == Heights[I] || (bOnlyLower && New > Heights[I])) { continue; }
+		UndoH[I] = Heights[I];
+		MaxDrop = FMath::Max(MaxDrop, double(Heights[I]) - double(New));
+		Heights[I] = New;
+		++Changed;
+	}
+	if (!FFileHelper::SaveArrayToFile(Undo, *(File + TEXT(".undo.bin")))) { return LastResult = TEXT("ApplyHeightPatch: could not write the undo file, nothing changed."); }
+	Edit.SetHeightData(X1, Y1, X2, Y2, Heights.GetData(), PW, true);
+	Edit.Flush();
+	LayerScope.Reset();
+	Landscape->Modify();
+	const double CmPerUnit = Landscape->GetActorScale3D().Z / 128.0;
+	LastResult = FString::Printf(TEXT("ApplyHeightPatch: %d vertices changed, deepest drop %.1f m."), Changed, MaxDrop * CmPerUnit / 100.0);
+	UE_LOG(LogTemp, Display, TEXT("LandscapeRebuilder: %s"), *LastResult);
+	return LastResult;
+#else
+	return FString();
+#endif
+}

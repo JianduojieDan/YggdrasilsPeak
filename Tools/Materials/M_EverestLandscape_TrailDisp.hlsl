@@ -35,10 +35,10 @@ struct TrailHelpers {
   }
 };
 TrailHelpers th;
-if (Area.w < 0.5) return Base;
+if (Area.w < 0.5) return saturate(Base);
 float2 uv = (WP.xy - Area.xy) / Area.z + 0.5;
 float2 edge = abs(uv - 0.5);
 float fade = 1.0 - smoothstep(0.40, 0.48, max(edge.x, edge.y));
-if (fade <= 0.0) return Base;
+if (fade <= 0.0) return saturate(Base);
 float h = th.Height(Trail, TrailSampler, uv, WP.xy, 18.0, 7.0) * fade * (1.0 - Rock) * (1.0 - th.GlacierHard(Mask, MaskSampler, WP, VN));
-return Base + h / 200.0;
+return saturate(Base + h / 400.0);
