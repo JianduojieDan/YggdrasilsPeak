@@ -192,6 +192,16 @@ public:
 	/** Bare glacier ice / debris (the landscape's Glacier zones below ~6000 m), where there is no snow to sink into. */
 	static bool IsGlacierHard(const FVector& Location);
 
+	/** The mountain itself: the landscape or one of the route detail tiles (not tents, props, ice meshes). */
+	static bool IsTerrain(const FHitResult& Hit);
+
+	/** Rock: the landscape's rock layer, or a rock face of a detail tile's collision mesh (needs the hit's face index). */
+	static bool IsRock(const FHitResult& Hit);
+
+	/** True when the hit is the mountain's snow (not its rock or glacier rubble/ice, not a prop). Rock on the detail
+	 *  tiles comes from their collision faces (a rock physical material on rock triangles). */
+	static bool IsSnow(const FHitResult& Hit);
+
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
@@ -215,8 +225,6 @@ private:
 
 	/** Samples the snow under the player and eases the body's sink depth towards it. */
 	void UpdateSinking(float DeltaTime);
-	/** True when the hit is the landscape's snow (not its rock, not a prop). */
-	static bool IsSnow(const FHitResult& Hit);
 	void PlayFootstep(const FHitResult& Hit);
 	void LoadDefaultFootsteps();
 	int32 LastStepVariation = -1;

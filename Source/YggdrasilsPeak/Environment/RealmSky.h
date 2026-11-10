@@ -155,6 +155,10 @@ private:
 	int32 ForecastSerial = 0;
 	float SkyHours = 0.f, ShownAtHours = 0.f;
 	double LastTod = -1.0;
+	// Where a lone realm planet stands: on the sun by day, on the moon by night (smoothed: the moon light moves in steps)
+	TWeakObjectPtr<class UDirectionalLightComponent> MoonLight;
+	FVector SmoothMoon = FVector::ZeroVector;
+	FVector PlanetAnchor(FVector& OutDir, float DeltaSeconds);   // returns (horizon fade, night dim, unused)
 	void MakeAsgardRings();
 	UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> Ring;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> RingMat;

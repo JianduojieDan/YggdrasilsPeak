@@ -406,6 +406,33 @@ FRealmLook FRealmLook::Lerp(const FRealmLook& A, const FRealmLook& B, float T)
 	return R;
 }
 
+FVector ARealmSky::PlanetAnchor(FVector& OutDir, float DeltaSeconds)
+{
+	// The sun's daily circle, computed from the clock (the sun light itself only updates in steps, which made the planet
+	// jump). Measured from the sky at three times of day: axis (0.866, 0, 0.5), 15 degrees an hour, this direction at 08:01.
+	static const FVector SunAxis(0.866, 0.0, 0.5);
+	static const FVector SunAt0801(-0.2488, 0.8676, 0.4305);
+	const float TimeOfDay = YggTime::Get(GetWorld());
+	const FVector SunDir = SunAt0801.RotateAngleAxis((TimeOfDay - 801.7f) / 100.f * 15.f, SunAxis).GetSafeNormal();
+	if (!MoonLight.IsValid() && SkyCached.IsValid())
+	{
+		TArray<UDirectionalLightComponent*> Lights; SkyCached->GetComponents(Lights);
+		for (UDirectionalLightComponent* L : Lights) { if (L->GetName() == TEXT("Moon")) { MoonLight = L; } }
+	}
+	const FVector MoonNow = MoonLight.IsValid() ? -MoonLight->GetForwardVector() : -SunDir;
+	SmoothMoon = SmoothMoon.IsNearlyZero() ? MoonNow : (SmoothMoon + (MoonNow - SmoothMoon) * FMath::Min(1.f, DeltaSeconds * 1.5f)).GetSafeNormal();
+	const float SunEl = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(SunDir.Z, -1.0, 1.0)));
+	const float MoonEl = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(SmoothMoon.Z, -1.0, 1.0)));
+	// Hand over in twilight, when the planet has faded out on both: it sets with the sun and rises with the moon
+	if (SunEl >= -5.f)
+	{
+		OutDir = SunDir;
+		return FVector(FMath::SmoothStep(-5.f, 0.f, SunEl), 1.f, 0.f);
+	}
+	OutDir = SmoothMoon;
+	return FVector((1.f - FMath::SmoothStep(-10.f, -5.f, SunEl)) * FMath::SmoothStep(-3.f, 2.f, MoonEl), 0.45f, 0.f);
+}
+
 void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 {
 	Look = FRealmLook::Lerp(Look, LookOf(Shown, bAll), 1.f - FMath::Exp(-DeltaSeconds / TransitionTau));
@@ -925,6 +952,8 @@ void ARealmSky::Tick(float DeltaSeconds)
 		const FVector Spot = Bow->GetActorLocation() + Bow->GetActorUpVector() * BowDistance;
 		Planets[AlfheimBow].Target = (Shown == ERealm::Alfheim && FVector::DistXY(Around, Spot) < BowSpotRadius) ? 1.f : 0.f;
 	}
+	FVector AnchorDir;
+	const FVector Anchor = PlanetAnchor(AnchorDir, DeltaSeconds);
 	for (FPlanet& P : Planets)
 	{
 		AActor* A = P.Actor.Get();
@@ -933,7 +962,9 @@ void ARealmSky::Tick(float DeltaSeconds)
 			continue;
 		}
 		P.Fade = FMath::FInterpConstantTo(P.Fade, P.Target, DeltaSeconds, 1.f / FadeSeconds);
-		const float Eased = P.Fade * P.Fade * (3.f - 2.f * P.Fade);
+		const bool bLone = !bAll && int32(&P - Planets.GetData()) < NumRealms;
+		// a lone planet sets with the sun and rises with the moon; by night it gives a dimmer light
+		const float Eased = P.Fade * P.Fade * (3.f - 2.f * P.Fade) * (bLone ? Anchor.X * Anchor.Y : 1.f);
 		for (const TWeakObjectPtr<UMaterialInstanceDynamic>& D : P.Materials)
 		{
 			if (D.IsValid())
@@ -954,15 +985,9 @@ void ARealmSky::Tick(float DeltaSeconds)
 			{
 				const FPlanetSky& Sky = PlanetSky(Index);
 				const double Dist = P.Offset.Size();
-				// 12 degrees per sky hour along a slow arc, from where the reference shot has it
-				const float Drift = FMath::Fmod(SkyHours - ShownAtHours, 24.f) * 12.f;
-				// The planet is on the sun's own daily circle, about 2.7 hours behind it: it rises and sets as the sun and moon do. Computed
-				// from the clock, because the sun light itself only updates in steps, which made the planet jump. Circle measured from
-				// the sky at three times of day: axis (0.866, 0, 0.5), 15 degrees an hour, sun at this direction at 08:01.
-				static const FVector SunAxis(0.866, 0.0, 0.5);
-				static const FVector SunAt0801(-0.2488, 0.8676, 0.4305);
-				const float TimeOfDay = YggTime::Get(GetWorld());
-				const FVector Dir = SunAt0801.RotateAngleAxis((TimeOfDay - 801.7f) / 100.f * 15.f - 40.f, SunAxis).GetSafeNormal();
+				// The planet takes the sun's place by day and the moon's by night, so the light and the shadows come from it
+				// (it used to trail the sun by 40 degrees: below the horizon all morning, and its night side faced the player)
+				const FVector Dir = AnchorDir;
 				A->SetActorLocation(Around + Dir * Dist);
 				A->SetActorScale3D(FVector(Dist * FMath::Tan(FMath::DegreesToRadians(Sky.Degrees * 0.5f)) / 100.0));
 				if (Index == int32(ERealm::Asgard) && Ring)

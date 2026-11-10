@@ -184,7 +184,8 @@
    0.58,
    0.74,
    1.0
-  ]
+  ],
+  "PlanetAlpha": 0.7
  },
  "Alfheim": {
   "SunScale": 0.85,

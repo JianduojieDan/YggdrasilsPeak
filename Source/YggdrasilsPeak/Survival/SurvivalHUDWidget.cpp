@@ -22,6 +22,8 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
+#include "Engine/Font.h"
+#include "Engine/FontFace.h"
 
 namespace
 {
@@ -70,6 +72,18 @@ void USurvivalHUDWidget::NativeConstruct()
 		}
 	}
 	TryBind();
+
+	if (!SerifFont)
+	{
+		if (UFontFace* Face = LoadObject<UFontFace>(nullptr, TEXT("/Game/UI/Fonts/FF_Alegreya.FF_Alegreya")))
+		{
+			SerifFont = NewObject<UFont>(this);
+			SerifFont->FontCacheType = EFontCacheType::Runtime;
+			FTypefaceEntry& Entry = SerifFont->GetMutableInternalCompositeFont().DefaultTypeface.Fonts.AddDefaulted_GetRef();
+			Entry.Name = TEXT("Regular");
+			Entry.Font = FFontData(Face);
+		}
+	}
 }
 
 void USurvivalHUDWidget::CreateAltitudeText()
@@ -479,13 +493,22 @@ namespace
 		float Width(const FString& T, const FSlateFontInfo& F) const { return FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(T, F).X; }
 		void Text(const FString& T, FVector2f Pos, const FSlateFontInfo& F, const FLinearColor& C) const
 		{
-			for (const FVector2f& Off : { FVector2f(0.f, 1.f), FVector2f(1.f, 1.5f) })
+			for (const FVector2f& Off : { FVector2f(0.f, 1.f), FVector2f(1.f, 1.5f), FVector2f(-0.8f, 1.2f) })   // a soft local halo: readable on bright snow
 			{
 				FSlateDrawElement::MakeText(Out, Layer, G.ToPaintGeometry(FVector2f(1.f, 1.f), FSlateLayoutTransform(Pos + Off)), T, F, ESlateDrawEffect::None, A(ShadowCol));
 			}
 			FSlateDrawElement::MakeText(Out, Layer + 1, G.ToPaintGeometry(FVector2f(1.f, 1.f), FSlateLayoutTransform(Pos)), T, F, ESlateDrawEffect::None, A(C));
 		}
 		void TextRight(const FString& T, FVector2f Right, const FSlateFontInfo& F, const FLinearColor& C) const { Text(T, Right - FVector2f(Width(T, F), 0.f), F, C); }
+		// distance from the top of a text box to its baseline: mixed sizes share one baseline
+		float Base(const FSlateFontInfo& F) const
+		{
+			const TSharedRef<FSlateFontMeasure> FM = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+			return FM->GetMaxCharacterHeight(F) + FM->GetBaseline(F);
+		}
+		void TextOnBase(const FString& T, float X, float BaseY, const FSlateFontInfo& F, const FLinearColor& C) const { Text(T, FVector2f(X, BaseY - Base(F)), F, C); }
+		// a small filled bead (the end of a bar)
+		void Bead(FVector2f At, float R, const FLinearColor& C) const { Circle(At, R * 0.5f, C, R); }
 		void TextCentre(const FString& T, FVector2f Mid, const FSlateFontInfo& F, const FLinearColor& C) const { Text(T, Mid - FVector2f(Width(T, F) * 0.5f, 0.f), F, C); }
 		void Shape(FVector2f At, float S, std::initializer_list<FVector2f> Unit, const FLinearColor& C, float T = 1.6f) const
 		{
@@ -560,6 +583,15 @@ namespace
 		}
 	}
 	const EIcon WeatherIcons[9] = { EIcon::Sun, EIcon::Mist, EIcon::Ember, EIcon::Storm, EIcon::Pearl, EIcon::Wave, EIcon::Eclipse, EIcon::Star, EIcon::Ring };
+
+	// Type: a light sans everywhere, letter-spaced small capitals for labels; the serif only names the weather
+	FSlateFontInfo Sans(const TCHAR* Style, int32 Size, int32 Track = 0)
+	{
+		FSlateFontInfo F = FCoreStyle::GetDefaultFontStyle(FName(Style), Size);
+		F.LetterSpacing = Track;
+		return F;
+	}
+	FLinearColor WithA(const FLinearColor& C, float A) { return FLinearColor(C.R, C.G, C.B, A); }
 }
 
 void USurvivalHUDWidget::TickWheel(float DeltaTime)
@@ -590,89 +622,108 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 	if (!Survival.IsValid()) { return Layer; }
 	const FVector2f Size = FVector2f(G.GetLocalSize());
 	const FPen P{ G, Out, Layer, 1.f };
-	const FSlateFontInfo F18 = FCoreStyle::GetDefaultFontStyle("Regular", 17);
-	const FSlateFontInfo F12 = FCoreStyle::GetDefaultFontStyle("Regular", 11);
-	const FSlateFontInfo F13 = FCoreStyle::GetDefaultFontStyle("Regular", 13);
+	// Light numerals, letter-spaced small capitals for labels (LetterSpacing is in 1/1000 em)
+	const FSlateFontInfo Num = Sans(TEXT("Light"), 21, 10);
+	const FSlateFontInfo Unit = Sans(TEXT("Light"), 11, 120);
+	const FSlateFontInfo Label = Sans(TEXT("Regular"), 10, 200);
+	const FSlateFontInfo KeyF = Sans(TEXT("Regular"), 9, 100);
+	const FSlateFontInfo Line = Sans(TEXT("Light"), 13, 60);
+	const auto Serif = [this](int32 Sz, int32 Track) { FSlateFontInfo F = SerifFont ? FSlateFontInfo(SerifFont.Get(), Sz, TEXT("Regular")) : Sans(TEXT("Regular"), Sz); F.LetterSpacing = Track; return F; };
 	const float M = 52.f;
 	const float Pulse = IconPulse;
+	const FLinearColor Hair = WithA(Ivory, 0.16f);
 
-	// Bottom left: condition. Three slim bars, one start, one length.
-	const float BarX = M + 30.f, BarW = 230.f, RowH = 26.f;
-	float Y = Size.Y - M - 34.f - RowH * 3.f;
+	// Bottom left: condition. Three hairlines of one length, each ending in a small bead; the icon carries the alarm.
+	const float BarX = M + 28.f, BarW = 196.f, RowH = 22.f;
+	float Y = Size.Y - M - 30.f - RowH * 3.f;
 	const struct { EIcon Icon; float V; FLinearColor C; bool bAlert; } Bars[3] = {
 		{ EIcon::Thermo, Paint.Temperature, IceBlue, WarningStrength[3] > 0.5f },
 		{ EIcon::Heart, Paint.Health, Coral, Paint.bLowHealth },
 		{ EIcon::Bolt, Paint.Stamina, Champagne, Paint.bExhausted } };
 	for (const auto& B : Bars)
 	{
-		const FLinearColor C = B.bAlert ? FLinearColor(B.C.R, B.C.G, B.C.B, B.C.A * Pulse) : B.C;
-		DrawIcon(P, B.Icon, FVector2f(M + 8.f, Y + 8.f), 8.f, B.bAlert ? C : Ivory);
-		P.Rect(FVector2f(BarX, Y + 7.f), FVector2f(BarW, 2.5f), FLinearColor(0.9f, 0.9f, 0.88f, 0.22f));
-		P.Rect(FVector2f(BarX, Y + 7.f), FVector2f(BarW * FMath::Clamp(B.V, 0.f, 1.f), 2.5f), C);
+		const float V = FMath::Clamp(B.V, 0.f, 1.f);
+		const FLinearColor C = B.bAlert ? WithA(B.C, B.C.A * Pulse) : WithA(B.C, 0.9f);
+		const float Mid = Y + 8.f;
+		DrawIcon(P, B.Icon, FVector2f(M + 8.f, Mid), 7.f, B.bAlert ? C : WithA(Ivory, 0.82f), 1.3f);
+		P.Rect(FVector2f(BarX, Mid - 0.5f), FVector2f(BarW, 1.f), Hair);
+		P.Rect(FVector2f(BarX, Mid - 0.75f), FVector2f(BarW * V, 1.5f), C);
+		if (V > 0.01f) { P.Bead(FVector2f(BarX + BarW * V, Mid), 3.2f, C); }
+		// quarter marks on the track, barely there: a reading, not a gauge
+		for (int32 k = 1; k < 4; ++k) { P.Rect(FVector2f(BarX + BarW * k * 0.25f - 0.5f, Mid + 3.f), FVector2f(1.f, 2.f), WithA(Ivory, 0.14f)); }
 		Y += RowH;
 	}
-	// Food, water, cold: quiet until they matter
+	// Food, water, cold: barely there until they matter
 	const struct { EIcon Icon; int32 W; } Needs[3] = { { EIcon::Bowl, 1 }, { EIcon::Drop, 2 }, { EIcon::Flake, 3 } };
 	float NX = M + 8.f;
 	for (const auto& N : Needs)
 	{
 		const float S = WarningStrength[N.W];
-		const FLinearColor Base = FMath::Lerp(FLinearColor(Quiet.R, Quiet.G, Quiet.B, 0.55f), FLinearColor(Amber.R, Amber.G, Amber.B, Pulse), S);
-		DrawIcon(P, N.Icon, FVector2f(NX, Y + 12.f), 8.f, Base, 1.4f);
-		NX += 32.f;
+		DrawIcon(P, N.Icon, FVector2f(NX, Y + 12.f), 7.f, FMath::Lerp(WithA(Quiet, 0.32f), WithA(Amber, Pulse), S), 1.2f);
+		NX += 28.f;
 	}
 
-	// Bottom right: environment and supplies, right aligned
+	// Bottom right: altitude | oxygen as one quiet line of light numerals, small units on the same baseline
 	const FSurvivalSnapshot& Snap = Paint.Snapshot;
-	const float RX = Size.X - M; float RY = Size.Y - M - 66.f;
-	const FString Oxygen = FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Snap.Oxygen));
-	const FString Alt = FString::Printf(TEXT("%s m"), *FText::AsNumber(FMath::RoundToInt(Snap.ElevationMeters)).ToString());
+	const float RX = Size.X - M;
+	const float BaseY = Size.Y - M - 52.f;
 	const FLinearColor O2 = Snap.Oxygen > 72.f ? Ivory : Snap.Oxygen > 55.f ? Amber : Coral;
-	P.TextRight(Oxygen, FVector2f(RX, RY), F18, O2);
-	const float OW = P.Width(Oxygen, F18);
-	DrawIcon(P, EIcon::Lungs, FVector2f(RX - OW - 18.f, RY + 11.f), 9.f, O2);
-	const float AX = RX - OW - 44.f;
-	P.TextRight(Alt, FVector2f(AX, RY), F18, Ivory);
-	DrawIcon(P, EIcon::Mountain, FVector2f(AX - P.Width(Alt, F18) - 22.f, RY + 11.f), 9.f, Ivory);
-	RY += 30.f;
+	float X = RX;
+	const auto Right = [&](const FString& T, const FSlateFontInfo& F, const FLinearColor& C) { X -= P.Width(T, F); P.TextOnBase(T, X, BaseY, F, C); };
+	Right(TEXT("%"), Unit, WithA(O2, 0.7f)); X -= 3.f;
+	Right(FString::FromInt(FMath::RoundToInt(Snap.Oxygen)), Num, O2); X -= 13.f;
+	DrawIcon(P, EIcon::Lungs, FVector2f(X - 4.f, BaseY - 7.f), 7.5f, O2, 1.3f); X -= 26.f;
+	P.Rect(FVector2f(X, BaseY - 15.f), FVector2f(1.f, 16.f), WithA(Ivory, 0.28f)); X -= 16.f;
+	Right(TEXT("m"), Unit, WithA(Ivory, 0.7f)); X -= 4.f;
+	Right(FText::AsNumber(FMath::RoundToInt(Snap.ElevationMeters)).ToString(), Num, Ivory); X -= 14.f;
+	DrawIcon(P, EIcon::Mountain, FVector2f(X - 6.f, BaseY - 7.f), 7.5f, Ivory, 1.3f);
+
+	// Under it, small letter-spaced capitals: state and load, then supplies with their keys
 	TArray<FString> Line2;
 	if (Snap.bSheltered) { Line2.Add(TEXT("CAMP")); }
 	if (Snap.bOnRope) { Line2.Add(TEXT("ROPE")); }
 	if (Snap.OxygenBottleSeconds > 0.f) { Line2.Add(FString::Printf(TEXT("BOTTLE %d:%02d"), FMath::FloorToInt(Snap.OxygenBottleSeconds / 60.f), FMath::FloorToInt(Snap.OxygenBottleSeconds) % 60)); }
 	if (Snap.CarriedBottles > 0) { Line2.Add(FString::Printf(TEXT("SPARE %d"), Snap.CarriedBottles)); }
-	Line2.Add(FString::Printf(TEXT("%d/%d kg"), Paint.PackKg, Paint.PackMax));
-	P.TextRight(FString::Join(Line2, TEXT("  \u00B7  ")), FVector2f(RX, RY), F13, Quiet);
-	RY += 22.f;
+	Line2.Add(FString::Printf(TEXT("%d / %d KG"), Paint.PackKg, Paint.PackMax));
+	float RY = BaseY + 12.f;
+	P.TextRight(FString::Join(Line2, TEXT("   ·   ")), FVector2f(RX, RY), Label, WithA(Ivory, 0.82f));
+	RY += 19.f;
 	float ItemX = RX;
-	const auto Item = [&](const FString& Key, const FString& Main) { P.TextRight(Key, FVector2f(ItemX, RY + 1.f), F12, FLinearColor(Quiet.R, Quiet.G, Quiet.B, 0.55f)); ItemX -= P.Width(Key, F12) + 5.f; P.TextRight(Main, FVector2f(ItemX, RY), F13, Quiet); ItemX -= P.Width(Main, F13); };
+	const auto Item = [&](const FString& Key, const FString& Main)
+	{
+		P.TextRight(Key, FVector2f(ItemX, RY + 1.f), KeyF, WithA(Ivory, 0.5f)); ItemX -= P.Width(Key, KeyF) + 6.f;
+		P.TextRight(Main, FVector2f(ItemX, RY), Label, WithA(Ivory, 0.82f)); ItemX -= P.Width(Main, Label);
+	};
 	Item(TEXT("[2]"), FString::Printf(TEXT("WATER %d"), Paint.Water));
-	P.TextRight(TEXT("\u00B7"), FVector2f(ItemX - 10.f, RY), F13, Quiet); ItemX -= 24.f;
+	P.TextRight(TEXT("·"), FVector2f(ItemX - 12.f, RY), Label, WithA(Quiet, 0.5f)); ItemX -= 28.f;
 	Item(TEXT("[1]"), FString::Printf(TEXT("FOOD %d"), Paint.Food));
 
-	// Bottom centre: subtitle, no box
+	// Bottom centre: subtitle, light and spaced, no box
 	if (Paint.SubtitleTimer > 0.f && !Paint.Subtitle.IsEmpty())
 	{
 		const FPen PS{ G, Out, Layer, FMath::Clamp(Paint.SubtitleTimer * 2.f, 0.f, 1.f) };
-		PS.TextCentre(Paint.Subtitle, FVector2f(Size.X * 0.5f, Size.Y - M - 44.f), FCoreStyle::GetDefaultFontStyle("Regular", 15), Ivory);
+		PS.TextCentre(Paint.Subtitle, FVector2f(Size.X * 0.5f, Size.Y - M - 46.f), Sans(TEXT("Light"), 16, 40), Ivory);
 	}
 
-	// After the reveal: a small icon and the countdown, nothing else
+	// After the reveal: a small icon and the countdown above the readings, nothing else
 	if (Paint.bForecast && !bWheelOn)
 	{
 		const FString T = FString::Printf(TEXT("%d:%02d"), FMath::FloorToInt(Paint.ForecastSeconds / 60.f), FMath::FloorToInt(Paint.ForecastSeconds) % 60);
 		const bool bDanger = ARealmSky::GetWeatherInfo(Paint.ForecastIndex).Danger > 0;
-		const float TY = Size.Y - M - 96.f;
-		P.TextRight(T, FVector2f(RX, TY), F13, bDanger ? Amber : Quiet);
-		DrawIcon(P, WeatherIcons[Paint.ForecastIndex], FVector2f(RX - P.Width(T, F13) - 16.f, TY + 9.f), 8.f, bDanger ? Amber : Quiet, 1.4f);
+		const FLinearColor C = bDanger ? Amber : WithA(Quiet, 0.75f);
+		const float TY = BaseY - 50.f;
+		const FSlateFontInfo CF = Sans(TEXT("Light"), 13, 80);
+		P.TextRight(T, FVector2f(RX, TY), CF, C);
+		DrawIcon(P, WeatherIcons[Paint.ForecastIndex], FVector2f(RX - P.Width(T, CF) - 16.f, TY + 9.f), 7.f, C, 1.2f);
 	}
 
-	// Presentation only: the weather now, under the top edge
+	// Presentation only: the weather now, under the top edge, in the serif
 	if (Paint.DemoCaption > 0.f && Paint.DemoIndex >= 0)
 	{
 		const FPen DC{ G, Out, Layer, Paint.DemoCaption * 0.9f };
 		const FVector2f At(Size.X * 0.5f, 44.f + (1.f - Paint.DemoCaption) * -8.f);
-		DrawIcon(DC, WeatherIcons[Paint.DemoIndex], At, 13.f, Ivory, 1.4f);
-		DC.TextCentre(ARealmSky::GetWeatherInfo(Paint.DemoIndex).Name, At + FVector2f(0.f, 20.f), FCoreStyle::GetDefaultFontStyle("Regular", 15), Ivory);
+		DrawIcon(DC, WeatherIcons[Paint.DemoIndex], At, 12.f, Ivory, 1.3f);
+		DC.TextCentre(ARealmSky::GetWeatherInfo(Paint.DemoIndex).Name, At + FVector2f(0.f, 20.f), Serif(17, 160), Ivory);
 	}
 
 	// Top centre: the wheel. Its centre stays above the screen: a shallow arc, three sectors, one fixed pointer.
@@ -696,61 +747,72 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 		const FRealmWeatherInfo& Info = ARealmSky::GetWeatherInfo(Paint.WheelIndex);
 		const FLinearColor Verdict = Info.Danger >= 2 ? Coral : Info.Danger == 1 ? Amber : Ivory;
 		const auto Arm = [](float Deg) { const float R = FMath::DegreesToRadians(90.f - Deg); return FVector2f(FMath::Cos(R), FMath::Sin(R)); };
-
-		// Two thin rings carry fine ticks: the outer turns with the wheel, the inner slowly against it
+		// the arcs thin out towards their ends instead of stopping
+		const auto Arc = [&](float R, float Alpha, float Thick)
+		{
+			for (int32 s = 0; s < 4; ++s)
+			{
+				const float A0 = 6.f + s * 4.25f, A1 = A0 + 4.25f, K = 1.f - s / 4.f;
+				W.Circle(Hub, R, WithA(Ivory, Alpha * K), Thick, 90.f - A1, 90.f - A0);
+				W.Circle(Hub, R, WithA(Ivory, Alpha * K), Thick, 90.f + A0, 90.f + A1);
+			}
+			W.Circle(Hub, R, WithA(Ivory, Alpha), Thick, 90.f - 6.f, 90.f + 6.f);
+		};
 		const float Inner = Rad - 118.f;
-		W.Circle(Hub, Rad, FLinearColor(Ivory.R, Ivory.G, Ivory.B, 0.7f), 1.f, 90.f - 23.f, 90.f + 23.f);
-		W.Circle(Hub, Inner, FLinearColor(Ivory.R, Ivory.G, Ivory.B, 0.28f), 1.f, 90.f - 23.f, 90.f + 23.f);
+		Arc(Rad, 0.62f, 1.f);
+		Arc(Inner, 0.16f, 1.f);
+		// fine ticks: the outer ring turns with the wheel, the inner slowly against it
 		const float TickStep = Sector / 4.f;
 		const float OuterPhase = FMath::Fmod(Turn, TickStep), InnerPhase = FMath::Fmod(-Turn * 0.35f, TickStep);
 		for (int32 k = -6; k <= 6; ++k)
 		{
 			const float O = k * TickStep + OuterPhase, I = k * TickStep + InnerPhase;
-			const float OA = 0.38f * FMath::Clamp((23.f - FMath::Abs(O)) / 8.f, 0.f, 1.f), IA = 0.2f * FMath::Clamp((23.f - FMath::Abs(I)) / 8.f, 0.f, 1.f);
-			W.Line({ Hub + Arm(O) * (Rad - 6.f), Hub + Arm(O) * Rad }, FLinearColor(Ivory.R, Ivory.G, Ivory.B, OA), 1.f);
-			W.Line({ Hub + Arm(I) * Inner, Hub + Arm(I) * (Inner + 4.f) }, FLinearColor(Ivory.R, Ivory.G, Ivory.B, IA), 1.f);
+			const float OA = 0.32f * FMath::Clamp((23.f - FMath::Abs(O)) / 9.f, 0.f, 1.f), IA = 0.16f * FMath::Clamp((23.f - FMath::Abs(I)) / 9.f, 0.f, 1.f);
+			W.Line({ Hub + Arm(O) * (Rad - 5.f), Hub + Arm(O) * Rad }, WithA(Ivory, OA), 1.f);
+			W.Line({ Hub + Arm(I) * Inner, Hub + Arm(I) * (Inner + 3.f) }, WithA(Ivory, IA), 1.f);
 		}
 
 		for (int32 i = 0; i < ARealmSky::NumWeathers(); ++i)
 		{
 			const float Delta = FMath::Fmod((i - Paint.WheelIndex) * Sector + Turn + Round * 8.f + Round * 0.5f, Round) - Round * 0.5f;
 			if (FMath::Abs(Delta) > 23.f) { continue; }
-			const float Edge = FMath::Clamp((23.f - FMath::Abs(Delta)) / 6.f, 0.f, 1.f);         // sectors arrive and leave softly
+			const float Edge = FMath::Clamp((23.f - FMath::Abs(Delta)) / 7.f, 0.f, 1.f);         // sectors arrive and leave softly
 			const float Near = 1.f - FMath::Clamp(FMath::Abs(Delta) / (Sector * 0.5f), 0.f, 1.f);
 			const bool bChosen = i == Paint.WheelIndex;
-			const float Lit = FMath::Lerp(0.5f + 0.35f * Near, bChosen ? 1.f : 0.34f, Stopped);    // the two neighbours dim once it lands
+			const float Lit = FMath::Lerp(0.45f + 0.4f * Near, bChosen ? 1.f : 0.3f, Stopped);    // the two neighbours dim once it lands
 			const FLinearColor Tint = bChosen ? FMath::Lerp(Ivory, Verdict, Stopped) : Ivory;
-			const FLinearColor C(Tint.R, Tint.G, Tint.B, Lit * Edge);
-			const FVector2f IconAt = Hub + Arm(Delta) * (Rad - 84.f);
-			const float Beat = bChosen ? FMath::Sin(Land * PI) * 0.22f : 0.f;                       // one beat as it lands
-			DrawIcon(W, WeatherIcons[i], IconAt, FMath::Lerp(12.f, 15.f, Near) * (1.f + Beat), C, 1.4f);
+			const FLinearColor C = WithA(Tint, Lit * Edge);
+			const FVector2f IconAt = Hub + Arm(Delta) * (Rad - 82.f);
+			const float Beat = bChosen ? FMath::Sin(Land * PI) * 0.18f : 0.f;                       // one beat as it lands
+			DrawIcon(W, WeatherIcons[i], IconAt, FMath::Lerp(11.f, 13.5f, Near) * (1.f + Beat), C, 1.25f);
 			if (bChosen && Land > 0.f && Land < 1.f)
 			{
-				W.Circle(IconAt, FMath::Lerp(16.f, 38.f, Land), FLinearColor(Verdict.R, Verdict.G, Verdict.B, 0.55f * (1.f - Land)), 1.2f);
+				W.Circle(IconAt, FMath::Lerp(15.f, 34.f, Land), WithA(Verdict, 0.45f * (1.f - Land)), 1.f);
 			}
-			// the small name gives way to the large one, so the type never jumps
-			const FSlateFontInfo Small = FCoreStyle::GetDefaultFontStyle("Light", 11), Large = FCoreStyle::GetDefaultFontStyle("Regular", 17);
+			// the small spaced name gives way to the serif one, so the type never jumps
+			const FSlateFontInfo Small = Sans(TEXT("Regular"), 9, 240), Large = Serif(20, 140);
 			const float SmallAlpha = bChosen ? 1.f - Stopped : 1.f;
-			if (SmallAlpha > 0.f) { W.TextCentre(ARealmSky::GetWeatherInfo(i).Name, IconAt + FVector2f(0.f, 24.f), Small, FLinearColor(C.R, C.G, C.B, C.A * SmallAlpha)); }
-			if (bChosen && Stopped > 0.f) { W.TextCentre(Info.Name, IconAt + FVector2f(0.f, 24.f), Large, FLinearColor(C.R, C.G, C.B, Stopped)); }
+			if (SmallAlpha > 0.f) { W.TextCentre(ARealmSky::GetWeatherInfo(i).Name, IconAt + FVector2f(0.f, 24.f), Small, WithA(C, C.A * SmallAlpha)); }
+			if (bChosen && Stopped > 0.f) { W.TextCentre(Info.Name, IconAt + FVector2f(0.f, 21.f), Large, WithA(C, Stopped)); }
+			// dividers: only a short mark on the outer ring, so the sectors stay open (no boxes)
 			const FVector2f DD = Arm(Delta + Sector * 0.5f);
-			W.Line({ Hub + DD * Inner, Hub + DD * Rad }, FLinearColor(Ivory.R, Ivory.G, Ivory.B, 0.3f * Edge), 1.f);
+			W.Line({ Hub + DD * (Rad - 14.f), Hub + DD * Rad }, WithA(Ivory, 0.34f * Edge), 1.f);
 		}
 		// The chosen sector's arc opens from the pointer, in the colour of the verdict
 		if (Stopped > 0.f)
 		{
-			const float Half = 7.f * (1.f - FMath::Square(1.f - Stopped));
-			W.Circle(Hub, Rad, Verdict, 2.f, 90.f - Half, 90.f + Half);
+			const float Half = 6.5f * (1.f - FMath::Square(1.f - Stopped));
+			W.Circle(Hub, Rad, Verdict, 1.6f, 90.f - Half, 90.f + Half);
 		}
-		// The pointer stays put but flicks as each divider passes under it
+		// The pointer: a small open diamond that stays put but flicks as each divider passes under it
 		const float PY = CY + Rad;
 		const float Past = FMath::Fmod(Turn + Sector * 0.5f, Sector);
-		const float Flick = FMath::Exp(-Past * 1.4f) * 5.f * (1.f - Stopped);
-		W.Shape(FVector2f(CX, PY), 1.f, { {-7.f, 9.f}, {-Flick, 0.f}, {7.f, 9.f}, {-7.f, 9.f} }, FMath::Lerp(Ivory, Verdict, Stopped), 1.2f);
+		const float Flick = FMath::Exp(-Past * 1.4f) * 4.f * (1.f - Stopped);
+		W.Shape(FVector2f(CX - Flick, PY + 7.f), 1.f, { {0.f, -5.f}, {4.f, 0.f}, {0.f, 5.f}, {-4.f, 0.f}, {0.f, -5.f} }, FMath::Lerp(Ivory, Verdict, Stopped), 1.1f);
 		// Result line under the wheel: what comes, plainly, and when (a realm named by hand has no countdown)
 		const FPen WR{ G, Out, Layer, InEased * Fade * Stopped };
-		const FString When = Paint.bForecast ? FString::Printf(TEXT("  \u00B7  %d:%02d"), FMath::FloorToInt(Paint.ForecastSeconds / 60.f), FMath::FloorToInt(Paint.ForecastSeconds) % 60) : FString();
-		WR.TextCentre(FString(Info.Warning) + When, FVector2f(CX, PY + 16.f + (1.f - Stopped) * 8.f), F13, Info.Danger > 0 ? Verdict : Quiet);
+		const FString When = Paint.bForecast ? FString::Printf(TEXT("   ·   %d:%02d"), FMath::FloorToInt(Paint.ForecastSeconds / 60.f), FMath::FloorToInt(Paint.ForecastSeconds) % 60) : FString();
+		WR.TextCentre(FString(Info.Warning) + When, FVector2f(CX, PY + 20.f + (1.f - Stopped) * 8.f), Line, Info.Danger > 0 ? Verdict : WithA(Quiet, 0.85f));
 	}
 	return Layer + 2;
 }

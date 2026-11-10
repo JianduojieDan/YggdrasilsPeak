@@ -21,6 +21,8 @@
 #include "Kismet/KismetMaterialLibrary.h"
 #include "Kismet/KismetRenderingLibrary.h"
 #include "LandscapeProxy.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialParameterCollection.h"
@@ -325,6 +327,7 @@ void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirect
 	const FVector FootLocation = Body->GetSocketLocation(Foot.Bone);
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(SnowTrail), false, GetOwner());
 	Params.bReturnPhysicalMaterial = true;
+	Params.bReturnFaceIndex = true;   // rock faces of the detail tiles are known by their index (USnowTrailComponent::IsRock)
 	FHitResult Hit;
 	if (!GetWorld()->LineTraceSingleByChannel(Hit, FootLocation + FVector(0.f, 0.f, 60.f), FootLocation - FVector(0.f, 0.f, 120.f), ECC_Visibility, Params))
 	{
@@ -440,12 +443,11 @@ void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
 	{
 		Set = &LadderSteps;
 	}
-	else if (Cast<ALandscapeProxy>(Hit.GetActor()))
+	else if (IsTerrain(Hit))
 	{
-		const UPhysicalMaterial* Surface = Hit.PhysMaterial.Get();
 		const USurvivalConfig* C = GetDefault<USurvivalConfig>();
 		const float ElevationM = C->ReferenceElevationMeters + float(Hit.ImpactPoint.Z - C->ReferenceWorldZ) / 100.f;
-		if ((Surface && Surface->GetName().Contains(TEXT("Rock"))) || (IsGlacierHard(Hit.ImpactPoint) && ElevationM < 5250.f))
+		if (IsRock(Hit) || (IsGlacierHard(Hit.ImpactPoint) && ElevationM < 5250.f))
 		{
 			Set = &RubbleSteps;
 		}
@@ -474,15 +476,49 @@ void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
 	UGameplayStatics::PlaySoundAtLocation(this, (*Set)[Pick], Hit.ImpactPoint, Volume, FMath::FRandRange(0.92f, 1.08f));
 }
 
-bool USnowTrailComponent::IsSnow(const FHitResult& Hit)
+bool USnowTrailComponent::IsTerrain(const FHitResult& Hit)
 {
-	// The landscape's own snow: not tents, props or the landscape's rock (its physical material says which).
-	if (!Cast<ALandscapeProxy>(Hit.GetActor()))
+	if (Cast<ALandscapeProxy>(Hit.GetActor()))
+	{
+		return true;
+	}
+	// Route detail tiles (Tools/Terrain/build_route_terrain.py): plain static mesh actors, known by their mesh folder
+	const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Hit.GetComponent());
+	const UStaticMesh* Asset = Mesh ? Mesh->GetStaticMesh() : nullptr;
+	return Asset && Asset->GetPackage()->GetFName().ToString().StartsWith(TEXT("/Game/Environment/DetailTiles/"));
+}
+
+bool USnowTrailComponent::IsRock(const FHitResult& Hit)
+{
+	const UPhysicalMaterial* Surface = Hit.PhysMaterial.Get();
+	if (Surface && Surface->GetName().Contains(TEXT("Rock")))
+	{
+		return true;   // the landscape's rock layer
+	}
+	// Route detail tiles: their collision mesh (Tools/Terrain/build_route_collision.py) holds the snow faces first
+	// (slot 0) and the rock faces after them (slot 1). Mesh traces in UE 5.8 only report the first material, so the
+	// face index decides: past the snow section's triangle count, it is rock.
+	const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Hit.GetComponent());
+	const UStaticMesh* Asset = Mesh ? Mesh->GetStaticMesh() : nullptr;
+	const UStaticMesh* Col = Asset ? Asset->ComplexCollisionMesh.Get() : nullptr;
+	if (!Col || Hit.FaceIndex < 0 || !Col->GetRenderData() || Col->GetRenderData()->LODResources.Num() == 0)
 	{
 		return false;
 	}
-	const UPhysicalMaterial* Surface = Hit.PhysMaterial.Get();
-	return (!Surface || !Surface->GetName().Contains(TEXT("Rock"))) && !IsGlacierHard(Hit.ImpactPoint);
+	int32 Faces = 0;
+	for (const FStaticMeshSection& Section : Col->GetRenderData()->LODResources[0].Sections)
+	{
+		if (!Section.bEnableCollision) { continue; }
+		Faces += Section.NumTriangles;
+		if (Hit.FaceIndex < Faces) { return Section.MaterialIndex == 1; }
+	}
+	return false;
+}
+
+bool USnowTrailComponent::IsSnow(const FHitResult& Hit)
+{
+	// The mountain's own snow: not tents, props, rock or glacier rubble / bare ice.
+	return IsTerrain(Hit) && !IsRock(Hit) && !IsGlacierHard(Hit.ImpactPoint);
 }
 
 void USnowTrailComponent::UpdateSinking(float DeltaTime)
@@ -496,6 +532,7 @@ void USnowTrailComponent::UpdateSinking(float DeltaTime)
 		const float HalfHeight = Character->GetSimpleCollisionHalfHeight();
 		FCollisionQueryParams Params(SCENE_QUERY_STAT(SnowSink), false, Character);
 		Params.bReturnPhysicalMaterial = true;
+		Params.bReturnFaceIndex = true;   // rock faces of the detail tiles are known by their index (USnowTrailComponent::IsRock)
 		FHitResult Hit;
 		GroundSoftness = 0.f;
 		if (Character->GetCharacterMovement()->IsMovingOnGround()

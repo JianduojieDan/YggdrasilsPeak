@@ -221,6 +221,14 @@ public:
 	/** Sinks the visible body, its shadow copy and the eye this far (cm) into the snow; collision is unchanged. */
 	void SetSinkDepth(float Centimetres);
 
+	/** A planted boot goes this far into snow (cm) so it clearly touches it; on rock it stands on the surface. */
+	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0", ClampMax="10"))
+	float SnowContactCm = 1.5f;
+
+	/** An animated sole lower than this over the ground (cm) counts as planted; higher, it fades back to the animation. */
+	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0"))
+	float PlantedBelowCm = 10.f;
+
 protected:
 
 	virtual void BeginPlay() override;
@@ -302,8 +310,10 @@ private:
 	/** Hand rotation (component space) whose knuckles point along Knuckles and whose thumb side points along ThumbSide. */
 	static FQuat HandRotationFor(const FViewArm& Arm, const FVector& Knuckles, const FVector& ThumbSide);
 
-	inline static const FName LeftLegBones[3] = { TEXT("thigh_l"), TEXT("calf_l"), TEXT("foot_l") };
-	inline static const FName RightLegBones[3] = { TEXT("thigh_r"), TEXT("calf_r"), TEXT("foot_r") };
+	// thigh, knee, ankle: mannequin names by default, Mixamo names (the climber) found at BeginPlay
+	FName LeftLegBones[3] = { TEXT("thigh_l"), TEXT("calf_l"), TEXT("foot_l") };
+	FName RightLegBones[3] = { TEXT("thigh_r"), TEXT("calf_r"), TEXT("foot_r") };
+	void ResolveLegBones(const USkinnedMeshComponent* Mesh);
 
 	/** [0] = tool (right) arm, [1] = free left arm. */
 	FViewArm Arms[2];
@@ -346,6 +356,16 @@ private:
 	/** The body's relative location before any sinking. */
 	FVector BodyBaseLocation = FVector::ZeroVector;
 	float SinkDepth = 0.f;
+
+	/** What the owner sees of their own legs: a world-space copy of the world body (hips and legs only). The first-person
+	 *  body is drawn with its own FOV and pulled towards the camera, so its boots could never meet the ground. */
+	UPROPERTY(Transient)
+	TObjectPtr<UPoseableMeshComponent> FeetBody;
+
+	/** Places each planted boot of FeetBody on the ground under it (into snow, on rock). */
+	void PlaceFeet();
+	float MeasureSoleHeight() const;
+	float SoleHeightCm = -1.f;
 
 	/** How far the world body is lowered so its boots meet sloping ground (cm). */
 	float FootDrop = 0.f;

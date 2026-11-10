@@ -162,6 +162,7 @@ bool UClimbingComponent::TraceFace(const FVector& Direction, float HeightOffset,
 	const FVector Start = Character->GetActorLocation() + FVector(0.f, 0.f, 25.f + HeightOffset);
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(ClimbFace), true, Character);
 	Params.bReturnPhysicalMaterial = true;
+	Params.bReturnFaceIndex = true;   // rock faces of the detail tiles are known by their index (USnowTrailComponent::IsRock)
 	if (!GetWorld()->SweepSingleByChannel(OutHit, Start, Start + Direction * (Radius + Reach), FQuat::Identity, ECC_Visibility,
 		FCollisionShape::MakeSphere(12.f), Params))
 	{
@@ -173,10 +174,9 @@ bool UClimbingComponent::TraceFace(const FVector& Direction, float HeightOffset,
 
 EClimbSurface UClimbingComponent::Classify(const FHitResult& Hit) const
 {
-	if (Cast<ALandscapeProxy>(Hit.GetActor()))
+	if (USnowTrailComponent::IsTerrain(Hit))   // the landscape or a route detail tile
 	{
-		const UPhysicalMaterial* Phys = Hit.PhysMaterial.Get();
-		if (Phys && Phys->GetName().Contains(TEXT("Rock")))
+		if (USnowTrailComponent::IsRock(Hit))
 		{
 			return EClimbSurface::Rock;
 		}

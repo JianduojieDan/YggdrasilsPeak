@@ -23,11 +23,14 @@ RealmFx r;
 
 float3 N = normalize(WP - Ctr);
 float3 V = normalize(Cam - WP);
-float3 L = normalize(SunDir);
 // planet frame: the point facing the viewer is at longitude Spin, latitude Tilt (radians). Build an orthonormal
 // basis from the view: F = towards viewer, Up = world up projected, Rt = right. Then express N in it and rotate.
 float3 Fv = normalize(Cam - Ctr);
 float3 Uv = normalize(float3(0, 0, 1) - Fv * Fv.z);
+// During a realm the planet stands where the sun (by night the moon) would be: it IS the light of the sky, so it is lit
+// from the front and a little above (a heavy gibbous with a terminator low on the disc), never a black night side.
+// Svartalfheim alone keeps the real sun behind it: an eclipse with its corona, black by design.
+float3 L = ((int)round(Realm) == 6) ? normalize(SunDir) : normalize(Fv + Uv * 0.75);
 float3 Rv = cross(Uv, Fv);
 float3 nl = float3(dot(N, Fv), dot(N, Rv), dot(N, Uv));        // x towards viewer, y right, z up
 float sT, cT; sincos(Tilt, sT, cT);

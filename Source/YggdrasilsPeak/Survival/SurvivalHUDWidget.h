@@ -253,6 +253,10 @@ private:
 		float ForecastSeconds = 0.f;
 	} Paint;
 
+	/** Serif face for the weather names only (Alegreya, already in the project for the pack's book pages). */
+	UPROPERTY(Transient)
+	TObjectPtr<class UFont> SerifFont;
+
 	void TickWheel(float DeltaTime);
 	int32 WheelSerial = 0;
 	float WheelTime = 0.f;
