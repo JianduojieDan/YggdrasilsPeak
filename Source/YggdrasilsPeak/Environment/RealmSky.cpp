@@ -359,6 +359,12 @@ namespace
 	FString GWeather[NumRealms] = { TEXT("Clear_Skies"), TEXT("Foggy"), TEXT("Sand_Dust_Calm"), TEXT("Snow_Blizzard"), TEXT("Partly_Cloudy"),
 		TEXT("Clear_Skies"), TEXT("Clear_Skies"), TEXT("Snow_Light"), TEXT("Cloudy") };
 
+	// The sound when the weather wheel lands on this realm (/Game/Audio/UI/<name>): the more dangerous the weather, the
+	// more intense the sound -- harmless: C rune bell / L choir; risky: E bell of the Norns / H bell + horns; deadly:
+	// K brass + drum / M bowed drone + drum (user's choice, sounds review 2026-11-11). "Landing" in RealmLooks.json overrides.
+	FString GLanding[NumRealms] = { TEXT("UI_Chime_C"), TEXT("UI_Chime_E"), TEXT("UI_Chime_H"), TEXT("UI_Chime_K"), TEXT("UI_Chime_L"),
+		TEXT("UI_Chime_L"), TEXT("UI_Chime_M"), TEXT("UI_Chime_E"), TEXT("UI_Chime_L") };
+
 	// Config/RealmLooks.json: { "Hel": { "SunScale": 0.2, "Gain": [1,1,1], "Weather": "Overcast" }, ... } - tune without compiling (ygg.Realm reload)
 	void LoadLookOverrides()
 	{
@@ -383,6 +389,7 @@ namespace
 				if ((*Row)->TryGetArrayField(C.Key, A) && A->Num() == 3) { *C.Value = FLinearColor((*A)[0]->AsNumber(), (*A)[1]->AsNumber(), (*A)[2]->AsNumber()); }
 			}
 			(*Row)->TryGetStringField(TEXT("Weather"), GWeather[i]);
+			(*Row)->TryGetStringField(TEXT("Landing"), GLanding[i]);
 			double V;
 			if ((*Row)->TryGetNumberField(TEXT("PlanetDegrees"), V)) { GPlanetSky[i].Degrees = float(V); }
 			if ((*Row)->TryGetNumberField(TEXT("PlanetYaw"), V)) { GPlanetSky[i].Yaw = float(V); }
@@ -593,6 +600,7 @@ namespace
 
 const FRealmWeatherInfo& ARealmSky::GetWeatherInfo(int32 Index) { return GInfo[FMath::Clamp(Index, 0, NumRealms - 1)]; }
 int32 ARealmSky::NumWeathers() { return NumRealms; }
+const FString& ARealmSky::GetLandingSound(int32 Index) { return GLanding[FMath::Clamp(Index, 0, NumRealms - 1)]; }
 
 ERealm ARealmSky::DrawFromBag()
 {
@@ -894,13 +902,28 @@ void ARealmSky::Tick(float DeltaSeconds)
 		ThunderIn -= DeltaSeconds;
 		if (ThunderIn <= 0.f)
 		{
-			if (!Thunder) { Thunder = LoadObject<USoundBase>(nullptr, TEXT("/Game/Audio/Ice/Mountain_Boom_02.Mountain_Boom_02")); }
-			const APawn* P = UGameplayStatics::GetPlayerPawn(this, 0);
-			if (Thunder && P && Planets[int32(ERealm::Jotunheim)].Actor.IsValid())
+			if (Thunders.Num() == 0)
 			{
+				// real thunder recordings, each starting at its strike (Tools/Audio/build_game_sounds.py); else the old boom
+				for (int32 i = 1; i <= 8; ++i)
+				{
+					const FString N = FString::Printf(TEXT("Thunder_%02d"), i);
+					if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(TEXT("/Game/Audio/Weather/") + N + TEXT(".") + N), nullptr, LOAD_NoWarn | LOAD_Quiet)) { Thunders.Add(S); }
+				}
+				if (Thunders.Num() == 0)
+				{
+					if (USoundBase* S = LoadObject<USoundBase>(nullptr, TEXT("/Game/Audio/Ice/Mountain_Boom_02.Mountain_Boom_02"))) { Thunders.Add(S); }
+				}
+			}
+			const APawn* P = UGameplayStatics::GetPlayerPawn(this, 0);
+			if (Thunders.Num() > 0 && P && Planets[int32(ERealm::Jotunheim)].Actor.IsValid())
+			{
+				int32 Pick = FMath::RandRange(0, Thunders.Num() - 1);
+				if (Thunders.Num() > 1 && Pick == LastThunder) { Pick = (Pick + 1) % Thunders.Num(); }
+				LastThunder = Pick;
 				const FVector Dir = (Planets[int32(ERealm::Jotunheim)].Actor->GetActorLocation() - P->GetActorLocation()).GetSafeNormal();
-				UE_LOG(LogTemp, Display, TEXT("RealmSky: thunder"));
-				UGameplayStatics::PlaySoundAtLocation(this, Thunder, P->GetActorLocation() + Dir * 3000.f, 1.4f, FMath::FRandRange(0.7f, 0.85f));
+				UE_LOG(LogTemp, Display, TEXT("RealmSky: thunder (%s)"), *Thunders[Pick]->GetName());
+				UGameplayStatics::PlaySoundAtLocation(this, Thunders[Pick], P->GetActorLocation() + Dir * 3000.f, 1.0f, FMath::FRandRange(0.9f, 1.03f));
 			}
 		}
 	}

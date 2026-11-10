@@ -31,6 +31,15 @@ void USanityComponent::BeginPlay()
 			Whispers.Add(S);
 		}
 	}
+	// the steps that follow you are the same boots in snow as your own (falls back to the sky pack's snow sounds)
+	for (int32 i = 1; FollowingSteps.Num() < 8 && i <= 8; ++i)
+	{
+		const FString N = FString::Printf(TEXT("Step_Snow_%02d"), i);
+		if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(FString(TEXT("/Game/Audio/Footsteps/")) + N + TEXT(".") + N), nullptr, LOAD_NoWarn | LOAD_Quiet))
+		{
+			FollowingSteps.Add(S);
+		}
+	}
 	for (int32 i = 1; FollowingSteps.Num() < 6 && i <= 6; ++i)
 	{
 		const FString N = FString::Printf(TEXT("Snow_Compress_%d"), i);

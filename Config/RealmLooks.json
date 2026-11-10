@@ -35,7 +35,8 @@
   "Cold": 0,
   "StaminaDrain": 0,
   "SanityGain": 0.1,
-  "HealthDrain": 0
+  "HealthDrain": 0,
+  "Landing": "UI_Chime_C"
  },
  "Niflheim": {
   "SunScale": 0.55,
@@ -81,7 +82,8 @@
    0.88,
    0.94,
    1.0
-  ]
+  ],
+  "Landing": "UI_Chime_E"
  },
  "Muspelheim": {
   "SunScale": 1.15,
@@ -132,7 +134,8 @@
    0.2,
    0.1,
    0.1
-  ]
+  ],
+  "Landing": "UI_Chime_H"
  },
  "Jotunheim": {
   "SunScale": 0.25,
@@ -185,7 +188,8 @@
    0.74,
    1.0
   ],
-  "PlanetAlpha": 0.7
+  "PlanetAlpha": 0.7,
+  "Landing": "UI_Chime_K"
  },
  "Alfheim": {
   "SunScale": 0.85,
@@ -230,7 +234,8 @@
    1.0,
    0.86,
    1.0
-  ]
+  ],
+  "Landing": "UI_Chime_L"
  },
  "Vanaheim": {
   "SunScale": 0.3,
@@ -276,7 +281,8 @@
   "Cold": 0,
   "StaminaDrain": 0,
   "SanityGain": 0.8,
-  "HealthDrain": 0
+  "HealthDrain": 0,
+  "Landing": "UI_Chime_L"
  },
  "Svartalfheim": {
   "SunScale": 0.08,
@@ -323,7 +329,8 @@
    0.62,
    0.72,
    1.0
-  ]
+  ],
+  "Landing": "UI_Chime_M"
  },
  "Hel": {
   "SunScale": 0.25,
@@ -374,7 +381,8 @@
   "Cold": 0.004,
   "StaminaDrain": 0,
   "SanityGain": -0.2,
-  "HealthDrain": 0
+  "HealthDrain": 0,
+  "Landing": "UI_Chime_E"
  },
  "Asgard": {
   "SunScale": 1.1,
@@ -420,6 +428,7 @@
   "Cold": -0.02,
   "StaminaDrain": -4,
   "SanityGain": 0.4,
-  "HealthDrain": -0.1
+  "HealthDrain": -0.1,
+  "Landing": "UI_Chime_L"
  }
 }

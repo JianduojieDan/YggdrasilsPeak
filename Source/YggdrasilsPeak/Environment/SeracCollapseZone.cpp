@@ -31,15 +31,15 @@ void ASeracCollapseZone::BeginPlay()
 		for (int32 i = 1; Into.Num() < Count && i <= Count; ++i)
 		{
 			const FString N = FString::Printf(TEXT("%s_%02d"), Name, i);
-			if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(FString(TEXT("/Game/Audio/Ice/")) + N + TEXT(".") + N)))
+			if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(FString(TEXT("/Game/Audio/Ice/")) + N + TEXT(".") + N), nullptr, LOAD_NoWarn | LOAD_Quiet))
 			{
 				Into.Add(S);
 			}
 		}
 	};
-	Load(Cracks, TEXT("Ice_Crack"), 5);
-	Load(Groans, TEXT("Ice_Groan"), 3);
-	Load(CollapseSounds, TEXT("Serac_Collapse"), 2);
+	Load(Cracks, TEXT("Ice_Crack"), 12);
+	Load(Groans, TEXT("Ice_Groan"), 6);
+	Load(CollapseSounds, TEXT("Serac_Collapse"), 4);
 	for (int32 i = 1; BlockMeshes.Num() < 6 && i <= 6; ++i)
 	{
 		const FString N = FString::Printf(TEXT("SM_Serac_%02d"), i);

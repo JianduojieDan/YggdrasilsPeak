@@ -82,6 +82,8 @@ public:
 	void ForecastNow();
 	static const FRealmWeatherInfo& GetWeatherInfo(int32 Index);
 	static int32 NumWeathers();
+	/** Sound asset name (/Game/Audio/UI) for the weather wheel landing on this realm; more intense for more danger. */
+	static const FString& GetLandingSound(int32 Index);
 	bool HasForecast() const { return DemoIndex >= 0 ? bDemoAnnounced : (bScheduled && bForecast && bAnnounced && !bAtSummit); }
 	int32 GetForecastIndex() const { return int32(NextRealm); }
 	/** The weather the wheel lands on: the forecast, or a realm named by hand. */
@@ -130,7 +132,8 @@ private:
 	FLinearColor SunColor = FLinearColor::White, FogColorBase = FLinearColor::White;
 	FVector FogLocation = FVector::ZeroVector;
 	float NextFlash = 4.f, FlashLeft = 0.f, ThunderIn = 0.f;
-	UPROPERTY(Transient) TObjectPtr<class USoundBase> Thunder;
+	UPROPERTY(Transient) TArray<TObjectPtr<class USoundBase>> Thunders;   // /Game/Audio/Weather/Thunder_NN
+	int32 LastThunder = -1;
 	bool bSkySaved = false;
 	double BaseCloud = 0.9;
 	void SetTargets();

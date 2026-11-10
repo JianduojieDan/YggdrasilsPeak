@@ -262,4 +262,14 @@ private:
 	float WheelTime = 0.f;
 	bool bWheelOn = false;
 	static constexpr float WheelTotal = 4.2f;   // in 0.3, spin 1.0, slow 0.8, result ~2, fade 0.4
+
+	/** A soft tick each time a divider passes the pointer (cut from the user's wheel recording); when it lands, the
+	 *  realm's own landing sound (ARealmSky::GetLandingSound: more intense for more dangerous weather). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class USoundBase>> WheelTicks;
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<class USoundBase>> WheelLandings;
+	bool bWheelSoundsLoaded = false;
+	int32 WheelDivider = 0;
+	bool bWheelChimed = false;
 };

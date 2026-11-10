@@ -24,9 +24,24 @@
 #include "Styling/CoreStyle.h"
 #include "Engine/Font.h"
 #include "Engine/FontFace.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 namespace
 {
+	// The weather wheel's motion, shared by the drawing and its tick sounds: steady spin, then one continuous
+	// slow-down (same speed where they join), then a small settle onto the real result.
+	constexpr float WheelSector = 14.f, WheelSpin = 1.0f, WheelSlow = 0.8f, WheelStop = WheelSpin + WheelSlow;
+	float WheelTurnAt(float T)   // degrees still to turn at time T
+	{
+		const float Round = WheelSector * ARealmSky::NumWeathers();
+		const float Speed = 2.f * Round / (WheelSpin + WheelSlow / 3.f);
+		const float Left = T < WheelSpin ? Speed * (WheelSpin - T) + Speed * WheelSlow / 3.f
+			: Speed * WheelSlow / 3.f * FMath::Pow(1.f - FMath::Clamp((T - WheelSpin) / WheelSlow, 0.f, 1.f), 3.f);
+		const float After = FMath::Max(0.f, T - WheelStop);
+		return Left + (After > 0.f ? 0.8f * FMath::Exp(-After * 7.f) * FMath::Sin(After * 20.f) : 0.f);
+	}
+
 	TAutoConsoleVariable<int32> CVarHudDebug(
 		TEXT("ygg.HUD.Debug"),
 		0,
@@ -605,6 +620,49 @@ void USurvivalHUDWidget::TickWheel(float DeltaTime)
 		Paint.WheelIndex = bHas ? Sky->GetForecastIndex() : Sky->GetWheelIndex();
 		WheelTime = 0.f;
 		bWheelOn = true;
+		WheelDivider = FMath::FloorToInt(WheelTurnAt(0.f) / WheelSector + 0.5f);
+		bWheelChimed = false;
+	}
+	if (bWheelOn)
+	{
+		if (!bWheelSoundsLoaded)
+		{
+			bWheelSoundsLoaded = true;
+			for (int32 i = 1; i <= 8; ++i)
+			{
+				const FString N = FString::Printf(TEXT("Wheel_Tick_%02d"), i);
+				if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(TEXT("/Game/Audio/UI/") + N + TEXT(".") + N), nullptr, LOAD_NoWarn | LOAD_Quiet)) { WheelTicks.Add(S); }
+			}
+		}
+		// a divider sits half a sector from each icon: one tick each time one passes the pointer (the settle is far smaller)
+		const float T = WheelTime + DeltaTime;
+		const int32 Divider = FMath::FloorToInt(WheelTurnAt(T) / WheelSector + 0.5f);
+		if (Divider != WheelDivider && WheelTicks.Num() > 0 && T < WheelStop + 0.3f)
+		{
+			const float Fast = FMath::Clamp(1.f - T / WheelStop, 0.f, 1.f);
+			UGameplayStatics::PlaySound2D(this, WheelTicks[FMath::RandRange(0, WheelTicks.Num() - 1)], FMath::Lerp(0.45f, 0.3f, Fast), FMath::FRandRange(0.97f, 1.03f) * FMath::Lerp(1.f, 1.06f, Fast));
+		}
+		WheelDivider = Divider;
+		if (!bWheelChimed && T >= WheelStop + 0.05f)
+		{
+			bWheelChimed = true;
+			// fate decided: the realm's own landing sound, heavier the more dangerous the weather it brings
+			const FString& Name = ARealmSky::GetLandingSound(Paint.WheelIndex);
+			TObjectPtr<USoundBase>& Landing = WheelLandings.FindOrAdd(Name);
+			if (!Landing)
+			{
+				Landing = LoadObject<USoundBase>(nullptr, *FString::Printf(TEXT("/Game/Audio/UI/%s.%s"), *Name, *Name), nullptr, LOAD_NoWarn | LOAD_Quiet);
+			}
+			if (!Landing)
+			{
+				Landing = LoadObject<USoundBase>(nullptr, TEXT("/Game/Audio/UI/UI_Chime_01.UI_Chime_01"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+			}
+			if (Landing)
+			{
+				UGameplayStatics::PlaySound2D(this, Landing, 0.8f);
+				UE_LOG(LogTemp, Display, TEXT("Wheel landed on %s (danger %d): %s"), ARealmSky::GetWeatherInfo(Paint.WheelIndex).Name, ARealmSky::GetWeatherInfo(Paint.WheelIndex).Danger, *Landing->GetName());
+			}
+		}
 	}
 	// In the presentation the weather now is named quietly between wheels; in play the view stays clean
 	const int32 Shown = Sky->IsDemo() ? Sky->GetShownIndex() : -1;
@@ -735,13 +793,10 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 		const FPen W{ G, Out, Layer, InEased * Fade };
 		const float Rad = 1150.f, CX = Size.X * 0.5f, Slide = (1.f - InEased) * -22.f, CY = 132.f - Rad + Slide;
 		const FVector2f Hub(CX, CY);
-		const float Sector = 14.f, Round = Sector * ARealmSky::NumWeathers();   // a big wheel: three sectors fit the arc that shows
-		// Steady spin, then one continuous slow-down (same speed where they join), then a small settle onto the real result
-		constexpr float Spin = 1.0f, Slow = 0.8f, Stop = Spin + Slow;
-		const float Speed = 2.f * Round / (Spin + Slow / 3.f);
-		const float Left = T < Spin ? Speed * (Spin - T) + Speed * Slow / 3.f : Speed * Slow / 3.f * FMath::Pow(1.f - FMath::Clamp((T - Spin) / Slow, 0.f, 1.f), 3.f);
+		const float Sector = WheelSector, Round = Sector * ARealmSky::NumWeathers();   // a big wheel: three sectors fit the arc that shows
+		constexpr float Stop = WheelStop;
 		const float After = FMath::Max(0.f, T - Stop);
-		const float Turn = Left + (After > 0.f ? 0.8f * FMath::Exp(-After * 7.f) * FMath::Sin(After * 20.f) : 0.f);
+		const float Turn = WheelTurnAt(T);
 		const float Stopped = FMath::Clamp(After / 0.25f, 0.f, 1.f);
 		const float Land = FMath::Clamp(After / 0.45f, 0.f, 1.f);
 		const FRealmWeatherInfo& Info = ARealmSky::GetWeatherInfo(Paint.WheelIndex);

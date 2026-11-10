@@ -8,6 +8,7 @@
 #include "Survival/SanityComponent.h"
 #include "Survival/SnowTrailComponent.h"
 #include "Survival/SpindriftComponent.h"
+#include "Survival/MountainAudioComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalConfig.h"
 #include "Survival/YggSaveGame.h"
@@ -102,6 +103,12 @@ void UExpeditionComponent::BeginPlay()
 	{
 		USpindriftComponent* Spindrift = NewObject<USpindriftComponent>(GetOwner(), TEXT("Spindrift"));
 		Spindrift->RegisterComponent();
+	}
+	// The mountain's sound around the local player: wind beds, breathing, rope clicks, distant avalanches.
+	if (Pawn && Pawn->IsLocallyControlled() && !GetOwner()->FindComponentByClass<UMountainAudioComponent>())
+	{
+		UMountainAudioComponent* Audio = NewObject<UMountainAudioComponent>(GetOwner(), TEXT("MountainAudio"));
+		Audio->RegisterComponent();
 	}
 
 	Survival = GetOwner()->FindComponentByClass<USurvivalComponent>();

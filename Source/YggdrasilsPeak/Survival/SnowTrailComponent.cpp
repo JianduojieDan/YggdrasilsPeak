@@ -421,14 +421,16 @@ void USnowTrailComponent::LoadDefaultFootsteps()
 		for (int32 i = 1; i <= Count; ++i)
 		{
 			const FString Asset = Name + (Digits == 2 ? FString::Printf(TEXT("%02d"), i) : FString::FromInt(i));
-			if (USoundBase* Sound = LoadObject<USoundBase>(nullptr, *(Dir / Asset + TEXT(".") + Asset)))
+			if (USoundBase* Sound = LoadObject<USoundBase>(nullptr, *(Dir / Asset + TEXT(".") + Asset), nullptr, LOAD_NoWarn | LOAD_Quiet))
 			{
 				Sounds.Add(Sound);
 			}
 		}
 	};
-	Fill(SnowSteps, TEXT("/Game/Content_From_Internet/UltraDynamicSky/Sound/Snow"), TEXT("Snow_Compress_"), 6, 1);
-	Fill(IceSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Ice_"), 5, 2);
+	// boots in snow and crampons on ice: single steps cut from recordings (Tools/Audio/build_game_sounds.py)
+	Fill(SnowSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Snow_"), 16, 2);
+	Fill(SnowSteps, TEXT("/Game/Content_From_Internet/UltraDynamicSky/Sound/Snow"), TEXT("Snow_Compress_"), 6, 1);   // only if none above
+	Fill(IceSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Ice_"), 16, 2);
 	Fill(RubbleSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Rubble_"), 5, 2);
 	Fill(LadderSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Ladder_"), 5, 2);
 }
