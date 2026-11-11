@@ -226,6 +226,15 @@ private:
 	/** Samples the snow under the player and eases the body's sink depth towards it. */
 	void UpdateSinking(float DeltaTime);
 	void PlayFootstep(const FHitResult& Hit);
+	float BaseTrailAreaCm = -1.f, BaseRecentreCm = -1.f;
+	int32 AppliedQuality = -1;
+public:
+	/** Display setting (USettingsWidget): 0 off (no trail map, no trench), 1 normal (2.5 cm/texel), 2 high (1.25 cm/texel). */
+	static void SetFootprintQuality(int32 Quality) { FootprintQuality = FMath::Clamp(Quality, 0, 2); }
+	static int32 FootprintQuality;
+private:
+	float TimeSinceStep = 0.f;
+	int32 CadenceSteps = 0;
 	void LoadDefaultFootsteps();
 	int32 LastStepVariation = -1;
 	/** Glacier rubble or bare ice (T_GlacierMask, below ~6000 m): no snow to sink into or leave prints in. */

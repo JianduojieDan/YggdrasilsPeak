@@ -3,6 +3,22 @@ struct TrailHelpers {
   float H(float2 p){ return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
   float N(float2 p){ float2 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);
     return lerp(lerp(H(i), H(i + float2(1, 0)), f.x), lerp(H(i + float2(0, 1)), H(i + float2(1, 1)), f.x), f.y); }
+  float Fbm(float2 p){ return 0.5 * N(p) + 0.3 * N(p * 2.13 + 17.3) + 0.2 * N(p * 4.71 + 5.1); }
+  // 1 where the glacier is rubble or bare ice (no snow to sink into), 0 on snow
+  float GlacierHard(Texture2D M, SamplerState MS, float3 wp, float3 vn){
+    float g = M.SampleLevel(MS, (wp.xy + 504000.0) / (3374.24 * 1009.0), 0).r;
+    if (g < 0.005) return 0.0;
+    float elev = 6326.3 + (wp.z - 129770.0) / 100.0;
+    float wob = (Fbm(wp.xy / 9000.0) - 0.5) * 300.0;
+    float debris = 1.0 - smoothstep(5170.0, 5330.0, elev + wob);
+    float bare = (1.0 - debris) * (1.0 - smoothstep(5850.0, 6100.0, elev + wob));
+    float nz = normalize(float3(vn.xy, vn.z * 1.774)).z;   // landscape normal arrives unscaled (2x landscape ratio)
+    float patchN = Fbm(wp.xy / 1400.0 + 11.0) + (Fbm(wp.xy / 90.0 + 3.0) - 0.5) * 0.16 + (N(wp.xy / 25.0) - 0.5) * 0.05;
+    float keepD = smoothstep(0.63, 0.655, patchN + (nz - 0.9) * 0.6);
+    float keepB = smoothstep(0.55, 0.575, patchN + (nz - 0.85) * 0.8);
+    return saturate(g * (debris * (1.0 - keepD) + bare * (1.0 - keepB)));
+  }
+
   // Height (cm) of the trail at world xy from the softened trail map (R = print, G = wide spread).
   // Deep holes with smooth, scooped walls; the snow they pushed out lies beside them in soft, rounded banks.
   // Only large, gentle variation (20-30 cm) - fine noise here turned into slabs and spikes at this depth.
@@ -20,7 +36,8 @@ NrmOut = N;
 if (Area.w < 0.5) return Col;
 float2 uv = (WP.xy - Area.xy) / Area.z + 0.5;
 float2 edge = abs(uv - 0.5);
-float fade = (1.0 - smoothstep(0.40, 0.48, max(edge.x, edge.y))) * (1.0 - Rock);
+// no trench shade on rock, glacier rubble or bare ice (it painted a blue channel across the moraine, 2026-11-11)
+float fade = (1.0 - smoothstep(0.40, 0.48, max(edge.x, edge.y))) * (1.0 - Rock) * (1.0 - th.GlacierHard(Mask, MaskSampler, WP, VN));
 if (fade <= 0.0) return Col;
 float t = 1.0 / Area.z;            // uv per cm
 float e = 4.0;                      // cm between gradient samples

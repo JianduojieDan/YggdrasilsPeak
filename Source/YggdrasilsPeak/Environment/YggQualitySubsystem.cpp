@@ -13,8 +13,8 @@
 
 namespace
 {
-	constexpr float SlowMs = 28.f;      // under ~36 fps: step down
-	constexpr float RoomMs = 15.f;      // over ~66 fps: resolution may climb back
+	constexpr float SlowMs = 17.5f;     // under ~57 fps: step down (2026-11-11: the target is 60+, was 36)
+	constexpr float RoomMs = 12.5f;     // over ~80 fps: resolution may climb back
 	constexpr float MinPercent = 50.f, MaxPercent = 80.f;
 
 	bool ShouldRun() { return !GIsEditor; }

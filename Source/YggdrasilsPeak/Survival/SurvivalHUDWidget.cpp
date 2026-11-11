@@ -617,7 +617,8 @@ void USurvivalHUDWidget::TickWheel(float DeltaTime)
 	if (Sky->GetForecastSerial() != WheelSerial)
 	{
 		WheelSerial = Sky->GetForecastSerial();
-		Paint.WheelIndex = bHas ? Sky->GetForecastIndex() : Sky->GetWheelIndex();
+		const bool bByHand = Sky->TakeHandWheel();
+		Paint.WheelIndex = (bHas && !bByHand) ? Sky->GetForecastIndex() : Sky->GetWheelIndex();
 		WheelTime = 0.f;
 		bWheelOn = true;
 		WheelDivider = FMath::FloorToInt(WheelTurnAt(0.f) / WheelSector + 0.5f);

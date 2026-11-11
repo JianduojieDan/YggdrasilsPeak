@@ -41,6 +41,12 @@ namespace
 		TEXT("ygg.Snow.Deform"),
 		1,
 		TEXT("1 = legs push a real trench into the snow (trail map + landscape displacement), 0 = off."));
+
+	// The in-game sound tour (snd) sets this so every step sounds like one surface wherever you walk.
+	TAutoConsoleVariable<int32> CVarStepSurface(
+		TEXT("ygg.Snow.StepSurface"),
+		0,
+		TEXT("Footstep sound surface: 0 = the real ground, 1 = snow, 2 = ice, 3 = rubble, 4 = ladder."));
 }
 
 USnowTrailComponent::USnowTrailComponent()
@@ -205,9 +211,25 @@ void USnowTrailComponent::FillTrailMap(float DeltaTime)
 	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, Context);
 }
 
+int32 USnowTrailComponent::FootprintQuality = 1;
+
 void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 {
-	const bool bEnabled = CVarSnowDeform.GetValueOnGameThread() != 0;
+	// footprint quality (display settings): High halves the area the same map covers -> twice the detail
+	if (AppliedQuality != FootprintQuality)
+	{
+		if (BaseTrailAreaCm < 0.f) { BaseTrailAreaCm = TrailAreaCm; BaseRecentreCm = RecentreDistanceCm; }
+		const float Area = FootprintQuality >= 2 ? BaseTrailAreaCm * 0.5f : BaseTrailAreaCm;
+		if (!FMath::IsNearlyEqual(Area, TrailAreaCm))
+		{
+			TrailAreaCm = Area;
+			RecentreDistanceCm = BaseRecentreCm * (Area / BaseTrailAreaCm);
+			UKismetRenderingLibrary::ClearRenderTarget2D(this, TrailMap, FLinearColor::Black);   // old prints were drawn at the old scale
+			UKismetRenderingLibrary::ClearRenderTarget2D(this, TrailSoftMap, FLinearColor::Black);
+		}
+		AppliedQuality = FootprintQuality;
+	}
+	const bool bEnabled = CVarSnowDeform.GetValueOnGameThread() != 0 && FootprintQuality > 0;
 	PublishTrailArea(bEnabled);
 	if (!bEnabled)
 	{
@@ -319,6 +341,30 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	const FVector WalkDirection = Velocity.GetSafeNormal2D();
 	UpdateFoot(Feet[0], WalkDirection, DeltaTime);
 	UpdateFoot(Feet[1], WalkDirection, DeltaTime);
+
+	// Safety net: walking steps went silent after a weather change while running steps stayed (play-test 2026-11-11,
+	// cause not found yet). If no foot has planted for over two step lengths (~80 cm a step), play the step anyway and
+	// say so in the log with the foot heights, so the real cause can be found.
+	TimeSinceStep += DeltaTime;
+	const float StepEvery = FMath::Clamp(80.f / FMath::Max(float(Velocity.Size2D()), 1.f), 0.25f, 0.9f);
+	if (TimeSinceStep > StepEvery * 2.2f)
+	{
+		const FVector Centre = Character->GetActorLocation();
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(SnowTrailCadence), false, Character);
+		Params.bReturnPhysicalMaterial = true;
+		Params.bReturnFaceIndex = true;
+		FHitResult Hit;
+		if (GetWorld()->LineTraceSingleByChannel(Hit, Centre, Centre - FVector(0.f, 0.f, Character->GetSimpleCollisionHalfHeight() + 60.f), ECC_Visibility, Params))
+		{
+			if ((++CadenceSteps % 20) == 1)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("SnowTrail: a step from the cadence net (#%d), plant detection missed it: speed %.0f, left foot %.1f cm (low %.1f high %.1f), right %.1f (low %.1f high %.1f), sink %.1f"),
+					CadenceSteps, Velocity.Size2D(), Feet[0].Height, Feet[0].Lowest, Feet[0].Highest, Feet[1].Height, Feet[1].Lowest, Feet[1].Highest, CurrentSink);
+			}
+			PlayFootstep(Hit);
+		}
+		TimeSinceStep = 0.f;
+	}
 }
 
 void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirection, float DeltaTime)
@@ -431,12 +477,13 @@ void USnowTrailComponent::LoadDefaultFootsteps()
 	Fill(SnowSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Snow_"), 16, 2);
 	Fill(SnowSteps, TEXT("/Game/Content_From_Internet/UltraDynamicSky/Sound/Snow"), TEXT("Snow_Compress_"), 6, 1);   // only if none above
 	Fill(IceSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Ice_"), 16, 2);
-	Fill(RubbleSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Rubble_"), 5, 2);
-	Fill(LadderSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Ladder_"), 5, 2);
+	Fill(RubbleSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Rubble_"), 10, 2);
+	Fill(LadderSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Ladder_"), 10, 2);
 }
 
 void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
 {
+	TimeSinceStep = 0.f;
 	// Which surface: the ladder over a crevasse, the landscape (rock, glacier rubble / bare ice, hard crust or
 	// snow, the same zones the landscape material and the footprints use), or ice meshes (seracs, crevasse lips).
 	const TArray<TObjectPtr<USoundBase>>* Set = &SnowSteps;
@@ -461,6 +508,14 @@ void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
 	else if (Hit.ImpactNormal.Z < 0.75f)
 	{
 		Set = &IceSteps;     // the steep side of a serac or crevasse lip; their tops carry snow
+	}
+	switch (CVarStepSurface.GetValueOnGameThread())
+	{
+	case 1: Set = &SnowSteps; break;
+	case 2: Set = &IceSteps; break;
+	case 3: Set = &RubbleSteps; break;
+	case 4: Set = &LadderSteps; break;
+	default: break;
 	}
 	if (Set->Num() == 0)
 	{
@@ -562,7 +617,8 @@ void USnowTrailComponent::UpdateSinking(float DeltaTime)
 
 void USnowTrailComponent::StampPrint(const FHitResult& Hit, const FVector& WalkDirection, bool bLeft)
 {
-	if (!IsSnow(Hit))
+	// rubble and bare glacier ice take no print (the trench shade drew a blue channel across the moraine, 2026-11-11)
+	if (!IsSnow(Hit) || (IsTerrain(Hit) && IsGlacierHard(Hit.ImpactPoint)))
 	{
 		return;
 	}

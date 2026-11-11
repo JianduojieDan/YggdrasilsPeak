@@ -20,6 +20,14 @@ struct GlacierFx {
   float Lines(float2 p, float w){ float v=VN(p); return 1.0-smoothstep(0.0,w,abs(v-0.5)); }
 };
 GlacierFx gf;
+struct IcePlates {
+  float2 H2(float2 p){ return frac(sin(float2(dot(p,float2(127.1,311.7)),dot(p,float2(269.5,183.3))))*43758.5453); }
+  // nearest cell of a jittered grid: xy = that cell's two random numbers, z = distance to its centre
+  float3 Cell(float2 p){ float2 i=floor(p), f=frac(p); float best=8.0; float2 id=i;
+    for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){ float2 g=float2(x,y); float2 r=g+H2(i+g)-f; float d=dot(r,r); if(d<best){best=d; id=i+g;} }
+    return float3(H2(id+7.3), sqrt(best)); }
+};
+IcePlates ipl;
 
 NrmOut = N;
 RghOut = Rgh;
@@ -64,6 +72,7 @@ float far = smoothstep(1200.0, 6000.0, dist);                       // beyond ~2
 float3 mc = lerp(lerp(c1, c2, mixA), lerp(c2, c3, 0.6), far);
 mc = lerp(dot(mc, float3(0.3, 0.59, 0.11)).xxx, mc, 0.2) * float3(0.98, 0.97, 0.96); // Khumbu granite is grey
 mc *= lerp(0.75, 1.15, gf.Fbm(WP.xy / 6000.0 + 8.1));                                // big light/dark patches
+mc = pow(saturate(mc), 1.35) * float3(0.92, 0.96, 1.02);   // 2026-11-11: Khumbu moraine is dark cool granite, the texture read as tan sand
 float3 t1 = MorN.SampleLevel(MorNSampler, p1, mip1).xyz * 2.0 - 1.0;
 float3 t2 = MorN.SampleLevel(MorNSampler, p2, mip2).xyz * 2.0 - 1.0;
 float2 tn = lerp(t1.xy, gf.Rot(t2.xy, -1.13), mixA) * float2(1.0, -1.0) * (1.0 - far * 0.7); // DirectX green
@@ -78,14 +87,10 @@ float row = floor(cq.x);
 float cs = frac(cq.x) - 0.5 + (gf.VN(float2(row, WP.y / 900.0)) - 0.5) * 0.5;      // slight wobble along the crack
 float cr = (1.0 - smoothstep(0.004, 0.02, abs(cs))) * step(0.55, gf.VN(float2(row * 3.7, WP.y / 700.0)))
          * smoothstep(0.45, 0.6, gf.Fbm(WP.xy / 2500.0)) * (1.0 - smoothstep(2500.0, 6000.0, dist));
-// old glacier ice is grey-blue, not white: weathered milky surface, clear blue where it is polished
-float clear = smoothstep(0.55, 0.8, gf.Fbm(WP.xy / 900.0 + 1.7));
-float3 ic = lerp(float3(0.68, 0.78, 0.84), float3(0.36, 0.60, 0.78), clear);
-ic *= lerp(0.88, 1.08, gf.Fbm(WP.xy / 2600.0 + 9.2));
-ic = lerp(ic, float3(0.50, 0.52, 0.53), smoothstep(0.62, 0.85, bands) * 0.35 * smoothstep(5900.0, 5500.0, elev)); // dirt bands (ogives), lower ice only
-float grit = smoothstep(0.55, 0.9, dot(MorC.SampleLevel(MorCSampler, WP.xy / 220.0, clamp(log2(dist / 70.0), 0.0, 11.0)).rgb, 0.33.xxx));
-ic = lerp(ic, float3(0.40, 0.40, 0.40), grit * 0.3 * (1.0 - clear) * smoothstep(5900.0, 5500.0, elev));   // wind-blown grit in the milky ice
-ic = lerp(ic, float3(0.16, 0.34, 0.52), cr * 0.85);                                     // cracks: deep blue
+// glacier ice (2026-11-11 rewrite: the old teal-green blotches read as mould): weathered milky white over large calm
+// areas of polished pale-blue ice; deep blue only in the cracks and on fresh steep faces
+float clear = smoothstep(0.5, 0.85, gf.Fbm(WP.xy / 2600.0 + 1.7));
+float3 ic = float3(0.86, 0.91, 0.95);
 // real ice: the scanned ice cliff's own colour and surface, at two scales turned against each other so no tile repeats
 float2 iu1 = gf.Rot(WP.xy, 0.7) / 1100.0;
 float2 iu2 = gf.Rot(WP.xy, 2.3) / 4300.0 + 0.31;
@@ -94,10 +99,19 @@ float3 sc1 = IceC.SampleLevel(IceCSampler, iu1, im1).rgb, sc2 = IceC.SampleLevel
 float iceMix = smoothstep(0.3, 0.7, gf.Fbm(WP.xy / 2100.0 + 2.2));
 float3 scan = lerp(sc1, sc2, lerp(iceMix, 1.0, smoothstep(1500.0, 7000.0, dist)));
 float scanL = dot(scan, float3(0.3, 0.59, 0.11));
-// colour from the reference photos, not the dirty Icelandic scan: its detail decides white or blue, blue only where it is darkest
+// colour from the reference photos: the scan's detail only modulates milky white against pale polished blue
 float scanT = smoothstep(0.05, 0.5, scanL);
-ic = lerp(float3(0.30, 0.60, 0.74), float3(0.90, 0.95, 0.98), scanT);
-ic = lerp(ic, float3(0.16, 0.34, 0.52), cr * 0.6);
+ic = lerp(float3(0.42, 0.63, 0.80), float3(0.70, 0.80, 0.88), saturate(scanT * 0.2 + (1.0 - clear) * 0.7));   // blue-grey: never snow white
+ic *= lerp(0.94, 1.03, gf.Fbm(WP.xy / 3000.0 + 9.2));
+ic = lerp(ic, float3(0.62, 0.64, 0.66), smoothstep(0.62, 0.85, bands) * 0.22 * smoothstep(5900.0, 5500.0, elev)); // ogives: soft grey arcs, lower ice only
+float grit = smoothstep(0.6, 0.92, dot(MorC.SampleLevel(MorCSampler, WP.xy / 220.0, clamp(log2(dist / 70.0), 0.0, 11.0)).rgb, 0.33.xxx));
+
+// broken plates of ice, each with its own tint and tilt (no crack lines: they read as dark wires on the floor)
+// soft random patches only (2026-11-11: Voronoi plates drew straight seams and dashed lines up close)
+float pn1 = gf.Fbm(WP.xy / 1800.0 + 21.0), pn2 = gf.Fbm(gf.Rot(WP.xy, 0.9) / 520.0 + 3.1);
+ic *= lerp(0.86, 1.08, pn1) * lerp(0.94, 1.04, pn2);
+ic = lerp(ic, ic * float3(0.86, 0.95, 1.06), smoothstep(0.55, 0.8, gf.Fbm(WP.xy / 3500.0 + 5.5)));
+float2 plateTilt = float2(0.0, 0.0);
 // hummocks (metres) as normal relief, from smooth gradient noise: large swells, plus the sharp ribs and scallops of melting ice
 float e = 30.0;
 float2 q0 = WP.xy / 1100.0;
@@ -105,27 +119,34 @@ float h0 = gf.GF(q0), hx = gf.GF(q0 + float2(e / 1100.0, 0)), hy = gf.GF(q0 + fl
 float2 slope = float2(hx - h0, hy - h0) / e * 110.0;
 float2 qR = gf.Rot(WP.xy, 0.5) / 260.0;
 float r0 = abs(gf.GF(qR)), rx = abs(gf.GF(qR + float2(e / 260.0, 0))), ry = abs(gf.GF(qR + float2(0, e / 260.0)));
-slope += float2(rx - r0, ry - r0) / e * 16.0 * (1.0 - smoothstep(2500.0, 9000.0, dist));
+// (ribs from abs(noise) removed 2026-11-11: their creases drew thin straight lines up close)
 float2 sn1 = IceN.SampleLevel(IceNSampler, iu1, im1).xy * 2.0 - 1.0, sn2 = IceN.SampleLevel(IceNSampler, iu2, im2).xy * 2.0 - 1.0;
 float2 scanN = lerp(gf.Rot(sn1, -0.7), gf.Rot(sn2, -2.3), iceMix) * float2(1.0, -1.0);
-slope -= scanN * 0.55;
+// (tiled ice-scan normal removed 2026-11-11: its straight crack features drew the long lines on the glacier)
+slope += plateTilt;
 // fine weathered texture near the camera (borrowed from the rubble normal map, weak)
 float2 mt = MorN.SampleLevel(MorNSampler, gf.Rot(WP.xy, 0.8) / 160.0, clamp(log2(dist / 50.0), 0.0, 11.0)).xy * 2.0 - 1.0;
 float near = 1.0 - smoothstep(1500.0, 5000.0, dist);
-float3 iN = normalize(float3(n.xy - slope + mt * float2(1.0, -1.0) * lerp(0.25, 0.08, clear) * near, n.z));
+float3 iN = normalize(float3(n.xy - slope, n.z));
 float iR = lerp(0.55, 0.3, clear);   // weathered ice is not a mirror; lower values flashed metallic under a low sun
 iR = lerp(iR, 0.62, smoothstep(0.3, 0.7, scanL));
 
 // ---- where the old snow stays: hollows and flats keep the existing snow surface (Col/N/Rgh)
 // crisp, ragged edges: a fine noise breaks the border so rubble pokes through the snow
-float patchN = gf.Fbm(WP.xy / 1400.0 + 11.0) + (gf.Fbm(WP.xy / 90.0 + 3.0) - 0.5) * 0.16 + (gf.VN(WP.xy / 25.0) - 0.5) * 0.05;
-float snowKeepDebris = smoothstep(0.61, 0.68, patchN + (n.z - 0.9) * 0.6);   // 2026-11-03: was 0.63-0.655, read as paper cut-outs
-float snowKeepBare = smoothstep(0.44, 0.56, patchN + (n.z - 0.85) * 0.8);   // more bare ice
+float patchN = gf.Fbm(WP.xy / 3600.0 + 11.0) + (gf.Fbm(WP.xy / 420.0 + 3.0) - 0.5) * 0.06;   // big calm patches, not camouflage
+float snowKeepDebris = smoothstep(0.68, 0.74, patchN + (n.z - 0.9) * 0.6);   // 2026-11-03: was 0.63-0.655, read as paper cut-outs
+float snowKeepBare = smoothstep(0.54, 0.64, patchN + (n.z - 0.85) * 0.8);   // much more bare ice (2026-11-11: read as snow)
 
 // debris tongue: rubble, with dark old ice on its steep faces
-float3 dCol = lerp(mc, float3(0.32, 0.38, 0.44), steep * 0.6);
-float3 dN = normalize(lerp(mN, iN, steep * 0.6));
-float dR = lerp(mR, 0.3, steep * 0.6);
+// hummocks: the rubble is darker in the hollows and lighter on the crests (tens of metres)
+float hum = gf.GF(WP.xy / 1800.0 + 2.9);
+mc *= lerp(0.78, 1.08, saturate(hum * 0.9 + 0.5));
+// ice cliffs in the debris: dirty grey-blue walls striped by old layers, paler bands between
+float strata = gf.VN(float2(WP.z / 45.0, gf.Fbm(WP.xy / 3000.0) * 4.0));
+float3 cliff = lerp(float3(0.36, 0.42, 0.48), float3(0.66, 0.74, 0.80), smoothstep(0.3, 0.8, strata));
+float3 dCol = lerp(mc, cliff, steep * 0.75);
+float3 dN = normalize(lerp(mN, iN, steep * 0.75));
+float dR = lerp(mR, 0.3, steep * 0.75);
 // bare zone: ice, with some rubble streaks (medial moraines) along the flow
 // medial moraines stop below the Icefall: higher up they read as a blurred dark smear on the snow (the dark patch near Camp 1)
 float med = smoothstep(0.62, 0.75, gf.Fbm(float2(WP.x / 7000.0, WP.y / 1800.0) + 6.0)) * smoothstep(5750.0, 5500.0, elev + wob);
@@ -141,14 +162,22 @@ float floorOnly = smoothstep(0.55, 0.75, n.z);   // biplanar rubble holds up on 
 float aD = g * debris * (1.0 - snowKeepDebris) * floorOnly;
 float aB = g * bare * (1.0 - snowKeepBare) * lerp(0.35, 1.0, floorOnly);
 float aU = g * (1.0 - debris - bare) * steep * 0.6;
+// frozen melt ponds in the flat hollows of the debris tongue: turquoise ice with a pale frozen rim (Khumbu photos)
+float pondN = gf.Fbm(WP.xy / 11000.0 + 4.4) + (gf.Fbm(WP.xy / 900.0) - 0.5) * 0.03;
+float pond = smoothstep(0.745, 0.75, pondN) * smoothstep(0.985, 0.995, n.z) * debris;
+float rim = 1.0 - smoothstep(0.75, 0.77, pondN);
+float3 pCol = lerp(float3(0.20, 0.52, 0.58), float3(0.72, 0.88, 0.90), rim * 0.8);
+float aP = g * pond * floorOnly;
 float3 outC = Col;
 outC = lerp(outC, dCol, aD);
 outC = lerp(outC, bCol, aB);
 outC = lerp(outC, uCol, aU);
+outC = lerp(outC, pCol, aP);
 float3 outN = N;
 outN = normalize(lerp(outN, dN, aD));
 outN = normalize(lerp(outN, bN, aB));
 outN = normalize(lerp(outN, iN, aU));
+outN = normalize(lerp(outN, n, aP));
 NrmOut = outN;
-RghOut = lerp(lerp(lerp(Rgh, dR, aD), bR, aB), 0.25, aU);
+RghOut = lerp(lerp(lerp(lerp(Rgh, dR, aD), bR, aB), 0.25, aU), 0.12, aP);
 return max(outC, 0.0);

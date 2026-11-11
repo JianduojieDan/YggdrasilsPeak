@@ -59,8 +59,15 @@ public:
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	/** A distant avalanche now, from a random direction. */
-	void Avalanche();
+	/** A distant avalanche now, from a random direction (Index = which recording, -1 = random). */
+	void Avalanche(int32 Index = -1);
+
+	/** The in-game sound tour (snd) drives these; below 0 = the game's own value. */
+	float TourWind = -1.f;          // 0..10
+	float TourElevation = -1.f;     // metres, for the high whistle
+	float TourEffort = -1.f;        // 0..1 breathing
+	bool bTourMuteWind = false;     // all four beds silent (a loop is heard alone)
+	const TArray<TObjectPtr<USoundBase>>& GetSet(const TCHAR* Prefix) const;
 
 	/** 0..1 how hard the climber is working (drives breathing). */
 	float GetEffort() const { return Effort; }
@@ -95,6 +102,7 @@ private:
 
 	TWeakObjectPtr<UExpeditionComponent> Expedition;
 	TWeakObjectPtr<USurvivalComponent> Survival;
+	TWeakObjectPtr<class ARealmSky> Sky;
 
 	float Effort = 0.f;
 	float NextBreath = 2.f;

@@ -3,6 +3,7 @@
 #include "Survival/MountainAudioComponent.h"
 
 #include "Survival/ExpeditionComponent.h"
+#include "Environment/RealmSky.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalTypes.h"
 #include "Components/AudioComponent.h"
@@ -180,9 +181,22 @@ void UMountainAudioComponent::TickComponent(float DeltaTime, ELevelTick TickType
 
 void UMountainAudioComponent::UpdateWind(float DeltaTime)
 {
-	const float W = Expedition.IsValid() ? Expedition->GetWindIntensity() : 3.f;       // 0..10
-	const float Storm = Expedition.IsValid() ? Expedition->GetStormStrength() : 0.f;    // 0..1
-	const float E = Survival.IsValid() ? Survival->GetElevationMeters() : 5000.f;
+	float W = TourWind >= 0.f ? TourWind : Expedition.IsValid() ? Expedition->GetWindIntensity() : 3.f;       // 0..10
+	float Storm = TourWind >= 0.f ? 0.f : Expedition.IsValid() ? Expedition->GetStormStrength() : 0.f;        // 0..1
+	// A realm brings its own air, and the sound must arrive and leave WITH what you see (the weather system's wind
+	// ramps slowly: the blizzard came late into Jotunheim and roared on into the next, calm realm)
+	if (TourWind < 0.f)
+	{
+		if (!Sky.IsValid()) { Sky = ARealmSky::Get(GetWorld()); }
+		float Blend = 0.f;
+		const float RealmWind = Sky.IsValid() ? Sky->GetRealmWind(Blend) : -1.f;
+		if (RealmWind >= 0.f && Blend > 0.f)
+		{
+			W = FMath::Lerp(W, RealmWind * 10.f, Blend);
+			Storm = FMath::Lerp(Storm, 0.f, Blend);
+		}
+	}
+	const float E = TourElevation >= 0.f ? TourElevation : Survival.IsValid() ? Survival->GetElevationMeters() : 5000.f;
 
 	float Target[NumBeds];
 	Target[Calm] = FMath::Lerp(0.6f, 0.2f, SS(3.f, 7.f, W));                          // the air itself, always a little there
@@ -195,10 +209,10 @@ void UMountainAudioComponent::UpdateWind(float DeltaTime)
 	const float Overall = WindVolume * FMath::Lerp(0.55f, 1.f, SS(4000.f, 7000.f, E)) * FMath::Lerp(1.f, 0.4f, Muffle);
 	for (int32 i = 0; i < NumBeds; ++i)
 	{
-		BedLevel[i] = FMath::FInterpTo(BedLevel[i], Target[i], DeltaTime, 0.6f);
+		BedLevel[i] = FMath::FInterpTo(BedLevel[i], Target[i], DeltaTime, 1.2f);
 		if (UAudioComponent* Bed = Beds.IsValidIndex(i) ? Beds[i].Get() : nullptr)
 		{
-			Bed->SetVolumeMultiplier(FMath::Max(0.0001f, BedLevel[i] * Overall));
+			Bed->SetVolumeMultiplier(bTourMuteWind ? 0.0001f : FMath::Max(0.0001f, BedLevel[i] * Overall));
 			Bed->SetLowPassFilterEnabled(Muffle > 0.01f);
 			Bed->SetLowPassFilterFrequency(FMath::Lerp(20000.f, 700.f, Muffle));
 		}
@@ -209,7 +223,7 @@ void UMountainAudioComponent::UpdateWind(float DeltaTime)
 	if (NextGust <= 0.f)
 	{
 		NextGust = FMath::FRandRange(20.f, 50.f);
-		if (W > 6.f && Gusts.Num() > 0)
+		if (W > 6.f && Gusts.Num() > 0 && !bTourMuteWind)
 		{
 			UGameplayStatics::PlaySound2D(this, Pick(Gusts), WindVolume * 0.6f * SS(6.f, 9.5f, W) * FMath::Lerp(1.f, 0.4f, Muffle), FMath::FRandRange(0.85f, 1.1f));
 		}
@@ -229,8 +243,8 @@ void UMountainAudioComponent::UpdateBreath(float DeltaTime)
 	const float Thin = SS(4500.f, 8500.f, Survival->GetElevationMeters());
 	float Target = 0.45f * (1.f - Stamina) + 0.25f * SS(50.f, 450.f, Speed) + 0.2f * SS(10.f, 80.f, Climb)
 		+ 0.35f * Thin * SS(30.f, 300.f, Speed) + 0.15f * Thin + (Survival->IsSprinting() ? 0.25f : 0.f);
-	Target = FMath::Clamp(Target, 0.f, 1.f);
-	Effort = FMath::FInterpTo(Effort, Target, DeltaTime, Target > Effort ? 0.8f : 0.25f);   // builds fast, settles slowly
+	Target = TourEffort >= 0.f ? TourEffort : FMath::Clamp(Target, 0.f, 1.f);
+	Effort = TourEffort >= 0.f ? TourEffort : FMath::FInterpTo(Effort, Target, DeltaTime, Target > Effort ? 0.8f : 0.25f);   // builds fast, settles slowly
 
 	// Whole phrases of real breathing (several breaths each, their own rhythm), back to back while the effort lasts.
 	// A phrase plays to its end; the next one is picked for the effort at that moment (sorted soft -> hard).
@@ -293,9 +307,22 @@ void UMountainAudioComponent::UpdateRope(float DeltaTime)
 	RopeSlide->SetPitchMultiplier(0.85f + 0.3f * SS(40.f, 450.f, Speed));
 }
 
-void UMountainAudioComponent::Avalanche()
+const TArray<TObjectPtr<USoundBase>>& UMountainAudioComponent::GetSet(const TCHAR* Prefix) const
 {
-	USoundBase* Roar = Pick(Avalanches);
+	static const TArray<TObjectPtr<USoundBase>> None;
+	const FString P(Prefix);
+	if (P == TEXT("Breath_Phrase")) { return Breaths; }
+	if (P == TEXT("Avalanche")) { return Avalanches; }
+	if (P == TEXT("Carabiner_Click")) { return Clicks; }
+	if (P == TEXT("Carabiner_ClipIn")) { return ClipIns; }
+	if (P == TEXT("Rope_Tighten")) { return Tightens; }
+	if (P == TEXT("Wind_Gust")) { return Gusts; }
+	return None;
+}
+
+void UMountainAudioComponent::Avalanche(int32 Index)
+{
+	USoundBase* Roar = Avalanches.IsValidIndex(Index) ? Avalanches[Index].Get() : Pick(Avalanches);
 	if (!Roar)
 	{
 		return;

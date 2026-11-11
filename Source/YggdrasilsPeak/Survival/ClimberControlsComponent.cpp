@@ -3,6 +3,8 @@
 #include "Survival/ClimberControlsComponent.h"
 
 #include "Survival/BackpackWidget.h"
+#include "Survival/SettingsWidget.h"
+#include "Survival/YggMenuWidget.h"
 #include "Survival/ExpeditionComponent.h"
 #include "Survival/InventoryComponent.h"
 #include "Survival/SurvivalComponent.h"
@@ -84,6 +86,16 @@ bool UClimberControlsComponent::TryBindInput()
 		SprintMapping->MapKey(PackAction, EKeys::Gamepad_Special_Left);
 		Subsystem->AddMappingContext(SprintMapping, 1);
 		Input->BindAction(PackAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnPack);
+		SettingsAction = NewObject<UInputAction>(this, TEXT("IA_Settings"));
+		SprintMapping->MapKey(SettingsAction, EKeys::F2);
+		Input->BindAction(SettingsAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnSettings);
+		USettingsWidget::ApplySaved(GetWorld());
+		// pause menu: Esc in a packaged game (the editor keeps Esc to stop Play), P everywhere, Start on a pad
+		PauseAction = NewObject<UInputAction>(this, TEXT("IA_Pause"));
+		SprintMapping->MapKey(PauseAction, EKeys::Escape);
+		SprintMapping->MapKey(PauseAction, EKeys::P);
+		SprintMapping->MapKey(PauseAction, EKeys::Gamepad_Special_Right);
+		Input->BindAction(PauseAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnPauseMenu);
 		Input->BindAction(EatAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnEat);
 		Input->BindAction(DrinkAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnDrink);
 		Input->BindAction(InteractAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnInteract);
@@ -157,6 +169,20 @@ void UClimberControlsComponent::OnRest()
 void UClimberControlsComponent::OnPack()
 {
 	UBackpackWidget::Toggle(Cast<APlayerController>(Cast<APawn>(GetOwner())->GetController()));
+}
+
+void UClimberControlsComponent::OnPauseMenu()
+{
+	APlayerController* PC = Cast<APlayerController>(Cast<APawn>(GetOwner())->GetController());
+	TArray<UUserWidget*> Packs;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(PC, Packs, UBackpackWidget::StaticClass(), true);
+	if (Packs.Num() > 0) { return; }   // Esc closes the pack first
+	UYggMenuWidget::TogglePause(PC);
+}
+
+void UClimberControlsComponent::OnSettings()
+{
+	USettingsWidget::Toggle(Cast<APlayerController>(Cast<APawn>(GetOwner())->GetController()));
 }
 
 void UClimberControlsComponent::OnInteract()

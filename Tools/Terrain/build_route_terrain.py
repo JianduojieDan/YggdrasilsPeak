@@ -48,10 +48,12 @@ tents = [(px / 100, py / 100, np.hypot(ex, ey) / 100) for n, px, py, pz, ex, ey,
 avoid = [(px / 100, py / 100, np.hypot(ex, ey) / 100 + 2.5) for n, px, py, pz, ex, ey, ez in props if max(ex, ey) < 3000]
 atree = cKDTree(np.array([(a, b) for a, b, _ in avoid])) if avoid else None
 gmask = np.asarray(Image.open(os.path.join(ROOT, 'Imports/Glacier/T_GlacierMask.png')).convert('L'), np.float32) / 255.0
+gmask_soft = gaussian_filter(gmask, 1.2)
 
 def glacier_at(X, Y):          # same mapping as the landscape material: uv = (world cm + 504000) / (3374.24 * 1009)
     u = (X * 100 + 504000.0) / (3374.24 * 1009.0) * gmask.shape[1]; v = (Y * 100 + 504000.0) / (3374.24 * 1009.0) * gmask.shape[0]
-    return map_coordinates(gmask, [v.ravel() - 0.5, u.ravel() - 0.5], order=1, mode='nearest').reshape(X.shape)
+    # cubic on a softened mask (2026-11-11): linear interpolation of the 34 m mask grid creased the ground along its grid lines
+    return map_coordinates(gmask_soft, [v.ravel() - 0.5, u.ravel() - 0.5], order=3, mode='nearest').reshape(X.shape)
 
 # ---------------- world-coherent noise
 def _hash(ix, iy, seed):
@@ -114,8 +116,9 @@ def build(X, Y):
     # keep camps, ropes and the walking line usable
     k_big = np.ones_like(X); k_small = np.ones_like(X)
     rd = ptree.query(np.c_[X.ravel(), Y.ravel()])[0].reshape(X.shape)
-    k_big = np.minimum(k_big, sstep(15, 45, rd)); k_small = np.minimum(k_small, 0.25 + 0.75 * sstep(1.5, 6, rd))
-    trench = (1 - sstep(0.6, 1.6, rd)) * 0.35
+    # gentle and wide (2026-11-11): the old 1.5-6 m flattening along every rope left straight parallel creases
+    k_big = np.minimum(k_big, 0.35 + 0.65 * sstep(10, 90, rd)); k_small = np.minimum(k_small, 0.7 + 0.3 * sstep(2, 16, rd))
+    trench = 0.0   # 2026-11-11: the 35 cm trench under every fixed rope drew straight light/dark lines across the snow (user); removed
     cx0, cy0 = X.mean(), Y.mean()
     for (tx, ty, r) in tents:
         if abs(tx - cx0) > 900 or abs(ty - cy0) > 900: continue

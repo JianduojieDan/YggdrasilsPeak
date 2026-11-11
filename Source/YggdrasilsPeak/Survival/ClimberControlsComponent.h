@@ -53,6 +53,8 @@ private:
 	void OnInteract();
 	void OnDrink();
 	void OnPack();
+	void OnSettings();
+	void OnPauseMenu();
 	void OnRest();
 
 	/** Created at runtime (1 = eat a ration, 2 = drink), mapped alongside sprint. */
@@ -73,6 +75,10 @@ private:
 	/** Tab / gamepad View: open or close the pack (UBackpackWidget). */
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> PackAction;
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> SettingsAction;
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> PauseAction;
 
 	/** Built at runtime with only the sprint keys, so it can't swallow the character's own move/look keys. */
 	UPROPERTY(Transient)

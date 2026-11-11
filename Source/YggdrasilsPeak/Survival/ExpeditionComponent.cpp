@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Survival/ExpeditionComponent.h"
+#include "Survival/YggMenuWidget.h"
 
 #include "Survival/InventoryComponent.h"
 #include "Survival/ClimbingComponent.h"
@@ -339,6 +340,12 @@ void UExpeditionComponent::UpdateCamps()
 		LastCamp = Inside;
 		SaveCheckpoint(Inside, Inside->LandmarkName);
 		Say(FText::Format(NSLOCTEXT("Expedition", "Summit", "SUMMIT - {0}. Now get back down alive."), FText::FromString(Inside->LandmarkName)), 10.f);
+		// the summit camp by the World Tree is the end of the climb: the summit screen (2026-11-11)
+		if (const APawn* Pawn = Cast<APawn>(GetOwner()))
+		{
+			const int32 Seconds = FMath::RoundToInt(SavedPlaySeconds + GetWorld()->GetTimeSeconds() - StartTime);
+			UYggMenuWidget::ShowSummit(Cast<APlayerController>(Pawn->GetController()), Seconds, Deaths);
+		}
 		return;
 	}
 

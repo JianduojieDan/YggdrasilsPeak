@@ -89,6 +89,19 @@ public:
 	/** The weather the wheel lands on: the forecast, or a realm named by hand. */
 	int32 GetWheelIndex() const { return WheelIndex; }
 	void PlayWheel(ERealm Realm) { WheelIndex = int32(Realm); ++ForecastSerial; }
+	/** The sound tour (snd): the wheel spins and lands on this weather even while a forecast is up. */
+	void SpinWheelTo(int32 Index) { WheelIndex = Index; bHandWheel = true; ++ForecastSerial; }
+	/** True once after SpinWheelTo: the HUD shows WheelIndex instead of the forecast. */
+	bool TakeHandWheel() { const bool b = bHandWheel; bHandWheel = false; return b; }
+	/** One lightning strike now, Km away towards the storm: a visible bolt and a flash, its thunder at the speed of sound
+	 *  (Index = which thunder, -1 random; bFlashOnly: no thunder, the caller plays its own). */
+	void Strike(int32 ThunderIndex = -1, float Km = 1.5f, bool bFlashOnly = false);
+	/** A burst of Count strikes at once at different distances, as the Jotunheim storm makes them. */
+	void StormBurst(int32 Count);
+	/** How a thunder Km away sounds: quieter, duller (low-pass Hz) and a little lower the further it struck. */
+	static void ThunderVoice(float Km, float& OutVolume, float& OutPitch, float& OutLowPassHz);
+	/** The realm's wind 0..1 (below 0 = the world's own) and how much the realm holds the air now (0..1). */
+	float GetRealmWind(float& OutBlend) const { OutBlend = FMath::Min(Look.Active * 4.f, 1.f); return Look.Wind; }
 	bool IsDemo() const { return DemoIndex >= 0; }
 	int32 GetShownIndex() const { return int32(Shown); }
 	void LogStatus() const;
@@ -132,6 +145,27 @@ private:
 	FLinearColor SunColor = FLinearColor::White, FogColorBase = FLinearColor::White;
 	FVector FogLocation = FVector::ZeroVector;
 	float NextFlash = 4.f, FlashLeft = 0.f, ThunderIn = 0.f;
+	bool bHandWheel = false;
+	struct FStrike
+	{
+		float FlashIn = 0.f;      // s until its flash
+		float ThunderIn = 0.f;    // s from the flash to its thunder (distance / speed of sound)
+		FVector Dir = FVector::ForwardVector;
+		float Km = 1.f;
+		int32 Thunder = -1;
+		bool bFlashed = false;
+		bool bFlashOnly = false;
+	};
+	TArray<FStrike> Strikes;
+	float FlashPower = 0.f;                    // 0..1, how bright the current flash is (close strikes brighter)
+	FVector FlashDir = FVector::ForwardVector;
+	void QueueStrike(float Delay, float Km, int32 ThunderIndex, bool bFlashOnly);
+	void TickStrikes(float DeltaSeconds);
+	void DoFlash(const FStrike& S);
+	void LoadThunders();
+	UPROPERTY(Transient) TObjectPtr<class UDirectionalLightComponent> LightningLight;
+	UPROPERTY(Transient) TObjectPtr<class UNiagaraSystem> BoltSystem;
+	UPROPERTY(Transient) TObjectPtr<class UNiagaraSystem> CloudFlashSystem;
 	UPROPERTY(Transient) TArray<TObjectPtr<class USoundBase>> Thunders;   // /Game/Audio/Weather/Thunder_NN
 	int32 LastThunder = -1;
 	bool bSkySaved = false;
@@ -165,7 +199,16 @@ private:
 	void MakeAsgardRings();
 	UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> Ring;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> RingMat;
-	float RingScale = 12.f, RingTilt = 45.f, RingRoll = 35.f;
+	float RingScale = 7.f, RingTilt = 30.f, RingRoll = 35.f;   // 7: rings out to 3.5 planet radii, starting just above the surface
+	float SunHide = 0.f;
+	TWeakObjectPtr<class UMaterialInstanceDynamic> SkySphereMID;
+	TWeakObjectPtr<class UStaticMeshComponent> SkySphere;
+	float SunBrightBase = -1.f, SunHighlightBase = -1.f, SunRadiusBase = 0.0214f;
+	bool bSunOverridden = false;
+	FDelegateHandle PostTickHandle;
+	void ApplySunHide();
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	FLinearColor SunDiskBase = FLinearColor::White;
 	UPROPERTY(Transient) TObjectPtr<UStaticMeshComponent> Deck;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> DeckMat;
 	void ChangeWeather();

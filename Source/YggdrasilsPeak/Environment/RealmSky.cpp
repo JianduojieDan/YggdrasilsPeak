@@ -2,6 +2,7 @@
 
 #include "Environment/RealmSky.h"
 
+#include "Components/AudioComponent.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -158,6 +159,10 @@ ARealmSky* ARealmSky::Get(UWorld* World)
 void ARealmSky::BeginPlay()
 {
 	Super::BeginPlay();
+	PostTickHandle = FWorldDelegates::OnWorldPostActorTick.AddWeakLambda(this, [this](UWorld* W, ELevelTick, float)
+	{
+		if (W == GetWorld()) { ApplySunHide(); }
+	});
 	Planets.SetNum(NumSlots);
 	LoadLookOverrides();
 	// the planets were placed around the summit view point (Tools/Realms/place_realms.py)
@@ -217,12 +222,12 @@ void ARealmSky::MakeAsgardRings()
 	Ring->SetMobility(EComponentMobility::Movable);
 	Ring->SetupAttachment(A->GetRootComponent());
 	Ring->SetUsingAbsoluteRotation(true);
-	Ring->SetRelativeScale3D(FVector(RingScale, RingScale, 1.0));   // plane 1 m, sphere radius 1 m: 12 = rings out to 6 planet radii
+	Ring->SetRelativeScale3D(FVector(RingScale, RingScale, 1.0));   // plane 1 m, sphere radius 1 m: 7 = rings out to 3.5 planet radii
 	Ring->SetTranslucentSortPriority(1);
 	Ring->BoundsScale = 4.f;
 	Ring->RegisterComponent();
 	RingMat = Ring->CreateAndSetMaterialInstanceDynamicFromMaterial(0, Mat);
-	RingMat->SetScalarParameterValue(TEXT("Bright"), 2.f);
+	RingMat->SetScalarParameterValue(TEXT("Bright"), 3.2f);
 	RingMat->SetScalarParameterValue(TEXT("Fade"), 0.f);
 	P.Materials.Add(RingMat);
 	Ring->SetVisibility(false);
@@ -474,6 +479,25 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 	}
 	const bool bFlash = FlashLeft > 0.f && FMath::Fmod(FlashLeft, 0.12f) > 0.04f;   // a short flicker, not one pulse
 	const float A = Look.Active;
+	// The flash lights the world from the strike's side with a light of its own (no shadows, cheap): it can only brighten
+	if (FlashPower > 0.f && !LightningLight)
+	{
+		LightningLight = NewObject<UDirectionalLightComponent>(this, TEXT("LightningLight"));
+		LightningLight->SetMobility(EComponentMobility::Movable);
+		LightningLight->SetCastShadows(false);
+		LightningLight->SetAtmosphereSunLight(false);
+		LightningLight->SetLightColor(FLinearColor(0.72f, 0.84f, 1.f));
+		LightningLight->SetIntensity(0.f);
+		LightningLight->SetAbsolute(true, true, true);
+		LightningLight->RegisterComponent();
+	}
+	if (LightningLight)
+	{
+		const float Strength = bFlash ? 3.f * FMath::Max(SunBase, 2.f) * FlashPower : 0.f;
+		LightningLight->SetIntensity(Strength);
+		LightningLight->SetVisibility(Strength > 0.f);
+		if (Strength > 0.f) { LightningLight->SetWorldRotation((-FlashDir - FVector(0.f, 0.f, 0.9f)).GetSafeNormal().Rotation()); }
+	}
 	// The cloud deck: the sky plugin's own clouds do not answer in this setup, so each realm's sky moves here
 	if (!Deck)
 	{
@@ -507,8 +531,11 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 		DeckMat->SetScalarParameterValue(TEXT("Cover"), Look.CloudCover);
 		DeckMat->SetScalarParameterValue(TEXT("Speed"), Look.CloudSpeed);
 		DeckMat->SetScalarParameterValue(TEXT("Scale"), Look.CloudScale);
-		DeckMat->SetVectorParameterValue(TEXT("Dark"), bFlash ? FLinearColor(0.75f, 0.9f, 1.2f) : Look.CloudDark * NightDeck);   // lightning lights the deck from inside, same frames as the ground
-		DeckMat->SetVectorParameterValue(TEXT("Light"), bFlash ? FLinearColor(1.5f, 1.8f, 2.2f) : Look.CloudLight * NightDeck);
+		// lightning lights the deck from inside, same frames as the ground: it only ever ADDS light (a fixed flash colour
+		// used to replace the storm's own, which could be darker by day: the flash dimmed the sky)
+		const float Lit = bFlash ? FlashPower : 0.f;
+		DeckMat->SetVectorParameterValue(TEXT("Dark"), Look.CloudDark * NightDeck + FLinearColor(0.75f, 0.9f, 1.2f) * Lit);
+		DeckMat->SetVectorParameterValue(TEXT("Light"), Look.CloudLight * NightDeck + FLinearColor(1.5f, 1.8f, 2.2f) * Lit);
 	}
 	// UDS only rewrites its lights when they change enough, and this ticks after it: remember its values while no realm
 	// runs and set ours from those - never compound a scale on top of an earlier one
@@ -540,8 +567,9 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 	}
 	if (L)
 	{
-		L->SetLightColor(bFlash ? FLinearColor(0.6f, 0.8f, 1.f) : Look.SkyColor);   // the colour of the shadows
-		L->SetIntensity(SkyBase * Look.SkyScale * FMath::Lerp(0.2f, 1.f, DayK) * (bFlash ? 6.f : 1.f));
+		const float Lit = bFlash ? FlashPower : 0.f;
+		L->SetLightColor(FMath::Lerp(Look.SkyColor, FLinearColor(0.6f, 0.8f, 1.f), Lit));   // the colour of the shadows
+		L->SetIntensity(SkyBase * Look.SkyScale * FMath::Lerp(0.2f, 1.f, DayK) * FMath::Lerp(1.f, 6.f, Lit));
 	}
 	if (F)
 	{
@@ -596,6 +624,131 @@ namespace
 		{ TEXT("STARFALL FROST"), TEXT("The mind grows cold"), 1 },
 		{ TEXT("GOLDEN HUSH"), TEXT("Warm light ahead"), 0 },
 	};
+}
+
+void ARealmSky::Strike(int32 ThunderIndex, float Km, bool bFlashOnly)
+{
+	QueueStrike(0.f, Km, ThunderIndex, bFlashOnly);
+}
+
+void ARealmSky::StormBurst(int32 Count)
+{
+	// the first strike now, the others within a second and a half, each at its own distance (more often far than near)
+	for (int32 i = 0; i < Count; ++i)
+	{
+		QueueStrike(i == 0 ? 0.f : FMath::FRandRange(0.15f, 1.6f), 0.5f + 5.5f * FMath::Pow(FMath::FRand(), 1.4f), -1, false);
+	}
+}
+
+void ARealmSky::ThunderVoice(float Km, float& OutVolume, float& OutPitch, float& OutLowPassHz)
+{
+	// air swallows the highs first: a strike 500 m away cracks, one 6 km away is a low roll
+	const float T = FMath::Clamp((Km - 0.5f) / 5.5f, 0.f, 1.f);
+	OutVolume = FMath::Lerp(1.15f, 0.4f, FMath::Pow(T, 0.8f));
+	OutPitch = FMath::Lerp(1.03f, 0.86f, T);
+	OutLowPassHz = 20000.f * FMath::Pow(650.f / 20000.f, T);
+}
+
+void ARealmSky::LoadThunders()
+{
+	if (Thunders.Num() > 0)
+	{
+		return;
+	}
+	// real thunder recordings, each starting at its strike (Tools/Audio/build_game_sounds.py); else the old boom
+	for (int32 i = 1; i <= 8; ++i)
+	{
+		const FString N = FString::Printf(TEXT("Thunder_%02d"), i);
+		if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(TEXT("/Game/Audio/Weather/") + N + TEXT(".") + N), nullptr, LOAD_NoWarn | LOAD_Quiet)) { Thunders.Add(S); }
+	}
+	if (Thunders.Num() == 0)
+	{
+		if (USoundBase* S = LoadObject<USoundBase>(nullptr, TEXT("/Game/Audio/Ice/Mountain_Boom_02.Mountain_Boom_02"))) { Thunders.Add(S); }
+	}
+}
+
+void ARealmSky::QueueStrike(float Delay, float Km, int32 ThunderIndex, bool bFlashOnly)
+{
+	const APawn* P = UGameplayStatics::GetPlayerPawn(this, 0);
+	const AActor* Storm = Planets.IsValidIndex(int32(ERealm::Jotunheim)) ? Planets[int32(ERealm::Jotunheim)].Actor.Get() : nullptr;
+	// around the storm's side of the sky, but it can strike anywhere in front of it
+	float Yaw = FMath::FRandRange(0.f, 360.f);
+	if (Storm && P) { Yaw = (Storm->GetActorLocation() - P->GetActorLocation()).Rotation().Yaw + FMath::FRandRange(-110.f, 110.f); }
+	FStrike& S = Strikes.AddDefaulted_GetRef();
+	S.FlashIn = Delay;
+	S.Km = Km;
+	S.ThunderIn = Km * 1000.f / 343.f;
+	S.Dir = FRotator(0.f, Yaw, 0.f).Vector();
+	S.Thunder = ThunderIndex;
+	S.bFlashOnly = bFlashOnly;
+}
+
+void ARealmSky::TickStrikes(float DeltaSeconds)
+{
+	const APawn* P = UGameplayStatics::GetPlayerPawn(this, 0);
+	for (int32 i = Strikes.Num() - 1; i >= 0; --i)
+	{
+		FStrike& S = Strikes[i];
+		if (!S.bFlashed)
+		{
+			if ((S.FlashIn -= DeltaSeconds) > 0.f) { continue; }
+			S.bFlashed = true;
+			DoFlash(S);
+			if (S.bFlashOnly) { Strikes.RemoveAt(i); }
+			continue;
+		}
+		if ((S.ThunderIn -= DeltaSeconds) > 0.f) { continue; }
+		LoadThunders();
+		if (Thunders.Num() > 0 && P)
+		{
+			int32 Pick = FMath::RandRange(0, Thunders.Num() - 1);
+			if (Thunders.Num() > 1 && Pick == LastThunder) { Pick = (Pick + 1) % Thunders.Num(); }
+			if (Thunders.IsValidIndex(S.Thunder)) { Pick = S.Thunder; }
+			LastThunder = Pick;
+			float Volume, Pitch, LowPass;
+			ThunderVoice(S.Km, Volume, Pitch, LowPass);
+			if (UAudioComponent* C = UGameplayStatics::SpawnSoundAtLocation(this, Thunders[Pick], P->GetActorLocation() + S.Dir * 3000.f, FRotator::ZeroRotator, Volume, Pitch * FMath::FRandRange(0.97f, 1.03f)))
+			{
+				C->SetLowPassFilterEnabled(true);
+				C->SetLowPassFilterFrequency(LowPass);
+			}
+			UE_LOG(LogTemp, Display, TEXT("RealmSky: thunder %s from %.1f km (vol %.2f, pitch %.2f, low-pass %.0f Hz)"), *Thunders[Pick]->GetName(), S.Km, Volume, Pitch, LowPass);
+		}
+		Strikes.RemoveAt(i);
+	}
+}
+
+void ARealmSky::DoFlash(const FStrike& S)
+{
+	const APawn* P = UGameplayStatics::GetPlayerPawn(this, 0);
+	if (!P)
+	{
+		return;
+	}
+	// the nearer, the brighter; a far strike only lights the clouds a little
+	const float Power = FMath::Lerp(1.f, 0.3f, FMath::Clamp((S.Km - 0.5f) / 5.5f, 0.f, 1.f));
+	FlashLeft = FMath::Max(FlashLeft, 0.35f);
+	if (Power >= FlashPower) { FlashPower = Power; FlashDir = S.Dir; }
+
+	// a visible bolt from the cloud base to the ground, or for a far one sometimes only a glow inside the clouds
+	if (!BoltSystem) { BoltSystem = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/UltraDynamicSky/Particles/Lightning_Strike.Lightning_Strike")); }
+	if (!CloudFlashSystem) { CloudFlashSystem = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/UltraDynamicSky/Particles/Obscured_Lightning.Obscured_Lightning")); }
+	const bool bInClouds = S.Km > 3.5f && FMath::FRand() < 0.5f;
+	UNiagaraSystem* System = bInClouds ? CloudFlashSystem.Get() : BoltSystem.Get();
+	if (System)
+	{
+		const FVector Ground = P->GetActorLocation() + S.Dir * (S.Km * 100000.f) + FVector(FMath::FRandRange(-20000.f, 20000.f), FMath::FRandRange(-20000.f, 20000.f), 0.f);
+		const float CloudBase = 150000.f;   // 1.5 km over the player
+		const FVector From = FVector(Ground.X, Ground.Y, P->GetActorLocation().Z + CloudBase);
+		if (UNiagaraComponent* Bolt = UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, System, From, FRotator::ZeroRotator, FVector::OneVector, true, false))
+		{
+			Bolt->SetVariableVec3(TEXT("Target Offset"), FVector(FMath::FRandRange(-15000.f, 15000.f), FMath::FRandRange(-15000.f, 15000.f), -(CloudBase + 40000.f)));
+			Bolt->SetVariableFloat(TEXT("Intensity Scale"), FMath::Lerp(0.6f, 1.4f, Power));
+			Bolt->SetVariableFloat(TEXT("Lifetime Scale"), 1.f);
+			Bolt->Activate(true);
+		}
+	}
+	UE_LOG(LogTemp, Display, TEXT("RealmSky: lightning %.1f km away (%s), thunder in %.1f s"), S.Km, bInClouds ? TEXT("in the clouds") : TEXT("bolt"), S.bFlashOnly ? 0.f : S.ThunderIn);
 }
 
 const FRealmWeatherInfo& ARealmSky::GetWeatherInfo(int32 Index) { return GInfo[FMath::Clamp(Index, 0, NumRealms - 1)]; }
@@ -884,49 +1037,21 @@ void ARealmSky::Tick(float DeltaSeconds)
 			SetSkyFloat(LapseSky, TEXT("Lights Update Degree Threshold"), bTimeLapseOn ? 0.0 : 0.4);
 		}
 	}
-	// Jotunheim's Icevein storm: an ice-blue flash in the storm bank, thunder 3-5 s later from that direction
+	// Jotunheim's Icevein storm: bursts of one to three strikes around the player, each a visible bolt and a flash at its
+	// own distance; its thunder comes at the speed of sound, quieter, duller and lower the further away it struck.
 	if (Shown == ERealm::Jotunheim && Planets[int32(ERealm::Jotunheim)].Fade > 0.5f)
 	{
 		NextFlash -= DeltaSeconds;
 		if (NextFlash <= 0.f)
 		{
-			NextFlash = FMath::FRandRange(14.f, 26.f);
-			FlashLeft = 0.35f;
-			ThunderIn = FMath::FRandRange(3.f, 5.f);
-			UE_LOG(LogTemp, Display, TEXT("RealmSky: Jotunheim flash, thunder in %.1f s"), ThunderIn);
+			NextFlash = FMath::FRandRange(5.f, 11.f);
+			const float R = FMath::FRand();
+			StormBurst(R < 0.45f ? 1 : (R < 0.8f ? 2 : 3));
 		}
 	}
+	TickStrikes(DeltaSeconds);
 	FlashLeft = FMath::Max(0.f, FlashLeft - DeltaSeconds);
-	if (ThunderIn > 0.f)
-	{
-		ThunderIn -= DeltaSeconds;
-		if (ThunderIn <= 0.f)
-		{
-			if (Thunders.Num() == 0)
-			{
-				// real thunder recordings, each starting at its strike (Tools/Audio/build_game_sounds.py); else the old boom
-				for (int32 i = 1; i <= 8; ++i)
-				{
-					const FString N = FString::Printf(TEXT("Thunder_%02d"), i);
-					if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(TEXT("/Game/Audio/Weather/") + N + TEXT(".") + N), nullptr, LOAD_NoWarn | LOAD_Quiet)) { Thunders.Add(S); }
-				}
-				if (Thunders.Num() == 0)
-				{
-					if (USoundBase* S = LoadObject<USoundBase>(nullptr, TEXT("/Game/Audio/Ice/Mountain_Boom_02.Mountain_Boom_02"))) { Thunders.Add(S); }
-				}
-			}
-			const APawn* P = UGameplayStatics::GetPlayerPawn(this, 0);
-			if (Thunders.Num() > 0 && P && Planets[int32(ERealm::Jotunheim)].Actor.IsValid())
-			{
-				int32 Pick = FMath::RandRange(0, Thunders.Num() - 1);
-				if (Thunders.Num() > 1 && Pick == LastThunder) { Pick = (Pick + 1) % Thunders.Num(); }
-				LastThunder = Pick;
-				const FVector Dir = (Planets[int32(ERealm::Jotunheim)].Actor->GetActorLocation() - P->GetActorLocation()).GetSafeNormal();
-				UE_LOG(LogTemp, Display, TEXT("RealmSky: thunder (%s)"), *Thunders[Pick]->GetName());
-				UGameplayStatics::PlaySoundAtLocation(this, Thunders[Pick], P->GetActorLocation() + Dir * 3000.f, 1.0f, FMath::FRandRange(0.9f, 1.03f));
-			}
-		}
-	}
+	if (FlashLeft <= 0.f) { FlashPower = 0.f; }
 	// keep the sky centred on the player: 5000 km away, a planet would otherwise drift as you walk 30 km
 	const APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
 	const FVector Around = Pawn ? Pawn->GetActorLocation() : PlacedAround;
@@ -977,6 +1102,17 @@ void ARealmSky::Tick(float DeltaSeconds)
 	}
 	FVector AnchorDir;
 	const FVector Anchor = PlanetAnchor(AnchorDir, DeltaSeconds);
+	// One lone planet at a time. They all stand on the sun's spot, so a cross-fade drew two or three concentric discs that
+	// fought over which is in front (flicker). Now the outgoing one leaves quickly and the incoming one waits for it.
+	float Outgoing = 0.f;
+	if (!bAll)
+	{
+		for (int32 i = 0; i < NumRealms && i < Planets.Num(); ++i)
+		{
+			if (ERealm(i) != Shown) { Outgoing = FMath::Max(Outgoing, Planets[i].Fade); }
+		}
+	}
+	float LoneMax = 0.f;
 	for (FPlanet& P : Planets)
 	{
 		AActor* A = P.Actor.Get();
@@ -984,15 +1120,22 @@ void ARealmSky::Tick(float DeltaSeconds)
 		{
 			continue;
 		}
-		P.Fade = FMath::FInterpConstantTo(P.Fade, P.Target, DeltaSeconds, 1.f / FadeSeconds);
 		const bool bLone = !bAll && int32(&P - Planets.GetData()) < NumRealms;
+		const bool bWait = bLone && P.Target > P.Fade && Outgoing > 0.1f;
+		const float Rate = (bLone && P.Target < P.Fade) ? 1.f / (FadeSeconds * 0.5f) : 1.f / FadeSeconds;
+		if (!bWait) { P.Fade = FMath::FInterpConstantTo(P.Fade, P.Target, DeltaSeconds, Rate); }
+		if (bLone) { LoneMax = FMath::Max(LoneMax, P.Fade); }
 		// a lone planet sets with the sun and rises with the moon; by night it gives a dimmer light
-		const float Eased = P.Fade * P.Fade * (3.f - 2.f * P.Fade) * (bLone ? Anchor.X * Anchor.Y : 1.f);
+		// smootherstep: starts and ends with no visible jerk; the light follows the opacity a little later, so a planet
+		// arrives as a veiled shape that then glows, and leaves by dimming before it dissolves
+		const float Smooth = P.Fade * P.Fade * P.Fade * (P.Fade * (P.Fade * 6.f - 15.f) + 10.f);
+		const float Eased = Smooth * (bLone ? Anchor.X * Anchor.Y : 1.f);
+		const float Glow = FMath::Pow(Smooth, 1.6f) * (bLone ? Anchor.X * Anchor.Y : 1.f);
 		for (const TWeakObjectPtr<UMaterialInstanceDynamic>& D : P.Materials)
 		{
 			if (D.IsValid())
 			{
-				D->SetScalarParameterValue(TEXT("Bright"), P.BaseBright * Eased);
+				D->SetScalarParameterValue(TEXT("Bright"), P.BaseBright * Glow);
 				D->SetScalarParameterValue(TEXT("Fade"), Eased * Look.PlanetAlpha);      // opacity too: a dim planet must not block the sky
 			}
 		}
@@ -1012,7 +1155,8 @@ void ARealmSky::Tick(float DeltaSeconds)
 				// (it used to trail the sun by 40 degrees: below the horizon all morning, and its night side faced the player)
 				const FVector Dir = AnchorDir;
 				A->SetActorLocation(Around + Dir * Dist);
-				A->SetActorScale3D(FVector(Dist * FMath::Tan(FMath::DegreesToRadians(Sky.Degrees * 0.5f)) / 100.0));
+				// it swells gently into its full size as it arrives and settles back as it goes (6%), never a jump
+				A->SetActorScale3D(FVector(Dist * FMath::Tan(FMath::DegreesToRadians(Sky.Degrees * 0.5f)) / 100.0 * FMath::Lerp(0.94f, 1.f, Smooth)));
 				if (Index == int32(ERealm::Asgard) && Ring)
 				{
 					// Seen from below at a slant, running diagonally across the sky; the rings are not part of the disk's size target
@@ -1029,4 +1173,65 @@ void ARealmSky::Tick(float DeltaSeconds)
 			}
 		}
 	}
+	// The lone planet stands on the sun: hide the sun's disc while a realm holds the sky, before the planet arrives and
+	// until it has gone (through a translucent planet, and in the eclipse, it showed as a bright dot; at every change it
+	// popped in between the outgoing and the incoming planet). The sky atmosphere draws the disc from this scale.
+	if (UDirectionalLightComponent* S = Sun.Get())
+	{
+		const float HideTarget = (!bAll && (Shown != ERealm::None || LoneMax > 0.001f)) ? 1.f : 0.f;
+		const float Before = SunHide;
+		SunHide = FMath::FInterpConstantTo(SunHide, HideTarget, DeltaSeconds, HideTarget > SunHide ? 30.f : 0.4f);   // gone at once, back over 2.5 s
+		if (Before <= 0.f && SunHide > 0.f) { SunDiskBase = S->AtmosphereSunDiskColorScale; }
+		// the sky sphere draws its own sun disc and glow too (that was the bright dot in the eclipse at every change)
+		if (!SkySphereMID.IsValid() && SkyCached.IsValid())
+		{
+			TArray<UStaticMeshComponent*> Meshes; SkyCached->GetComponents(Meshes);
+			for (UStaticMeshComponent* M : Meshes)
+			{
+				if (M->GetName() == TEXT("Sky_Sphere")) { SkySphere = M; SkySphereMID = Cast<UMaterialInstanceDynamic>(M->GetMaterial(0)); }
+			}
+		}
+		if (UMaterialInstanceDynamic* Mid = SkySphereMID.Get())
+		{
+			if (Before <= 0.f && SunHide > 0.f)
+			{
+				SunBrightBase = Mid->K2_GetScalarParameterValue(TEXT("Sun Brightness"));
+				SunHighlightBase = Mid->K2_GetScalarParameterValue(TEXT("Sun_Highlight_Intensity"));
+				SunRadiusBase = Mid->K2_GetScalarParameterValue(TEXT("Sun Radius"));
+			}
+		}
+		ApplySunHide();
+	}
+}
+
+void ARealmSky::ApplySunHide()
+{
+	// Also run after every actor has ticked (OnWorldPostActorTick): during weather changes Ultra Dynamic Sky rewrites
+	// the sun disc later in the frame than this actor, and the sun came back in every change (checked live 2026-11-11:
+	// the dot is the sky atmosphere disc; with its scale at 0 it is gone).
+	UDirectionalLightComponent* S = Sun.Get();
+	if (!S || (SunHide <= 0.f && !bSunOverridden))
+	{
+		return;
+	}
+	S->SetAtmosphereSunDiskColorScale(SunDiskBase * (1.f - SunHide));
+	// the sky may swap its material instance: always the one on the sphere now
+	if (SkySphere.IsValid()) { SkySphereMID = Cast<UMaterialInstanceDynamic>(SkySphere->GetMaterial(0)); }
+	if (UMaterialInstanceDynamic* Mid = SkySphereMID.Get())
+	{
+		if (SunBrightBase >= 0.f)
+		{
+			Mid->SetScalarParameterValue(TEXT("Sun Brightness"), SunBrightBase * (1.f - SunHide));
+			Mid->SetScalarParameterValue(TEXT("Sun_Highlight_Intensity"), SunHighlightBase * (1.f - SunHide));
+			// the sky sphere draws a second sun disc while a realm runs: its size is what removes it (checked live)
+			Mid->SetScalarParameterValue(TEXT("Sun Radius"), SunRadiusBase * (1.f - SunHide));
+		}
+	}
+	bSunOverridden = SunHide > 0.f;   // one last write restores the sky's own values, then it is left alone
+}
+
+void ARealmSky::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	FWorldDelegates::OnWorldPostActorTick.Remove(PostTickHandle);
+	Super::EndPlay(EndPlayReason);
 }
