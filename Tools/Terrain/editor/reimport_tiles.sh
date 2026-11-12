@@ -1,6 +1,6 @@
 #!/bin/bash
-# Re-imports route tiles (render + route collision) in batches of 8, restarting the editor every 3 batches
-# (each batch adds ~3 GB to the editor; it ran out of memory near 24 GB once).
+# Re-imports route tiles (render + route collision) in batches of 8, restarting the editor whenever it passes
+# 13 GB after a batch (each batch adds ~3 GB to the editor; it ran out of memory near 24 GB once; keep it under 20 GB).
 #   bash Tools/Terrain/editor/reimport_tiles.sh <file with tile names>
 cd /f/UE_project/YggdrasilsPeak
 S="$(dirname "$1")"
@@ -17,11 +17,14 @@ cat > "$TEMP/ygg/rt_quit.py" <<'EOF'
 import unreal
 L = unreal.EditorLoadingAndSavingUtils
 for p in L.get_dirty_content_packages(): unreal.EditorAssetLibrary.save_asset(p.get_name(), only_if_is_dirty=False)
+if [p for p in L.get_dirty_map_packages() if "base_map" in p.get_name()]: L.save_current_level()   # re-imported tiles dirty the level
 left = [p.get_name() for p in L.get_dirty_content_packages()] + [p.get_name() for p in L.get_dirty_map_packages()]
 print("still dirty:", left)
 if not left: unreal.SystemLibrary.quit_editor()
 EOF
 start_editor() {
+  for i in $(seq 1 60); do tasklist //FI "IMAGENAME eq UnrealEditor.exe" | grep -q UnrealEditor || break; sleep 5; done
+  tasklist //FI "IMAGENAME eq UnrealEditor.exe" | grep -q UnrealEditor && { echo "editor did not quit - stopping"; exit 1; }
   cmd //c start "" "$UE" "$PROJ"; sleep 60
   for i in $(seq 1 30); do python -I Tools/RoutePlanning/uepy.py "$TEMP/ygg/rt_loadmap.py" 2>/dev/null | grep -q "map ready" && return; sleep 20; done
 }
@@ -32,9 +35,11 @@ while [ $# -gt 0 ]; do
   echo "$batch" > "$TEMP/ygg/batch.txt"
   python -I Tools/RoutePlanning/uepy.py Tools/Terrain/editor/routeRenderBatch.py 2>&1 | grep -a "imported\|rror" | head -1
   b=$((b+1))
-  if [ $((b % 3)) -eq 0 ] && [ $# -gt 0 ]; then
+  gb=$(powershell -NoProfile -command "[int]((Get-Process UnrealEditor -ErrorAction SilentlyContinue | Measure-Object WorkingSet64 -Sum).Sum/1GB)")
+  echo "batch $b done, editor ${gb} GB"
+  if [ "${gb:-0}" -ge 13 ] && [ $# -gt 0 ]; then
     python -I Tools/RoutePlanning/uepy.py "$TEMP/ygg/rt_quit.py" 2>&1 | grep -a "still dirty"
-    sleep 45; start_editor
+    start_editor
   fi
 done
 echo "reimport done"

@@ -44,7 +44,7 @@ static FAutoConsoleCommandWithWorldAndArgs CmdSoundTour(TEXT("snd"),
 
 namespace
 {
-	float SS(float A, float B, float X) { return FMath::SmoothStep(A, B, X); }
+	float TourSS(float A, float B, float X) { return FMath::SmoothStep(A, B, X); }
 
 	FString Pretty(const FString& Name)
 	{
@@ -303,7 +303,7 @@ void USoundTourComponent::BuildSteps()
 				FString::Printf(TEXT("the phrase the game picks at about %d%% effort, at that loudness"), FMath::RoundToInt(Effort * 100.f)));
 			S.Sound = Found[i];
 			S.AssetFile = Files[i];
-			S.Volume = BreathVolume * FMath::Lerp(0.35f, 1.f, SS(0.15f, 0.9f, Effort));
+			S.Volume = BreathVolume * FMath::Lerp(0.35f, 1.f, TourSS(0.15f, 0.9f, Effort));
 			S.Seconds = Found[i]->GetDuration();
 		}
 	}
@@ -314,7 +314,7 @@ void USoundTourComponent::BuildSteps()
 		TEXT("The game's own wind mix while the wind goes from 2 to 10 over 40 s, as if at 6,000 m. Sound only: the sky does not change.")).Seconds = 45.f;
 	{
 		const float E = GetOwner()->FindComponentByClass<USurvivalComponent>() ? GetOwner()->FindComponentByClass<USurvivalComponent>()->GetElevationMeters() : 5000.f;
-		const float Altitude = FMath::Lerp(0.55f, 1.f, SS(4000.f, 7000.f, E));
+		const float Altitude = FMath::Lerp(0.55f, 1.f, TourSS(4000.f, 7000.f, E));
 		static const TCHAR* const Beds[][3] = {
 			{ TEXT("Wind_Calm"), TEXT("0.6"), TEXT("always under everything, strongest in calm weather") },
 			{ TEXT("Wind_Gusty"), TEXT("0.8"), TEXT("moderate to strong wind (at its strongest, wind 5-7)") },

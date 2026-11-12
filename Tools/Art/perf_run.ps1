@@ -3,6 +3,9 @@
 # Captures 600 frames after warm-up with the CSV profiler, prints median / p95 frame time. Run from PowerShell.
 param([string]$Name, [double]$X, [double]$Y, [double]$Z, [double]$P, [double]$W, [double]$Spindrift = -1, [string]$Extra = "")
 $proj = "F:\UE_project\YggdrasilsPeak"
+# a run can walk past a camp and write the expedition save: keep the player's save and put it back afterwards
+$sav = "$proj\Saved\SaveGames\Expedition.sav"; $savBak = "$env:TEMP\ygg_expedition_keep.sav"
+if (Test-Path $sav) { Copy-Item $sav $savBak -Force }
 $csvDir = "$env:LOCALAPPDATA\UnrealEngine\5.8\Saved\Profiling\CSV"   # UE 5.8 writes here, not the project
 $before = @(Get-ChildItem $csvDir -Filter *.csv -ErrorAction SilentlyContinue | ForEach-Object FullName)
 $cmds = "Ghost, BugItGo $X $Y $Z $P $W 0, ygg.Snow.Spindrift $Spindrift, t.MaxFPS 0, r.VSync 0"
@@ -12,7 +15,8 @@ $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEdi
     "-nosplash", "-NoSound", "-log=PerfRun.log", "-csvCaptureFrames=600", "-csvStartFrame=900", "-ExitAfterCsvProfiling",
     "-ExecCmds=`"$cmds`"")
 $proc.WaitForExit(420000) | Out-Null
+if (Test-Path $savBak) { Copy-Item $savBak $sav -Force }
 if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force; "TIMEOUT" }
 $new = Get-ChildItem $csvDir -Filter *.csv | Where-Object { $before -notcontains $_.FullName } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if (-not $new) { "NO CSV"; exit }
+if (-not $new) { if (Test-Path $savBak) { Copy-Item $savBak $sav -Force }; "NO CSV"; exit }
 python "$proj\Tools\Art\csv_frames.py" $new.FullName $Name

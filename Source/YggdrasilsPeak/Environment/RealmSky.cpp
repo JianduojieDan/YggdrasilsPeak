@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Environment/RealmSky.h"
+#include "Environment/LightningBolt.h"
+#include "Survival/YggSettings.h"
 
 #include "Components/AudioComponent.h"
 #include "Components/DirectionalLightComponent.h"
@@ -104,6 +106,16 @@ static FAutoConsoleCommandWithWorldAndArgs CmdTimeLapseShort(TEXT("tl"), TEXT("t
 		CVarTimeLapse->Set(Args.Num() ? FCString::Atof(*Args[0]) : 0.f, ECVF_SetByConsole);
 	}));
 
+static FAutoConsoleCommandWithWorldAndArgs CmdStormStrike(TEXT("ygg.Storm.Strike"),
+	TEXT("ygg.Storm.Strike [km] [branchiness 0..1]: one lightning strike towards the storm, with its thunder (branchiness below 0 or left out = by chance)"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (ARealmSky* Sky = ARealmSky::Get(World))
+		{
+			Sky->Strike(-1, Args.Num() > 0 ? FCString::Atof(*Args[0]) : 1.5f, false, Args.Num() > 1 ? FCString::Atof(*Args[1]) : -1.f);
+		}
+	}));
+
 static FAutoConsoleCommandWithWorldAndArgs CmdRealm(TEXT("ygg.Realm"),
 	TEXT("Shows a realm planet in the sky: ygg.Realm <Midgard|Niflheim|Muspelheim|Jotunheim|Alfheim|Vanaheim|Svartalfheim|Hel|Asgard|none|all>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
@@ -200,6 +212,17 @@ void ARealmSky::BeginPlay()
 	MakeAsgardRings();
 	FParse::Value(FCommandLine::Get(), TEXT("YggForecastIn="), AnnounceIn);   // captures: spin the wheel at a known moment
 	ShowRealm(ERealm::None);   // the world starts in ordinary clear weather
+	// warm the bolt's shaders: a primitive is only drawn once its pipeline is compiled (r.PSOPrecache.ProxyCreationStrategy),
+	// so the first strike of a session would otherwise flash with no bolt. One tiny bolt deep under the ground.
+	{
+		FActorSpawnParameters SP;
+		SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		const FVector Deep = GetActorLocation() - FVector(0.f, 0.f, 2000000.f);
+		if (ALightningBolt* Warm = GetWorld()->SpawnActor<ALightningBolt>(ALightningBolt::StaticClass(), Deep, FRotator::ZeroRotator, SP))
+		{
+			Warm->Fire(Deep, Deep - FVector(0.f, 0.f, 50000.f), 0.f, 1.f, 0.01f, 1);
+		}
+	}
 	if (FParse::Param(FCommandLine::Get(), TEXT("YggPerfSteps")))
 	{
 		FFileHelper::LoadFileToStringArray(PerfSteps, *(FPaths::ProjectSavedDir() / TEXT("perf_steps.txt")));
@@ -477,10 +500,21 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 	{
 		WindVar->Set(Look.Active > 0.01f ? FMath::Lerp(-1.f, Look.Wind, FMath::Min(Look.Active * 4.f, 1.f)) : -1.f, ECVF_SetByCode);
 	}
-	const bool bFlash = FlashLeft > 0.f && FMath::Fmod(FlashLeft, 0.12f) > 0.04f;   // a short flicker, not one pulse
+	// What lights the world now: a glow in the clouds flickers on its own; a drawn bolt lights it on its strokes
+	const float CloudLit = (FlashLeft > 0.f && FMath::Fmod(FlashLeft, 0.12f) > 0.04f) ? FlashPower : 0.f;   // a short flicker, not one pulse
+	float BoltLit = 0.f;
+	for (int32 i = Bolts.Num() - 1; i >= 0; --i)
+	{
+		const ALightningBolt* B = Bolts[i].Bolt.Get();
+		if (!B) { Bolts.RemoveAt(i); continue; }
+		const float BL = B->GetLight() * Bolts[i].Power;
+		if (BL > BoltLit) { BoltLit = BL; if (BL >= CloudLit) { FlashDir = Bolts[i].Dir; } }
+	}
+	const float LitNow = FMath::Max(CloudLit, BoltLit) * YggSettings::FlashScale();   // Settings > Accessibility > soft flashes
+	const bool bFlash = LitNow > 0.01f;
 	const float A = Look.Active;
 	// The flash lights the world from the strike's side with a light of its own (no shadows, cheap): it can only brighten
-	if (FlashPower > 0.f && !LightningLight)
+	if (bFlash && !LightningLight)
 	{
 		LightningLight = NewObject<UDirectionalLightComponent>(this, TEXT("LightningLight"));
 		LightningLight->SetMobility(EComponentMobility::Movable);
@@ -493,7 +527,7 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 	}
 	if (LightningLight)
 	{
-		const float Strength = bFlash ? 3.f * FMath::Max(SunBase, 2.f) * FlashPower : 0.f;
+		const float Strength = 3.f * FMath::Max(SunBase, 2.f) * LitNow;
 		LightningLight->SetIntensity(Strength);
 		LightningLight->SetVisibility(Strength > 0.f);
 		if (Strength > 0.f) { LightningLight->SetWorldRotation((-FlashDir - FVector(0.f, 0.f, 0.9f)).GetSafeNormal().Rotation()); }
@@ -533,7 +567,7 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 		DeckMat->SetScalarParameterValue(TEXT("Scale"), Look.CloudScale);
 		// lightning lights the deck from inside, same frames as the ground: it only ever ADDS light (a fixed flash colour
 		// used to replace the storm's own, which could be darker by day: the flash dimmed the sky)
-		const float Lit = bFlash ? FlashPower : 0.f;
+		const float Lit = LitNow;
 		DeckMat->SetVectorParameterValue(TEXT("Dark"), Look.CloudDark * NightDeck + FLinearColor(0.75f, 0.9f, 1.2f) * Lit);
 		DeckMat->SetVectorParameterValue(TEXT("Light"), Look.CloudLight * NightDeck + FLinearColor(1.5f, 1.8f, 2.2f) * Lit);
 	}
@@ -567,7 +601,7 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 	}
 	if (L)
 	{
-		const float Lit = bFlash ? FlashPower : 0.f;
+		const float Lit = LitNow;
 		L->SetLightColor(FMath::Lerp(Look.SkyColor, FLinearColor(0.6f, 0.8f, 1.f), Lit));   // the colour of the shadows
 		L->SetIntensity(SkyBase * Look.SkyScale * FMath::Lerp(0.2f, 1.f, DayK) * FMath::Lerp(1.f, 6.f, Lit));
 	}
@@ -626,9 +660,9 @@ namespace
 	};
 }
 
-void ARealmSky::Strike(int32 ThunderIndex, float Km, bool bFlashOnly)
+void ARealmSky::Strike(int32 ThunderIndex, float Km, bool bFlashOnly, float Branchiness)
 {
-	QueueStrike(0.f, Km, ThunderIndex, bFlashOnly);
+	QueueStrike(0.f, Km, ThunderIndex, bFlashOnly, Branchiness);
 }
 
 void ARealmSky::StormBurst(int32 Count)
@@ -636,7 +670,7 @@ void ARealmSky::StormBurst(int32 Count)
 	// the first strike now, the others within a second and a half, each at its own distance (more often far than near)
 	for (int32 i = 0; i < Count; ++i)
 	{
-		QueueStrike(i == 0 ? 0.f : FMath::FRandRange(0.15f, 1.6f), 0.5f + 5.5f * FMath::Pow(FMath::FRand(), 1.4f), -1, false);
+		QueueStrike(i == 0 ? 0.f : FMath::FRandRange(0.15f, 1.6f), 0.4f + 5.f * FMath::Pow(FMath::FRand(), 1.6f), -1, false);
 	}
 }
 
@@ -667,7 +701,7 @@ void ARealmSky::LoadThunders()
 	}
 }
 
-void ARealmSky::QueueStrike(float Delay, float Km, int32 ThunderIndex, bool bFlashOnly)
+void ARealmSky::QueueStrike(float Delay, float Km, int32 ThunderIndex, bool bFlashOnly, float Branchiness)
 {
 	const APawn* P = UGameplayStatics::GetPlayerPawn(this, 0);
 	const AActor* Storm = Planets.IsValidIndex(int32(ERealm::Jotunheim)) ? Planets[int32(ERealm::Jotunheim)].Actor.Get() : nullptr;
@@ -681,6 +715,7 @@ void ARealmSky::QueueStrike(float Delay, float Km, int32 ThunderIndex, bool bFla
 	S.Dir = FRotator(0.f, Yaw, 0.f).Vector();
 	S.Thunder = ThunderIndex;
 	S.bFlashOnly = bFlashOnly;
+	S.Branchiness = Branchiness;
 }
 
 void ARealmSky::TickStrikes(float DeltaSeconds)
@@ -727,28 +762,56 @@ void ARealmSky::DoFlash(const FStrike& S)
 	}
 	// the nearer, the brighter; a far strike only lights the clouds a little
 	const float Power = FMath::Lerp(1.f, 0.3f, FMath::Clamp((S.Km - 0.5f) / 5.5f, 0.f, 1.f));
-	FlashLeft = FMath::Max(FlashLeft, 0.35f);
-	if (Power >= FlashPower) { FlashPower = Power; FlashDir = S.Dir; }
+	const FVector Ground = P->GetActorLocation() + S.Dir * (S.Km * 100000.f) + FVector(FMath::FRandRange(-20000.f, 20000.f), FMath::FRandRange(-20000.f, 20000.f), 0.f);
+	const float CloudBase = 150000.f;   // 1.5 km over the player
+	const FVector From = FVector(Ground.X, Ground.Y, P->GetActorLocation().Z + CloudBase);
 
-	// a visible bolt from the cloud base to the ground, or for a far one sometimes only a glow inside the clouds
-	if (!BoltSystem) { BoltSystem = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/UltraDynamicSky/Particles/Lightning_Strike.Lightning_Strike")); }
-	if (!CloudFlashSystem) { CloudFlashSystem = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/UltraDynamicSky/Particles/Obscured_Lightning.Obscured_Lightning")); }
-	const bool bInClouds = S.Km > 3.5f && FMath::FRand() < 0.5f;
-	UNiagaraSystem* System = bInClouds ? CloudFlashSystem.Get() : BoltSystem.Get();
-	if (System)
+	// a far one is sometimes only a glow inside the clouds (the sky plugin's own effect)
+	const bool bInClouds = S.Km > 3.5f && FMath::FRand() < 0.4f;
+	if (bInClouds)
 	{
-		const FVector Ground = P->GetActorLocation() + S.Dir * (S.Km * 100000.f) + FVector(FMath::FRandRange(-20000.f, 20000.f), FMath::FRandRange(-20000.f, 20000.f), 0.f);
-		const float CloudBase = 150000.f;   // 1.5 km over the player
-		const FVector From = FVector(Ground.X, Ground.Y, P->GetActorLocation().Z + CloudBase);
-		if (UNiagaraComponent* Bolt = UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, System, From, FRotator::ZeroRotator, FVector::OneVector, true, false))
+		FlashLeft = FMath::Max(FlashLeft, 0.35f);
+		if (Power >= FlashPower) { FlashPower = Power; FlashDir = S.Dir; }
+		if (!CloudFlashSystem) { CloudFlashSystem = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/UltraDynamicSky/Particles/Obscured_Lightning.Obscured_Lightning")); }
+		if (UNiagaraComponent* Glow = CloudFlashSystem ? UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, CloudFlashSystem, From, FRotator::ZeroRotator, FVector::OneVector, true, false) : nullptr)
 		{
-			Bolt->SetVariableVec3(TEXT("Target Offset"), FVector(FMath::FRandRange(-15000.f, 15000.f), FMath::FRandRange(-15000.f, 15000.f), -(CloudBase + 40000.f)));
-			Bolt->SetVariableFloat(TEXT("Intensity Scale"), FMath::Lerp(0.6f, 1.4f, Power));
-			Bolt->SetVariableFloat(TEXT("Lifetime Scale"), 1.f);
-			Bolt->Activate(true);
+			Glow->SetVariableVec3(TEXT("Target Offset"), FVector(FMath::FRandRange(-15000.f, 15000.f), FMath::FRandRange(-15000.f, 15000.f), -(CloudBase + 40000.f)));
+			Glow->SetVariableFloat(TEXT("Intensity Scale"), FMath::Lerp(0.6f, 1.4f, Power));
+			Glow->SetVariableFloat(TEXT("Lifetime Scale"), 1.6f);
+			Glow->Activate(true);
 		}
+		UE_LOG(LogTemp, Display, TEXT("RealmSky: lightning %.1f km away (in the clouds), thunder in %.1f s"), S.Km, S.bFlashOnly ? 0.f : S.ThunderIn);
+		return;
 	}
-	UE_LOG(LogTemp, Display, TEXT("RealmSky: lightning %.1f km away (%s), thunder in %.1f s"), S.Km, bInClouds ? TEXT("in the clouds") : TEXT("bolt"), S.bFlashOnly ? 0.f : S.ThunderIn);
+
+	// a drawn bolt from the cloud base down to the real ground under it (traced), else 400 m under the player
+	FVector To(Ground.X + FMath::FRandRange(-15000.f, 15000.f), Ground.Y + FMath::FRandRange(-15000.f, 15000.f), P->GetActorLocation().Z - 40000.f);
+	FHitResult Hit;
+	FCollisionQueryParams Q(SCENE_QUERY_STAT(LightningGround), false);
+	if (GetWorld()->LineTraceSingleByChannel(Hit, FVector(To.X, To.Y, From.Z), FVector(To.X, To.Y, From.Z - 600000.f), ECC_Visibility, Q))
+	{
+		To.Z = Hit.ImpactPoint.Z;
+	}
+	if (From.Z - To.Z < 40000.f) { To.Z = From.Z - 40000.f; }
+	// every strike its own shape: about a third lone channels, the rest forked, a quarter whole trees of branches
+	float Branchiness = S.Branchiness;
+	if (Branchiness < 0.f)
+	{
+		const float Roll = FMath::FRand();
+		Branchiness = Roll < 0.35f ? FMath::FRandRange(0.f, 0.2f) : Roll < 0.75f ? FMath::FRandRange(0.3f, 0.6f) : FMath::FRandRange(0.75f, 1.f);
+	}
+	// it glows on slowly: a near strike is still faintly seen when its thunder comes (up to 6.5 s); far ones 3-4 s
+	const float Delay = S.bFlashOnly ? 1.5f : S.ThunderIn;
+	const float Life = Delay + 0.8f <= 6.5f ? FMath::Max(2.2f, Delay + 0.8f) : FMath::FRandRange(3.f, 4.f);
+	FActorSpawnParameters SP;
+	SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	if (ALightningBolt* Bolt = GetWorld()->SpawnActor<ALightningBolt>(ALightningBolt::StaticClass(), From, FRotator::ZeroRotator, SP))
+	{
+		Bolt->Fire(From, To, Branchiness, Life, FMath::Lerp(0.7f, 1.3f, Power) * FMath::Lerp(1.f, YggSettings::FlashScale(), 0.7f), FMath::Rand());
+		FBoltRef& Ref = Bolts.AddDefaulted_GetRef();
+		Ref.Bolt = Bolt; Ref.Power = Power; Ref.Dir = S.Dir;
+	}
+	UE_LOG(LogTemp, Display, TEXT("RealmSky: lightning %.1f km away (bolt, branchiness %.2f, glows %.1f s), thunder in %.1f s"), S.Km, Branchiness, Life, S.bFlashOnly ? 0.f : S.ThunderIn);
 }
 
 const FRealmWeatherInfo& ARealmSky::GetWeatherInfo(int32 Index) { return GInfo[FMath::Clamp(Index, 0, NumRealms - 1)]; }

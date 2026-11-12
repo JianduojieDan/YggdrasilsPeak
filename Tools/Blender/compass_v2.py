@@ -67,21 +67,29 @@ def planar_uv(o, radius):
 parts_case, parts_needle = [], []
 # case body: rounded drum
 parts_case.append(cyl("body", 0.045, 0.012, 0.006, BRASS, bevel=0.0035))    # top at 12 mm, under the dial
-# knurled bezel ring on top
+# bezel ring on top (v3, 2026-11-12: the old 1 mm zig-zag knurl read as a jagged saw edge): a rounded coin-like
+# profile swept round, its outer side finely reeded (0.1 mm), smooth shaded - a clean round silhouette
 bm = bmesh.new()
-K = 240
-rings = []
-for zi, z in enumerate((0.0110, 0.0200)):   # bezel from the body's top up past the glass
-    outer = [bm.verts.new(((0.0468 if i % 2 else 0.0458) * math.cos(2 * math.pi * i / K), (0.0468 if i % 2 else 0.0458) * math.sin(2 * math.pi * i / K), z)) for i in range(K)]
-    inner = [bm.verts.new((0.0405 * math.cos(2 * math.pi * i / K), 0.0405 * math.sin(2 * math.pi * i / K), z)) for i in range(K)]
-    rings.append((outer, inner))
-(o0, i0), (o1, i1) = rings
+K = 720
+PROFILE = [(0.0405, 0.0110), (0.0405, 0.0188), (0.0409, 0.0197), (0.0417, 0.0203), (0.0430, 0.0206), (0.0443, 0.0205),
+           (0.0453, 0.0201), (0.0460, 0.0194), (0.0463, 0.0184), (0.0464, 0.0172), (0.0464, 0.0151), (0.0464, 0.0130),
+           (0.0462, 0.0117), (0.0456, 0.0110)]
+grid = []
 for i in range(K):
-    j = (i + 1) % K
-    bm.faces.new((o0[i], o0[j], o1[j], o1[i]))          # knurled outside
-    bm.faces.new((i0[j], i0[i], i1[i], i1[j]))          # inside wall
-    bm.faces.new((o1[i], o1[j], i1[j], i1[i]))          # top
-    bm.faces.new((o0[j], o0[i], i0[i], i0[j]))          # bottom
+    t = 2 * math.pi * i / K
+    ring = []
+    for (r, z) in PROFILE:
+        if 0.0125 <= z <= 0.0176 and r > 0.0462:
+            r += 0.00010 * math.cos(240 * t)            # fine reeding on the outer side only
+        ring.append(bm.verts.new((r * math.cos(t), r * math.sin(t), z)))
+    grid.append(ring)
+n = len(PROFILE)
+for i in range(K):
+    a, b = grid[i], grid[(i + 1) % K]
+    for k in range(n):
+        k2 = (k + 1) % n                                  # the profile closes on itself (bottom face)
+        bm.faces.new((a[k], a[k2], b[k2], b[k]))
+bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
 me = bpy.data.meshes.new("bezel"); bm.to_mesh(me); bm.free()
 parts_case.append(obj("bezel", me, BRASS))
 # dial (recessed), glass over it

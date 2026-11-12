@@ -5,6 +5,9 @@
 # summarised by Tools/Art/llm_summary.py.
 param([string]$Name, [int]$Frames = 1500, [string]$Extra = "")
 $proj = "F:\UE_project\YggdrasilsPeak"
+# a run can walk past a camp and write the expedition save: keep the player's save and put it back afterwards
+$sav = "$proj\Saved\SaveGames\Expedition.sav"; $savBak = "$env:TEMP\ygg_expedition_keep.sav"
+if (Test-Path $sav) { Copy-Item $sav $savBak -Force }
 $llmDir = "$env:LOCALAPPDATA\UnrealEngine\5.8\Saved\Profiling\LLM"
 $before = @(Get-ChildItem $llmDir -Filter *.csv -ErrorAction SilentlyContinue | ForEach-Object FullName)
 $cmds = "t.MaxFPS 0, r.VSync 0"
@@ -22,3 +25,4 @@ while (-not $proc.HasExited) {
 $new = Get-ChildItem $llmDir -Filter *.csv -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.FullName } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 "$Name : process peak working set $([math]::Round($peak/1GB,2)) GB"
 if ($new) { "LLM CSV: $($new.FullName)"; python "$proj\Tools\Art\llm_summary.py" $new.FullName } else { "NO LLM CSV" }
+if (Test-Path $savBak) { Copy-Item $savBak $sav -Force }

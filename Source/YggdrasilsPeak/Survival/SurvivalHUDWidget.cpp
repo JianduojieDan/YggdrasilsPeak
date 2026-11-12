@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Survival/SurvivalHUDWidget.h"
+#include "Survival/YggSettings.h"
 #include "Survival/InventoryComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/ExpeditionComponent.h"
@@ -405,7 +406,7 @@ void USurvivalHUDWidget::UpdateAltitudeText(const FSurvivalSnapshot& Snapshot) c
 		return;
 	}
 
-	const FString Altitude = FString::Printf(TEXT("%s m"), *FText::AsNumber(FMath::RoundToInt(Snapshot.ElevationMeters)).ToString());
+	const FString Altitude = FString::Printf(TEXT("%s %s"), *YggSettings::AltitudeNumber(Snapshot.ElevationMeters), YggSettings::AltitudeUnit());
 	const FString Oxygen = FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Snapshot.Oxygen));
 
 	TArray<FString> Status;
@@ -680,7 +681,8 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 	int32 Layer = Super::NativePaint(Args, G, Cull, Out, LayerId, Style, bParentEnabled) + 1;
 	if (!Survival.IsValid()) { return Layer; }
 	const FVector2f Size = FVector2f(G.GetLocalSize());
-	const FPen P{ G, Out, Layer, 1.f };
+	// Settings > Game > HUD hidden: the readings fade out; warnings, messages and the weather wheel stay
+	const FPen P{ G, Out, Layer, YggSettings::HudHidden() ? 0.f : 1.f };
 	// Light numerals, letter-spaced small capitals for labels (LetterSpacing is in 1/1000 em)
 	const FSlateFontInfo Num = Sans(TEXT("Light"), 21, 10);
 	const FSlateFontInfo Unit = Sans(TEXT("Light"), 11, 120);
@@ -733,8 +735,8 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 	Right(FString::FromInt(FMath::RoundToInt(Snap.Oxygen)), Num, O2); X -= 13.f;
 	DrawIcon(P, EIcon::Lungs, FVector2f(X - 4.f, BaseY - 7.f), 7.5f, O2, 1.3f); X -= 26.f;
 	P.Rect(FVector2f(X, BaseY - 15.f), FVector2f(1.f, 16.f), WithA(Ivory, 0.28f)); X -= 16.f;
-	Right(TEXT("m"), Unit, WithA(Ivory, 0.7f)); X -= 4.f;
-	Right(FText::AsNumber(FMath::RoundToInt(Snap.ElevationMeters)).ToString(), Num, Ivory); X -= 14.f;
+	Right(YggSettings::AltitudeUnit(), Unit, WithA(Ivory, 0.7f)); X -= 4.f;
+	Right(YggSettings::AltitudeNumber(Snap.ElevationMeters), Num, Ivory); X -= 14.f;
 	DrawIcon(P, EIcon::Mountain, FVector2f(X - 6.f, BaseY - 7.f), 7.5f, Ivory, 1.3f);
 
 	// Under it, small letter-spaced capitals: state and load, then supplies with their keys
@@ -753,9 +755,9 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 		P.TextRight(Key, FVector2f(ItemX, RY + 1.f), KeyF, WithA(Ivory, 0.5f)); ItemX -= P.Width(Key, KeyF) + 6.f;
 		P.TextRight(Main, FVector2f(ItemX, RY), Label, WithA(Ivory, 0.82f)); ItemX -= P.Width(Main, Label);
 	};
-	Item(TEXT("[2]"), FString::Printf(TEXT("WATER %d"), Paint.Water));
+	Item(YggSettings::KeyLabel(TEXT("Drink"), EKeys::Two), FString::Printf(TEXT("WATER %d"), Paint.Water));
 	P.TextRight(TEXT("·"), FVector2f(ItemX - 12.f, RY), Label, WithA(Quiet, 0.5f)); ItemX -= 28.f;
-	Item(TEXT("[1]"), FString::Printf(TEXT("FOOD %d"), Paint.Food));
+	Item(YggSettings::KeyLabel(TEXT("Eat"), EKeys::One), FString::Printf(TEXT("FOOD %d"), Paint.Food));
 
 	// Bottom centre: subtitle, light and spaced, no box
 	if (Paint.SubtitleTimer > 0.f && !Paint.Subtitle.IsEmpty())

@@ -2,6 +2,8 @@
 
 #include "Survival/ClimberControlsComponent.h"
 
+#include "Survival/YggSettings.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Survival/BackpackWidget.h"
 #include "Survival/SettingsWidget.h"
 #include "Survival/YggMenuWidget.h"
@@ -66,34 +68,43 @@ bool UClimberControlsComponent::TryBindInput()
 	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
 	{
 		SprintMapping = NewObject<UInputMappingContext>(this);
-		SprintMapping->MapKey(SprintAction, EKeys::LeftShift);
+		SprintMapping->MapKey(SprintAction, YggSettings::KeyFor(TEXT("Sprint"), EKeys::LeftShift)); YggSettings::RegisterKey(TEXT("Sprint"), INVTEXT("Sprint"), EKeys::LeftShift, SprintMapping, SprintAction);
 		SprintMapping->MapKey(SprintAction, EKeys::Gamepad_LeftThumbstick);
 		EatAction = NewObject<UInputAction>(this, TEXT("IA_Eat"));
 		DrinkAction = NewObject<UInputAction>(this, TEXT("IA_Drink"));
-		SprintMapping->MapKey(EatAction, EKeys::One);
+		SprintMapping->MapKey(EatAction, YggSettings::KeyFor(TEXT("Eat"), EKeys::One)); YggSettings::RegisterKey(TEXT("Eat"), INVTEXT("Eat"), EKeys::One, SprintMapping, EatAction);
 		SprintMapping->MapKey(EatAction, EKeys::Gamepad_DPad_Left);
-		SprintMapping->MapKey(DrinkAction, EKeys::Two);
+		SprintMapping->MapKey(DrinkAction, YggSettings::KeyFor(TEXT("Drink"), EKeys::Two)); YggSettings::RegisterKey(TEXT("Drink"), INVTEXT("Drink"), EKeys::Two, SprintMapping, DrinkAction);
 		SprintMapping->MapKey(DrinkAction, EKeys::Gamepad_DPad_Right);
 		InteractAction = NewObject<UInputAction>(this, TEXT("IA_Interact"));
-		SprintMapping->MapKey(InteractAction, EKeys::E);
+		SprintMapping->MapKey(InteractAction, YggSettings::KeyFor(TEXT("Interact"), EKeys::E)); YggSettings::RegisterKey(TEXT("Interact"), INVTEXT("Read / use"), EKeys::E, SprintMapping, InteractAction);
 		SprintMapping->MapKey(InteractAction, EKeys::Gamepad_FaceButton_Left);
 		RestAction = NewObject<UInputAction>(this, TEXT("IA_Rest"));
-		SprintMapping->MapKey(RestAction, EKeys::R);
+		SprintMapping->MapKey(RestAction, YggSettings::KeyFor(TEXT("Rest"), EKeys::R)); YggSettings::RegisterKey(TEXT("Rest"), INVTEXT("Rest at camp"), EKeys::R, SprintMapping, RestAction);
 		SprintMapping->MapKey(RestAction, EKeys::Gamepad_DPad_Down);
 		Input->BindAction(RestAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnRest);
 		PackAction = NewObject<UInputAction>(this, TEXT("IA_Pack"));
-		SprintMapping->MapKey(PackAction, EKeys::Tab);
+		SprintMapping->MapKey(PackAction, YggSettings::KeyFor(TEXT("Backpack"), EKeys::Tab)); YggSettings::RegisterKey(TEXT("Backpack"), INVTEXT("Backpack"), EKeys::Tab, SprintMapping, PackAction);
 		SprintMapping->MapKey(PackAction, EKeys::Gamepad_Special_Left);
 		Subsystem->AddMappingContext(SprintMapping, 1);
 		Input->BindAction(PackAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnPack);
 		SettingsAction = NewObject<UInputAction>(this, TEXT("IA_Settings"));
 		SprintMapping->MapKey(SettingsAction, EKeys::F2);
 		Input->BindAction(SettingsAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnSettings);
-		USettingsWidget::ApplySaved(GetWorld());
+		YggSettings::ApplyAll(GetWorld());
+		// whatever input mode a menu left on the viewport (the start menu's UI-only one survives the level change),
+		// the climb starts with the game's own input (to-do #64)
+		if (APlayerController* MutablePC = const_cast<APlayerController*>(PC))
+		{
+			MutablePC->SetInputMode(FInputModeGameOnly());
+			MutablePC->SetShowMouseCursor(false);
+		}
+		// arriving from the start menu's loading screen: the mountain comes up out of black
+		if (GetWorld()->WorldType == EWorldType::Game && PC->PlayerCameraManager) { PC->PlayerCameraManager->StartCameraFade(1.f, 0.f, 2.5f, FLinearColor::Black, false, false); }
 		// pause menu: Esc in a packaged game (the editor keeps Esc to stop Play), P everywhere, Start on a pad
 		PauseAction = NewObject<UInputAction>(this, TEXT("IA_Pause"));
 		SprintMapping->MapKey(PauseAction, EKeys::Escape);
-		SprintMapping->MapKey(PauseAction, EKeys::P);
+		SprintMapping->MapKey(PauseAction, YggSettings::KeyFor(TEXT("Pause"), EKeys::P)); YggSettings::RegisterKey(TEXT("Pause"), INVTEXT("Pause"), EKeys::P, SprintMapping, PauseAction);
 		SprintMapping->MapKey(PauseAction, EKeys::Gamepad_Special_Right);
 		Input->BindAction(PauseAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnPauseMenu);
 		Input->BindAction(EatAction, ETriggerEvent::Started, this, &UClimberControlsComponent::OnEat);
@@ -182,7 +193,9 @@ void UClimberControlsComponent::OnPauseMenu()
 
 void UClimberControlsComponent::OnSettings()
 {
-	USettingsWidget::Toggle(Cast<APlayerController>(Cast<APawn>(GetOwner())->GetController()));
+	APlayerController* PC = Cast<APlayerController>(Cast<APawn>(GetOwner())->GetController());
+	if (UYggMenuWidget::IsOpen(PC)) { return; }   // a menu on screen (death, summit) opens its own settings
+	USettingsWidget::Toggle(PC);
 }
 
 void UClimberControlsComponent::OnInteract()

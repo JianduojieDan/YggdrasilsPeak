@@ -98,8 +98,22 @@ void UYggQualitySubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+namespace
+{
+	// beyond the engine's scalability groups: Low and Medium draw Nanite a little coarser (half the triangles on
+	// screen; the geometry raster cost 5.8 ms of a 4K frame on 2026-11-12)
+	void ApplyTierExtras(int32 Tier)
+	{
+		if (IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Nanite.MaxPixelsPerEdge")))
+		{
+			V->Set(Tier <= 1 ? 2.f : 1.f, ECVF_SetByConsole);
+		}
+	}
+}
+
 void UYggQualitySubsystem::ApplyPercent()
 {
+	if (const UGameUserSettings* S = GEngine ? GEngine->GetGameUserSettings() : nullptr) { ApplyTierExtras(S->GetOverallScalabilityLevel()); }
 	if (IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(TEXT("r.ScreenPercentage")))
 	{
 		V->Set(Percent, ECVF_SetByConsole);   // above the scalability group, which would force 100

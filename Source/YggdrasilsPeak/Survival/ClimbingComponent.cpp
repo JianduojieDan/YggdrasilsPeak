@@ -2,6 +2,7 @@
 
 #include "Survival/ClimbingComponent.h"
 
+#include "Survival/YggSettings.h"
 #include "Survival/ExpeditionComponent.h"
 #include "Survival/SnowTrailComponent.h"
 #include "Survival/SurvivalComponent.h"
@@ -98,9 +99,9 @@ bool UClimbingComponent::TryBindInput()
 	Mapping = NewObject<UInputMappingContext>(this);
 	ClimbAction = NewObject<UInputAction>(this, TEXT("IA_Climb"));
 	LetGoAction = NewObject<UInputAction>(this, TEXT("IA_LetGo"));
-	Mapping->MapKey(ClimbAction, EKeys::SpaceBar);
+	Mapping->MapKey(ClimbAction, YggSettings::KeyFor(TEXT("Climb"), EKeys::SpaceBar)); YggSettings::RegisterKey(TEXT("Climb"), INVTEXT("Climb / grab"), EKeys::SpaceBar, Mapping, ClimbAction);
 	Mapping->MapKey(ClimbAction, EKeys::Gamepad_FaceButton_Bottom);
-	Mapping->MapKey(LetGoAction, EKeys::C);
+	Mapping->MapKey(LetGoAction, YggSettings::KeyFor(TEXT("LetGo"), EKeys::C)); YggSettings::RegisterKey(TEXT("LetGo"), INVTEXT("Let go"), EKeys::C, Mapping, LetGoAction);
 	Mapping->MapKey(LetGoAction, EKeys::Gamepad_FaceButton_Right);
 	Subsystem->AddMappingContext(Mapping, 2);
 	Input->BindAction(ClimbAction, ETriggerEvent::Started, this, &UClimbingComponent::OnClimbPressed);

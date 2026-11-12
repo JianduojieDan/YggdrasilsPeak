@@ -5,7 +5,12 @@
 // with patchy snow and dark ice faces), bare ice ~5350-6000 m (Base Camp / Icefall), snow-covered glacier above
 // (only steep ice shows through). Explicit mips everywhere: ray-tracing hit shaders have no derivatives.
 struct GlacierFx {
-  float H1(float2 p){ return frac(sin(dot(p,float2(127.1,311.7)))*43758.5453); }
+  // 2026-11-12 (#55): exact integer hash of the lattice cell. The old sin() hash of world-scale coordinates came out
+  // slightly different for the same lattice point seen from two neighbouring cells (the GPU compiler reassociates the
+  // dot product), so the noise jumped along its grid lines: the long straight lines on the glacier snow.
+  uint IH(float2 p){ int2 i = int2(floor(p)); uint h = asuint(i.x) * 0x8da6b343u + asuint(i.y) * 0xd8163841u;
+    h ^= h >> 15; h *= 0x2c1b3c6du; h ^= h >> 12; h *= 0x297a2d39u; h ^= h >> 15; return h; }
+  float H1(float2 p){ return float(IH(p) & 0xffffffu) / 16777216.0; }
   float VN(float2 p){ float2 i=floor(p), f=frac(p); f=f*f*(3.0-2.0*f);
     return lerp(lerp(H1(i),H1(i+float2(1,0)),f.x),lerp(H1(i+float2(0,1)),H1(i+1.0),f.x),f.y); }
   float Fbm(float2 p){ return 0.5*VN(p)+0.3*VN(p*2.13+17.3)+0.2*VN(p*4.71+5.1); }
@@ -21,7 +26,9 @@ struct GlacierFx {
 };
 GlacierFx gf;
 struct IcePlates {
-  float2 H2(float2 p){ return frac(sin(float2(dot(p,float2(127.1,311.7)),dot(p,float2(269.5,183.3))))*43758.5453); }
+  uint IH(float2 p){ int2 i = int2(floor(p)); uint h = asuint(i.x) * 0x8da6b343u + asuint(i.y) * 0xd8163841u;
+    h ^= h >> 15; h *= 0x2c1b3c6du; h ^= h >> 12; h *= 0x297a2d39u; h ^= h >> 15; return h; }
+  float2 H2(float2 p){ uint h = IH(p); return float2(float(h & 0xffffu), float(h >> 16)) / 65536.0; }
   // nearest cell of a jittered grid: xy = that cell's two random numbers, z = distance to its centre
   float3 Cell(float2 p){ float2 i=floor(p), f=frac(p); float best=8.0; float2 id=i;
     for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){ float2 g=float2(x,y); float2 r=g+H2(i+g)-f; float d=dot(r,r); if(d<best){best=d; id=i+g;} }
@@ -31,7 +38,9 @@ IcePlates ipl;
 struct MorHexFx {
 // ---- detail tiles: moraine sampled in randomly rotated / offset hexagonal cells (no visible 4.5 m repeat).
 // The same function runs in the displacement node, so the raised stones line up with the visible ones.
-float2 MH2(float2 p){ return frac(sin(float2(dot(p,float2(127.1,311.7)),dot(p,float2(269.5,183.3))))*43758.5453); }
+uint MIH(float2 p){ int2 i = int2(floor(p)); uint h = asuint(i.x) * 0x8da6b343u + asuint(i.y) * 0xd8163841u;
+  h ^= h >> 15; h *= 0x2c1b3c6du; h ^= h >> 12; h *= 0x297a2d39u; h ^= h >> 15; return h; }
+float2 MH2(float2 p){ uint h = MIH(p); return float2(float(h & 0xffffu), float(h >> 16)) / 65536.0; }
 float2 MRot(float2 v, float a){ float s,c; sincos(a,s,c); return float2(c*v.x-s*v.y, s*v.x+c*v.y); }
 void MHex(float2 uv, out float3 w, out float2 u1, out float2 u2, out float2 u3, out float3 ang)
 {
@@ -192,7 +201,9 @@ float aU = g * (1.0 - debris - bare) * steep * 0.6;
 float lumM = dot(mc, float3(0.333, 0.333, 0.333));
 float wob2 = (gf.Fbm(WP.xy / 350.0) - 0.5) * 0.5 + (gf.Fbm(WP.xy / 90.0 + 5.0) - 0.5) * 0.35;
 float cover = tr + wob2 - (lumM - 0.45) * 0.35;
-float aT = smoothstep(0.42, 0.58, cover) * smoothstep(0.5, 0.78, n.z);
+// 2026-11-12 (#55): only where the rubble map clearly says rubble. A trace of TileRock along single vertex rows
+// (interpolated UV0 crumbs) let the noise above lift whole strips to full rubble: the long straight lines on the snow.
+float aT = smoothstep(0.42, 0.58, cover) * smoothstep(0.5, 0.78, n.z) * smoothstep(0.04, 0.2, tr);
 // rubble tone: mottled light and dark over tens of metres, slightly warm grey-brown (South Col photo)
 float3 mcT = mc * lerp(0.62, 1.08, gf.Fbm(WP.xy / 2500.0 + 4.2)) * float3(0.97, 0.98, 1.0);
 aD = max(aD, aT);

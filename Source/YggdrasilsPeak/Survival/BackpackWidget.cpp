@@ -568,6 +568,13 @@ void UBackpackWidget::RefreshCard()
 
 	CardIcon->SetBrushFromTexture(Tex(I->Texture), false);
 	CardTitle->SetText(I->Title);
+	{
+		// the hand-written title must stay on the paper (330 px): long names ("Father's compass") get smaller
+		FSlateFontInfo F = CardTitle->GetFont();
+		const int32 Len = I->Title.ToString().Len();
+		F.Size = Len > 13 ? FMath::Max(28, FMath::RoundToInt(44.f * 13.f / Len)) : 44;
+		CardTitle->SetFont(F);
+	}
 	FText Body = I->Body, Stats = I->Stats, Count = FText::GetEmpty(), Action = FText::GetEmpty();
 	if (Selected == TEXT("Ration") || Selected == TEXT("Water"))
 	{

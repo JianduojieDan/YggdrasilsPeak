@@ -378,9 +378,36 @@ void UExpeditionComponent::HandleDeath()
 	const FText Cause = Survival.IsValid() && !Survival->GetDeathCause().IsEmpty() ? Survival->GetDeathCause()
 		: NSLOCTEXT("Expedition", "Died", "You died.");
 	const FText Where = LastCheckpoint.IsValid() ? FText::FromString(LastCheckpointName) : NSLOCTEXT("Expedition", "Start", "the start");
+	// the death screen after a breath (2026-11-12 menus): what took you, where, and back to the last camp from there
+	const APawn* Pawn = Cast<APawn>(GetOwner());
+	if (Pawn && Cast<APlayerController>(Pawn->GetController()))
+	{
+		GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &UExpeditionComponent::ShowDeathScreen, 2.5f);
+		return;
+	}
 	Say(FText::Format(NSLOCTEXT("Expedition", "Death", "{0} Back to {1}..."), Cause, Where), RespawnDelay + 2.f);
-
 	GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &UExpeditionComponent::Respawn, FMath::Max(RespawnDelay, 0.1f));
+}
+
+int32 UExpeditionComponent::GetPlaySeconds() const
+{
+	return FMath::RoundToInt(SavedPlaySeconds + GetWorld()->GetTimeSeconds() - StartTime);
+}
+
+void UExpeditionComponent::ShowDeathScreen()
+{
+	const APawn* Pawn = Cast<APawn>(GetOwner());
+	APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
+	const FText Cause = Survival.IsValid() && !Survival->GetDeathCause().IsEmpty() ? Survival->GetDeathCause()
+		: NSLOCTEXT("Expedition", "Died", "You died.");
+	const float Meters = Survival.IsValid() ? Survival->GetElevationMeters() : 0.f;
+	TWeakObjectPtr<UExpeditionComponent> Self(this);
+	UYggMenuWidget::ShowDeath(PC, Cause, Meters, GetPlaySeconds(), Deaths, LastCheckpoint.IsValid() ? LastCheckpointName : FString(),
+		[Self]() { if (Self.IsValid()) { Self->Respawn(); } });
+	if (!UYggMenuWidget::IsOpen(PC))
+	{
+		Respawn();
+	}
 }
 
 void UExpeditionComponent::Respawn()

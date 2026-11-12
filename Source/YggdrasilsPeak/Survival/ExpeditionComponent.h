@@ -88,6 +88,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="Expedition")
 	bool HasReachedSummit() const { return bSummitReached; }
 
+	/** Seconds on the mountain, this expedition (carried over through saves). */
+	int32 GetPlaySeconds() const;
+	/** The last camp or checkpoint reached (empty before the first). */
+	const FString& GetCampName() const { return LastCheckpointName; }
+	int32 GetDeaths() const { return Deaths; }
+
 	UFUNCTION(BlueprintPure, Category="Expedition")
 	bool IsExpeditionComplete() const { return bFinished; }
 
@@ -138,6 +144,8 @@ private:
 	void HandleDeath();
 
 	void Respawn();
+	/** After a death: the death screen (UYggMenuWidget::ShowDeath); Return calls Respawn. */
+	void ShowDeathScreen();
 	void UpdateCamps();
 	/** Checkpoint (camp or trail checkpoint): pack, body and bottles for the next respawn, and the save game on disk. */
 	void SaveCheckpoint(AActor* Where, const FString& Name);

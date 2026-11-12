@@ -2,6 +2,7 @@
 
 #include "Survival/CompassComponent.h"
 
+#include "Survival/YggSettings.h"
 #include "Environment/RouteLandmark.h"
 #include "Survival/ExpeditionComponent.h"
 #include "Survival/StoryClue.h"
@@ -105,7 +106,7 @@ bool UCompassComponent::TryBindInput()
 	}
 	Mapping = NewObject<UInputMappingContext>(this);
 	ToggleAction = NewObject<UInputAction>(this, TEXT("IA_Compass"));
-	Mapping->MapKey(ToggleAction, EKeys::Q);
+	Mapping->MapKey(ToggleAction, YggSettings::KeyFor(TEXT("Compass"), EKeys::Q)); YggSettings::RegisterKey(TEXT("Compass"), INVTEXT("Compass"), EKeys::Q, Mapping, ToggleAction);
 	Mapping->MapKey(ToggleAction, EKeys::Gamepad_DPad_Up);
 	Subsystem->AddMappingContext(Mapping, 2);
 	Input->BindAction(ToggleAction, ETriggerEvent::Started, this, &UCompassComponent::Toggle);

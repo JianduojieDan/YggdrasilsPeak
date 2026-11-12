@@ -95,7 +95,7 @@ public:
 	bool TakeHandWheel() { const bool b = bHandWheel; bHandWheel = false; return b; }
 	/** One lightning strike now, Km away towards the storm: a visible bolt and a flash, its thunder at the speed of sound
 	 *  (Index = which thunder, -1 random; bFlashOnly: no thunder, the caller plays its own). */
-	void Strike(int32 ThunderIndex = -1, float Km = 1.5f, bool bFlashOnly = false);
+	void Strike(int32 ThunderIndex = -1, float Km = 1.5f, bool bFlashOnly = false, float Branchiness = -1.f);
 	/** A burst of Count strikes at once at different distances, as the Jotunheim storm makes them. */
 	void StormBurst(int32 Count);
 	/** How a thunder Km away sounds: quieter, duller (low-pass Hz) and a little lower the further it struck. */
@@ -155,11 +155,14 @@ private:
 		int32 Thunder = -1;
 		bool bFlashed = false;
 		bool bFlashOnly = false;
+		float Branchiness = -1.f; // 0 a lone channel .. 1 a heavy fork tree; below 0 = drawn by chance
 	};
+	struct FBoltRef { TWeakObjectPtr<class ALightningBolt> Bolt; float Power = 1.f; FVector Dir = FVector::ForwardVector; };
+	TArray<FBoltRef> Bolts;                    // the hand-drawn strikes still glowing (they light the world on their strokes)
 	TArray<FStrike> Strikes;
 	float FlashPower = 0.f;                    // 0..1, how bright the current flash is (close strikes brighter)
 	FVector FlashDir = FVector::ForwardVector;
-	void QueueStrike(float Delay, float Km, int32 ThunderIndex, bool bFlashOnly);
+	void QueueStrike(float Delay, float Km, int32 ThunderIndex, bool bFlashOnly, float Branchiness = -1.f);
 	void TickStrikes(float DeltaSeconds);
 	void DoFlash(const FStrike& S);
 	void LoadThunders();
