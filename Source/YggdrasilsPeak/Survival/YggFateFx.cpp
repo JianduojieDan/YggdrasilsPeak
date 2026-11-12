@@ -209,10 +209,10 @@ namespace
 					const float K = (T - P.Delay) / P.Dur;
 					if (K <= 0.f) { continue; }
 					// a dark split with a lit edge beside it
-					FxPartial(Out, L + 1, G, P.P, K, FLinearColor(0.f, 0.f, 0.01f, 0.75f * P.Alpha * A), 1.8f);
+					FxPartial(Out, L + 1, G, P.P, K, FLinearColor(0.f, 0.f, 0.01f, 0.95f * P.Alpha * A), 2.4f);
 					TArray<FVector2f> Lit = P.P;
 					for (FVector2f& Q : Lit) { Q += FVector2f(1.2f, 1.2f); }
-					FxPartial(Out, L + 2, G, Lit, K, FLinearColor(0.93f, 0.91f, 0.84f, 0.22f * P.Alpha * A), 1.f);
+					FxPartial(Out, L + 2, G, Lit, K, FLinearColor(0.93f, 0.91f, 0.84f, 0.38f * P.Alpha * A), 1.2f);
 				}
 				break;
 			case YggFate::Buried:
@@ -335,7 +335,7 @@ namespace
 						float Ang = R.FRandRange(0.9f, 2.2f);
 						P.Add(Q);
 						for (int32 k = 0; k < 5; ++k) { Ang += R.FRandRange(-0.6f, 0.6f); Q += FVector2f(FMath::Cos(Ang), FMath::Sin(Ang)) * H * 0.06f; P.Add(Q); }
-						FxPartial(Out, L, G, P, K, FLinearColor(0.22f, 0.11f, 0.04f, 0.85f * A), 1.4f);
+						FxPartial(Out, L, G, P, K, FLinearColor(0.15f, 0.07f, 0.02f, 1.f * A), 2.1f);
 					}
 				}
 				break;
