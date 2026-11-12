@@ -97,6 +97,7 @@ private:
 	bool bMouseMoved = false;
 	bool bUIOnly = false;
 	bool bDescDirty = true;
+	bool bPad = false;
 	TFunction<void()> OnClosedFn;
 	TArray<TWeakObjectPtr<class UYggMenuBase>> Hidden;   // menus whose words step aside while the settings are open
 	TArray<float> TabHot;
@@ -109,6 +110,8 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> DescText;
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> DescChoices;
 	UPROPERTY(Transient) TObjectPtr<UImage> GrainImg;
+	UPROPERTY(Transient) TObjectPtr<UWidget> KeysRow;
+	UPROPERTY(Transient) TObjectPtr<UWidget> PadKeysRow;
 	UPROPERTY(Transient) TObjectPtr<class UBackgroundBlur> Blur;
 	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> TabTexts;
 	UPROPERTY(Transient) TArray<TObjectPtr<UImage>> TabLines;

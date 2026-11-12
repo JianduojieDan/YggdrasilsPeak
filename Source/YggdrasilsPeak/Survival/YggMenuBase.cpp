@@ -485,20 +485,32 @@ void UYggMenuBase::BuildRoll()
 void UYggMenuBase::BuildPrompts()
 {
 	if (PromptRow) { FadeWithWords.Remove(PromptRow); PromptRow->RemoveFromParent(); PromptRow = nullptr; }
+	if (PadRow) { FadeWithWords.Remove(PadRow); PadRow->RemoveFromParent(); PadRow = nullptr; }
 	if (!bShowHints || Page.bSplash) { return; }
 	TArray<TPair<FString, FString>> Items;
 	if (Page.Options.Num() > 1) { Items.Add({ Page.bModal ? TEXT("← →") : TEXT("↑ ↓"), TEXT("Choose") }); }
 	if (Page.Options.Num() > 0) { Items.Add({ TEXT("Enter"), TEXT("Confirm") }); }
 	if (Page.Back) { Items.Add({ TEXT("Esc"), TEXT("Back") }); }
-	PromptRow = YggUI::Prompts(WidgetTree, Items);
-	PromptRow->SetVisibility(ESlateVisibility::HitTestInvisible);
-	UCanvasPanelSlot* S = Canvas->AddChildToCanvas(PromptRow);
-	S->SetAnchors(FAnchors(0.94f, 1.f));
-	S->SetAlignment(FVector2D(1.f, 0.5f));
-	S->SetPosition(FVector2D(0.f, -50.f));
-	S->SetAutoSize(true);
-	S->SetZOrder(5);
-	FadeWithWords.Add(PromptRow);
+	// the same prompts as gamepad buttons, shown while a pad is in use
+	TArray<TPair<FString, FString>> Pad;
+	for (const TPair<FString, FString>& It : Items)
+	{
+		const FString K = It.Key == TEXT("Enter") ? TEXT("A") : It.Key == TEXT("Esc") ? TEXT("B") : It.Key == TEXT("Q E") ? TEXT("LB RB") : TEXT("D-pad");
+		Pad.Add({ K, It.Value });
+	}
+	for (int32 k = 0; k < 2; ++k)
+	{
+		UHorizontalBox* Row = YggUI::Prompts(WidgetTree, k == 0 ? Items : Pad);
+		Row->SetVisibility(k == 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(Row);
+		S->SetAnchors(FAnchors(0.94f, 1.f));
+		S->SetAlignment(FVector2D(1.f, 0.5f));
+		S->SetPosition(FVector2D(0.f, -50.f));
+		S->SetAutoSize(true);
+		S->SetZOrder(5);
+		FadeWithWords.Add(Row);
+		(k == 0 ? PromptRow : PadRow) = Row;
+	}
 }
 
 void UYggMenuBase::SetColumnVisible(bool bVisible)
@@ -676,6 +688,11 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		SplashPrompt->SetRenderOpacity(YggUI::Ease((PageAge - 2.f) * 1.2f) * (0.4f + 0.6f * (0.5f + 0.5f * FMath::Sin(Age * 2.1f))));
 	}
 	YggUI::JitterGrain(GrainImg, GrainClock, InDeltaTime);
+	if (PromptRow && PadRow)
+	{
+		PromptRow->SetVisibility(bPad ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+		PadRow->SetVisibility(bPad ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 	if (Blur) { Blur->SetBlurStrength(7.f * YggUI::Ease(Age * 2.5f)); }
 	if (bClosing)
 	{
@@ -691,6 +708,7 @@ FReply UYggMenuBase::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEven
 {
 	if (bClosing) { return FReply::Unhandled(); }
 	const FKey K = InKeyEvent.GetKey();
+	bPad = K.IsGamepadKey();
 	if (Page.bSplash)
 	{
 		if (Page.AnyKey && PageAge > 0.6f) { TFunction<void()> F = Page.AnyKey; F(); }
@@ -721,7 +739,7 @@ FReply UYggMenuBase::NativeOnMouseButtonDown(const FGeometry& InGeometry, const 
 
 FReply UYggMenuBase::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	if (!InMouseEvent.GetCursorDelta().IsNearlyZero()) { bMouseMoved = true; }
+	if (!InMouseEvent.GetCursorDelta().IsNearlyZero()) { bMouseMoved = true; bPad = false; }
 	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
 }
 

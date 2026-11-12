@@ -122,6 +122,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> Roll;
 	UPROPERTY(Transient) TArray<TObjectPtr<UImage>> RollMasks;
 	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> PromptRow;
+	UPROPERTY(Transient) TObjectPtr<UHorizontalBox> PadRow;   // the same prompts as gamepad buttons
 	UPROPERTY(Transient) TObjectPtr<UImage> DimLayer;
 	UPROPERTY(Transient) TObjectPtr<UImage> ToneGlow;
 	UPROPERTY(Transient) TObjectPtr<UImage> RightVeil;
@@ -142,6 +143,7 @@ private:
 	int32 Selected = 0;
 	float RollY = 0.f;
 	bool bRollStarted = false;
+	bool bPad = false;                              // the last input came from a gamepad
 	float GrainClock = 0.f;
 	float DimNow = 0.f;
 	bool bMouseMoved = false;

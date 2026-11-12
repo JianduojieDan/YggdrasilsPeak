@@ -422,13 +422,19 @@ void USettingsWidget::Build()
 	if (C.Crumb) { C.Crumb->SetText(FText::FromString(TEXT("YGGDRASIL'S PEAK      /      SETTINGS"))); }
 	if (C.Right) { C.Right->SetText(FText::FromString(TEXT("SAVED AS YOU CHANGE THEM"))); }
 	if (C.Foot) { C.Foot->SetText(FText::FromString(TEXT("EVEREST  ·  THE SOUTH COL ROUTE"))); }
-	UHorizontalBox* Keys = YggUI::Prompts(WidgetTree, { { TEXT("↑ ↓"), TEXT("Choose") }, { TEXT("← →"), TEXT("Change") }, { TEXT("Q E"), TEXT("Tab") }, { TEXT("Esc"), TEXT("Back") } });
-	Keys->SetVisibility(ESlateVisibility::HitTestInvisible);
-	UCanvasPanelSlot* KS = Canvas->AddChildToCanvas(Keys);
-	KS->SetAnchors(FAnchors(0.94f, 1.f));
-	KS->SetAlignment(FVector2D(1.f, 0.5f));
-	KS->SetPosition(FVector2D(0.f, -50.f));
-	KS->SetAutoSize(true);
+	for (int32 k = 0; k < 2; ++k)
+	{
+		UHorizontalBox* Keys = k == 0
+			? YggUI::Prompts(WidgetTree, { { TEXT("↑ ↓"), TEXT("Choose") }, { TEXT("← →"), TEXT("Change") }, { TEXT("Q E"), TEXT("Tab") }, { TEXT("Esc"), TEXT("Back") } })
+			: YggUI::Prompts(WidgetTree, { { TEXT("D-pad"), TEXT("Choose") }, { TEXT("D-pad"), TEXT("Change") }, { TEXT("LB RB"), TEXT("Tab") }, { TEXT("B"), TEXT("Back") } });
+		Keys->SetVisibility(k == 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		UCanvasPanelSlot* KS = Canvas->AddChildToCanvas(Keys);
+		KS->SetAnchors(FAnchors(0.94f, 1.f));
+		KS->SetAlignment(FVector2D(1.f, 0.5f));
+		KS->SetPosition(FVector2D(0.f, -50.f));
+		KS->SetAutoSize(true);
+		(k == 0 ? KeysRow : PadKeysRow) = Keys;
+	}
 	GrainImg = YggUI::Grain(WidgetTree, Canvas);
 	SetTab(PendingTab);
 	SetRenderOpacity(0.f);
@@ -684,6 +690,11 @@ void USettingsWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	if (Pages) { Pages->SetRenderOpacity(YggUI::Ease(TabAge * 3.f)); Pages->SetRenderTranslation(FVector2D(-14.f * (1.f - YggUI::Ease(TabAge * 3.f)), 0.f)); }
 	YggUI::JitterGrain(GrainImg, GrainClock, InDeltaTime);
 	if (Blur) { Blur->SetBlurStrength(7.f * YggUI::Ease(Age * 2.5f)); }
+	if (KeysRow && PadKeysRow)
+	{
+		KeysRow->SetVisibility(bPad ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+		PadKeysRow->SetVisibility(bPad ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 	if (!Tabs.IsValidIndex(TabIndex)) { return; }
 	TArray<FRow>& Rows = Tabs[TabIndex].Rows;
 	if (bMouseMoved)
@@ -740,6 +751,7 @@ void USettingsWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 FReply USettingsWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
 	const FKey K = InKeyEvent.GetKey();
+	bPad = K.IsGamepadKey();
 	if (Waiting >= 0 && Tabs.IsValidIndex(TabIndex) && Tabs[TabIndex].Rows.IsValidIndex(Waiting))
 	{
 		if (K != EKeys::Escape) { YggSettings::Rebind(GetWorld(), Tabs[TabIndex].Rows[Waiting].Action, K); }
@@ -766,6 +778,6 @@ FReply USettingsWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyE
 
 FReply USettingsWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	if (!InMouseEvent.GetCursorDelta().IsNearlyZero()) { bMouseMoved = true; }
+	if (!InMouseEvent.GetCursorDelta().IsNearlyZero()) { bMouseMoved = true; bPad = false; }
 	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
 }
