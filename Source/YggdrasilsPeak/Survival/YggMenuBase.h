@@ -141,6 +141,7 @@ private:
 	TArray<float> OptHot;                           // 0..1, eased
 	int32 Selected = 0;
 	float RollY = 0.f;
+	bool bRollStarted = false;
 	float GrainClock = 0.f;
 	float DimNow = 0.f;
 	bool bMouseMoved = false;

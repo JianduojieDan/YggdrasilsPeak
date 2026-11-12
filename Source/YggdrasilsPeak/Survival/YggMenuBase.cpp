@@ -439,7 +439,8 @@ void UYggMenuBase::BuildSide()
 void UYggMenuBase::BuildRoll()
 {
 	Roll->ClearChildren();
-	RollY = -1.f;
+	RollY = 0.f;
+	bRollStarted = false;
 	const bool bOn = Page.bRoll && Page.Body.Num() > 0;
 	Roll->SetVisibility(bOn ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	for (UImage* M : RollMasks) { if (M) { M->SetVisibility(bOn ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed); } }
@@ -633,7 +634,8 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	{
 		const FVector2D View = MyGeometry.GetLocalSize();
 		const float H = Roll->GetDesiredSize().Y;
-		if (RollY < 0.f && H > 1.f) { RollY = View.Y * 0.55f; }
+		// (a flag, not a negative position: the roll's top is above the screen most of the time)
+		if (!bRollStarted && H > 1.f) { RollY = View.Y * 0.55f; bRollStarted = true; }
 		RollY -= 36.f * InDeltaTime;
 		if (RollY + H < 0.f) { RollY = View.Y; }
 		Roll->SetRenderTranslation(FVector2D(0.f, RollY));
