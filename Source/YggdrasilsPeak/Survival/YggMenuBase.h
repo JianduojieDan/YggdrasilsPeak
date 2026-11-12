@@ -64,6 +64,7 @@ public:
 		bool bRoll = false;                         // the Body rolls up on the right (credits)
 		bool bNumbered = true;                      // 01 02 03 before the options
 		FLinearColor AccentOverride = FLinearColor::Transparent;   // alpha 0: the tone decides (gold, ember)
+		uint8 Fate = 0;                             // YggFate: the death screen's art (frozen letters, cracks...)
 	};
 
 	/** Swaps the page (the column rebuilds and comes in again). */
@@ -99,6 +100,7 @@ protected:
 	FString HeaderRight;                            // top right: where you are
 	FString FooterLeft;                             // bottom left: a quiet line
 	UPROPERTY(Transient) TObjectPtr<UFont> Serif;
+	UPROPERTY(Transient) TObjectPtr<UFont> Hand;
 	UPROPERTY(Transient) TObjectPtr<UCanvasPanel> Canvas;
 	FPage Page;
 	float Age = 0.f;                                // since the widget opened
@@ -114,6 +116,7 @@ private:
 	void BuildPrompts();
 	UWidget* Numbers(const FString& Key, int32 Big, int32 Small, bool bRight);
 	void Activate(int32 Index);
+	void AnimateFate();
 	void Move(int32 Dir);
 	FLinearColor Accent() const;
 
@@ -128,6 +131,10 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UImage> ToneGlow;
 	UPROPERTY(Transient) TObjectPtr<UImage> RightVeil;
 	UPROPERTY(Transient) TObjectPtr<class UBackgroundBlur> Blur;
+	UPROPERTY(Transient) TObjectPtr<class UYggFateFx> ScreenFx;
+	UPROPERTY(Transient) TObjectPtr<class UYggFateFx> TitleFx;
+	UPROPERTY(Transient) TObjectPtr<class UOverlay> TitleBox;
+	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> TitleLetters;
 	UPROPERTY(Transient) TObjectPtr<UImage> GrainImg;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> CrumbText;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> SplashPrompt;

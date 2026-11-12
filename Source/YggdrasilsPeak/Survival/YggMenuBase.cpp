@@ -3,6 +3,7 @@
 #include "Survival/YggMenuBase.h"
 
 #include "Survival/YggEmblem.h"
+#include "Survival/YggFateFx.h"
 #include "Survival/SurvivalHUDWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Survival/YggUIProxy.h"
@@ -64,6 +65,7 @@ void UYggMenuBase::BuildFrame()
 	Canvas = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("Canvas"));
 	WidgetTree->RootWidget = Canvas;
 	Serif = YggUI::MakeSerif(this);
+	Hand = YggUI::MakeHand(this);
 	BuildBackground(Canvas);
 	// on the mountain the world behind the menu goes soft (the bright snow fought with the words); the start menu's
 	// own pictures stay sharp
@@ -83,6 +85,14 @@ void UYggMenuBase::BuildFrame()
 	RightVeil->SetRenderTransformAngle(180.f);
 	RightVeil->SetVisibility(ESlateVisibility::Collapsed);
 	YggUI::Layer(WidgetTree, Canvas, YggUI::VignetteTexture(), MenuWithA(YggUI::Ink, 0.6f));
+	// the death screen's art over the whole screen (frost, cracks, snow...)
+	ScreenFx = WidgetTree->ConstructWidget<UYggFateFx>(UYggFateFx::StaticClass());
+	ScreenFx->SetVisibility(ESlateVisibility::Collapsed);
+	{
+		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(ScreenFx);
+		S->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+		S->SetOffsets(FMargin(0.f));
+	}
 	// the summit's warm light from the upper right
 	ToneGlow = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
 	ToneGlow->SetBrush(YggUI::TextureBrush(YggUI::GlowTexture(), FVector2D(64.f, 64.f)));
@@ -210,7 +220,41 @@ void UYggMenuBase::BuildColumn()
 		Add(SB, Page.bSplash ? 34.f : 22.f);
 	}
 	if (!Page.Eyebrow.IsEmpty()) { Add(Centre(YggUI::Text(WidgetTree, Page.Eyebrow, 10, YggUI::Dim, 460, TEXT("Regular"))), 6.f); }
-	Add(Centre(YggUI::Text(WidgetTree, Page.Title, int32(Page.TitleSize), YggUI::Ivory, Page.bSplash ? 30 : 0, TEXT("Regular"), Serif)), 10.f);
+	TitleLetters.Reset();
+	TitleFx = nullptr;
+	TitleBox = nullptr;
+	if (Page.Fate != YggFate::None)
+	{
+		// the title letter by letter, so each can shiver, fall, sink or breathe; its own art layer on top
+		TitleBox = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		const bool bHand = Page.Fate == YggFate::Lost && Hand;
+		for (int32 c = 0; c < Page.Title.Len(); ++c)
+		{
+			UTextBlock* L = YggUI::Text(WidgetTree, FString::Chr(Page.Title[c]), int32(Page.TitleSize * (bHand ? 1.2f : 1.f)), YggUI::Ivory, 0, TEXT("Regular"), bHand ? Hand.Get() : Serif.Get());
+			L->SetRenderTransformPivot(FVector2D(0.5f, 0.75f));
+			L->SetRenderOpacity(0.f);
+			Row->AddChildToHorizontalBox(L)->SetVerticalAlignment(VAlign_Bottom);
+			TitleLetters.Add(L);
+		}
+		TitleBox->AddChildToOverlay(Row);
+		TitleFx = WidgetTree->ConstructWidget<UYggFateFx>(UYggFateFx::StaticClass());
+		TitleFx->Restart(Page.Fate, false);
+		TitleFx->SetVisibility(ESlateVisibility::HitTestInvisible);
+		UOverlaySlot* FS = TitleBox->AddChildToOverlay(TitleFx);
+		FS->SetHorizontalAlignment(HAlign_Fill);
+		FS->SetVerticalAlignment(VAlign_Fill);
+		Add(TitleBox, 10.f);
+	}
+	else
+	{
+		Add(Centre(YggUI::Text(WidgetTree, Page.Title, int32(Page.TitleSize), YggUI::Ivory, Page.bSplash ? 30 : 0, TEXT("Regular"), Serif)), 10.f);
+	}
+	if (ScreenFx)
+	{
+		ScreenFx->Restart(Page.Fate, true);
+		ScreenFx->SetVisibility(Page.Fate != YggFate::None ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 	RealmBeads.Reset();
 	{
 		UHorizontalBox* RuleRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
@@ -684,6 +728,7 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		if (OptBands[i]) { OptBands[i]->SetRenderOpacity(H); }
 		if (OptBars[i]) { OptBars[i]->SetRenderOpacity(H); }
 	}
+	if (TitleLetters.Num() > 0) { AnimateFate(); }
 	if (SplashPrompt)
 	{
 		SplashPrompt->SetRenderOpacity(YggUI::Ease((PageAge - 2.f) * 1.2f) * (0.4f + 0.6f * (0.5f + 0.5f * FMath::Sin(Age * 2.1f))));
@@ -702,6 +747,123 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		SetRenderOpacity(K);
 		if (Blur) { Blur->SetBlurStrength(7.f * K); }
 		if (CloseT > 0.24f) { RemoveFromParent(); }
+	}
+}
+
+namespace
+{
+	float FateBounce(float K)
+	{
+		K = FMath::Clamp(K, 0.f, 1.f);
+		const float N = 7.5625f, D = 2.75f;
+		if (K < 1.f / D) { return N * K * K; }
+		if (K < 2.f / D) { K -= 1.5f / D; return N * K * K + 0.75f; }
+		if (K < 2.5f / D) { K -= 2.25f / D; return N * K * K + 0.9375f; }
+		K -= 2.625f / D; return N * K * K + 0.984375f;
+	}
+}
+
+void UYggMenuBase::AnimateFate()
+{
+	const float t = PageAge;
+	const int32 N = TitleLetters.Num();
+	if (!TitleBox) { return; }
+	const FGeometry& OG = TitleBox->GetCachedGeometry();
+	TArray<FBox2f> Rects;
+	for (int32 i = 0; i < N; ++i)
+	{
+		UTextBlock* L = TitleLetters[i];
+		if (!L) { continue; }
+		FRandomStream R(i * 7919 + 13);
+		const float r1 = R.FRandRange(-1.f, 1.f), r2 = R.FRandRange(-1.f, 1.f), r3 = R.FRand();
+		const float In = YggUI::Ease((t - 0.25f - 0.06f * i) * 3.f);
+		FVector2D Off(0.f, 0.f);
+		float Ang = 0.f, Op = In, Sc = 1.f;
+		FLinearColor C = YggUI::Ivory;
+		switch (Page.Fate)
+		{
+		case YggFate::Frozen:
+		{
+			// a shiver that stops as the frost takes each letter, left to right
+			const float Amp = 2.4f * (1.f - YggUI::Ease((t - 0.4f) / 1.8f));
+			Off = FVector2D(FMath::Sin(t * 47.f + i * 3.1f) * Amp, FMath::Cos(t * 53.f + i * 4.7f) * Amp * 0.6f);
+			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.76f, 0.9f, 1.f, 0.98f), YggUI::Ease((t - 0.5f - 0.11f * i) / 1.4f));
+			break;
+		}
+		case YggFate::Breathless:
+		{
+			const float B = YggFate::Breath(t - 0.6f);
+			const float Drop = FMath::Pow(FMath::Max(0.f, FMath::Sin(t * 0.83f + i * 1.7f)), 10.f);
+			Op = In * (0.45f + 0.55f * B) * (1.f - 0.7f * Drop);
+			Sc = 1.f + 0.03f * B;
+			Off.X = (i - (N - 1) * 0.5f) * 4.f * YggUI::Ease(t / 7.f);
+			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.7f, 0.76f, 0.98f, 0.96f), 0.45f);
+			break;
+		}
+		case YggFate::Fallen:
+		{
+			// each letter drops from above, bounces, and lands a little crooked
+			const float D = 0.2f + 0.075f * i;
+			const float K = FMath::Clamp((t - D) / 0.6f, 0.f, 1.f);
+			Off.Y = -160.f * (1.f - FateBounce(K)) + (r2 * 0.5f + 0.5f) * 9.f * K;
+			Ang = r1 * 9.f * YggUI::Ease(K * 1.4f);
+			Op = YggUI::Ease(K * 6.f);
+			break;
+		}
+		case YggFate::Buried:
+		{
+			const float S = YggUI::Ease((t - 1.0f - 0.05f * i) / 3.2f);
+			Off.Y = 18.f * S * (0.7f + 0.3f * r3);
+			Ang = r1 * 3.f * S;
+			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.86f, 0.9f, 0.96f, 0.97f), 0.5f * S);
+			break;
+		}
+		case YggFate::Parched:
+			Off = FVector2D(FMath::Sin(t * 1.9f + i * 1.3f) * 0.9f, FMath::Sin(t * 2.7f + i * 0.8f) * 1.8f);
+			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.9f, 0.74f, 0.52f, 0.97f), YggUI::Ease((t - 0.4f) / 1.5f));
+			break;
+		case YggFate::Starved:
+		{
+			const float W = 0.5f + 0.5f * FMath::Sin(t * 0.7f + i * 2.3f);
+			Op = In * (0.38f + 0.62f * W);
+			Off.Y = 5.f * YggUI::Ease(t / 6.f) * (i % 2 ? 1.f : 0.4f);
+			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.74f, 0.73f, 0.7f, 0.95f), 0.7f);
+			break;
+		}
+		case YggFate::Lost:
+		{
+			// written by hand, a letter at a time, then the word comes apart in the fog
+			const float W = YggUI::Ease((t - 0.4f - 0.11f * i) * 5.f);
+			const float Dr = YggUI::Ease((t - 3.6f) / 9.f);
+			Off = FVector2D((i - (N - 1) * 0.5f) * 7.f * Dr, FMath::Sin(i * 1.9f + 0.5f) * 7.f * Dr);
+			Ang = r1 * 4.f * Dr;
+			Op = W * (1.f - (i % 2 ? 0.45f * YggUI::Ease((t - 4.5f) / 8.f) : 0.f));
+			break;
+		}
+		default:
+			break;
+		}
+		L->SetRenderTranslation(Off);
+		L->SetRenderTransformAngle(Ang);
+		L->SetRenderOpacity(Op);
+		L->SetRenderScale(FVector2D(Sc, Sc));
+		L->SetColorAndOpacity(FSlateColor(C));
+		const FGeometry& LG = L->GetCachedGeometry();
+		const FVector2D P = OG.AbsoluteToLocal(LG.GetAbsolutePosition());
+		const FVector2D S = LG.GetLocalSize();
+		Rects.Add(FBox2f(FVector2f(P), FVector2f(P + S)));
+	}
+	if (TitleFx) { TitleFx->State->Letters = Rects; }
+	if (ScreenFx)
+	{
+		const FVector2D Sz = OG.GetLocalSize();
+		ScreenFx->State->AnchorAbs = FVector2f(OG.LocalToAbsolute(FVector2D(Sz.X + 24.f, Sz.Y * 0.6f)));
+	}
+	// the jolt when the fallen word hits
+	if (Page.Fate == YggFate::Fallen && Column && t > 0.9f && t < 1.35f)
+	{
+		const float Amp = 7.f * (1.f - (t - 0.9f) / 0.45f);
+		Column->SetRenderTranslation(Column->GetRenderTransform().Translation + FVector2D(FMath::Sin(t * 91.f) * Amp, FMath::Cos(t * 77.f) * Amp));
 	}
 }
 

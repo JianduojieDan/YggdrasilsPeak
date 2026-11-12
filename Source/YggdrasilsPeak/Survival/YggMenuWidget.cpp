@@ -6,6 +6,7 @@
 #include "Survival/SettingsWidget.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/YggSettings.h"
+#include "Survival/YggFateFx.h"
 #include "Environment/RouteLandmark.h"
 #include "GameFramework/Character.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
@@ -21,7 +22,15 @@ static FAutoConsoleCommandWithWorldAndArgs CmdMenu(TEXT("ygg.Menu"), TEXT("ygg.M
 		APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
 		const FString A = Args.Num() > 0 ? Args[0] : FString();
 		if (A == TEXT("summit")) { UYggMenuWidget::ShowSummit(PC, 5 * 3600 + 42 * 60, 2); }
-		else if (A == TEXT("death")) { UYggMenuWidget::ShowDeath(PC, NSLOCTEXT("Survival", "DiedCold", "You froze to death."), 6230.f, 2 * 3600 + 14 * 60, 1, TEXT("Camp II"), []() {}); }
+		else if (A == TEXT("death"))
+		{
+			// ygg.Menu death [cold|oxygen|fall|avalanche|thirst|hunger|lost]
+			const FString W = Args.Num() > 1 ? Args[1] : FString(TEXT("cold"));
+			const FString Cause = W == TEXT("oxygen") ? TEXT("Your lungs ran out of oxygen.") : W == TEXT("fall") ? TEXT("You fell into a crevasse.")
+				: W == TEXT("avalanche") ? TEXT("An avalanche buried you.") : W == TEXT("thirst") ? TEXT("You died of thirst.")
+				: W == TEXT("hunger") ? TEXT("You starved on the mountain.") : W == TEXT("lost") ? TEXT("The mountain took you.") : TEXT("You froze to death.");
+			UYggMenuWidget::ShowDeath(PC, FText::FromString(Cause), 6230.f, 2 * 3600 + 14 * 60, 1, TEXT("Camp II"), []() {});
+		}
 		else if (A == TEXT("credits")) { UYggMenuWidget::ShowCredits(PC); }
 		else { UYggMenuWidget::TogglePause(PC); }
 	}));
@@ -251,8 +260,19 @@ void UYggMenuWidget::ShowDeath(APlayerController* PC, const FText& Cause, float 
 	Pg.Title = DeathWord(Cause.ToString());
 	Pg.TitleSize = 92.f;
 	Pg.Tone = ETone::Death;
-	// the cold takes you in frost blue; a fall, a burial, thirst in ember
-	if (Pg.Title == TEXT("Frozen") || Pg.Title == TEXT("Breathless")) { Pg.AccentOverride = FLinearColor(0.68f, 0.84f, 0.98f, 0.96f); }
+	// each way of dying has its own art (YggFateFx) and its own accent
+	struct FFateLook { const TCHAR* Word; uint8 Fate; FLinearColor Accent; };
+	static const FFateLook Looks[] = {
+		{ TEXT("Frozen"), YggFate::Frozen, FLinearColor(0.68f, 0.84f, 0.98f, 0.96f) },
+		{ TEXT("Breathless"), YggFate::Breathless, FLinearColor(0.66f, 0.72f, 0.98f, 0.96f) },
+		{ TEXT("Fallen"), YggFate::Fallen, FLinearColor::Transparent },
+		{ TEXT("Buried"), YggFate::Buried, FLinearColor(0.9f, 0.95f, 1.f, 0.96f) },
+		{ TEXT("Parched"), YggFate::Parched, FLinearColor(0.92f, 0.7f, 0.42f, 0.96f) },
+		{ TEXT("Starved"), YggFate::Starved, FLinearColor(0.76f, 0.75f, 0.72f, 0.96f) },
+		{ TEXT("Lost"), YggFate::Lost, FLinearColor(0.9f, 0.9f, 0.86f, 0.96f) },
+	};
+	for (const FFateLook& F : Looks) { if (Pg.Title == F.Word) { Pg.Fate = F.Fate; Pg.AccentOverride = F.Accent; } }
+	Pg.TitleSize = 104.f;
 	Pg.Context = TEXT("Lost on the mountain");
 	Pg.Line = Cause.ToString();
 	Pg.Stats = { { Height(Meters), TEXT("WHERE YOU FELL") }, { Duration(Seconds), TEXT("ON THE MOUNTAIN") }, { FString::Printf(TEXT("%d|"), Deaths), TEXT("FALLS") } };

@@ -196,6 +196,19 @@ namespace YggUI
 		return F;
 	}
 
+	/** The hand-written face (Caveat), the journal's writing. */
+	inline UFont* MakeHand(UObject* Outer)
+	{
+		UFontFace* Face = LoadObject<UFontFace>(nullptr, TEXT("/Game/UI/Fonts/FF_Caveat.FF_Caveat"));
+		if (!Face) { return nullptr; }
+		UFont* F = NewObject<UFont>(Outer);
+		F->FontCacheType = EFontCacheType::Runtime;
+		FTypefaceEntry& Entry = F->GetMutableInternalCompositeFont().DefaultTypeface.Fonts.AddDefaulted_GetRef();
+		Entry.Name = TEXT("Regular");
+		Entry.Font = FFontData(Face);
+		return F;
+	}
+
 	/** Text with the HUD's soft halo. Style: "Light" / "Regular" (Roboto), or a serif font. Track in 1/1000 em. */
 	inline UTextBlock* Text(UWidgetTree* Tree, const FString& S, int32 Size, const FLinearColor& C, int32 Track = 0, const TCHAR* Style = TEXT("Light"), UFont* Serif = nullptr)
 	{

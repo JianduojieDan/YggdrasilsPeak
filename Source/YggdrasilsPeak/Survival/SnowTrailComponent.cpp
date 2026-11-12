@@ -557,7 +557,24 @@ bool USnowTrailComponent::IsRock(const FHitResult& Hit)
 	// face index decides: past the snow section's triangle count, it is rock.
 	const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Hit.GetComponent());
 	const UStaticMesh* Asset = Mesh ? Mesh->GetStaticMesh() : nullptr;
+#if WITH_EDITORONLY_DATA
 	const UStaticMesh* Col = Asset ? Asset->ComplexCollisionMesh.Get() : nullptr;
+#else
+	const UStaticMesh* Col = nullptr;
+#endif
+	if (!Col && Asset)
+	{
+		// a packaged game has no editor link to the collision mesh: it sits next to the tile as <name>_col
+		static TMap<TWeakObjectPtr<const UStaticMesh>, TWeakObjectPtr<const UStaticMesh>> ColOf;
+		if (const TWeakObjectPtr<const UStaticMesh>* Known = ColOf.Find(Asset)) { Col = Known->Get(); }
+		else
+		{
+			const FString Pkg = Asset->GetOutermost()->GetName() + TEXT("_col");
+			const FString Name = Asset->GetName() + TEXT("_col");
+			Col = LoadObject<UStaticMesh>(nullptr, *(Pkg + TEXT(".") + Name), nullptr, LOAD_NoWarn | LOAD_Quiet);
+			ColOf.Add(Asset, Col);
+		}
+	}
 	if (!Col || Hit.FaceIndex < 0 || !Col->GetRenderData() || Col->GetRenderData()->LODResources.Num() == 0)
 	{
 		return false;
