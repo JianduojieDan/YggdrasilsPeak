@@ -195,6 +195,13 @@ void USettingsWidget::DefineTabs()
 	FTab Gfx{ TEXT("Graphics") };
 	Gfx.Rows.Add(IntRow(TEXT("QUALITY"), TEXT("Auto keeps the frame rate steady on this machine; a fixed level never changes."),
 		{ TEXT("Auto"), TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Epic") }, TEXT("Graphics"), -1, 1, [W]() { ApplyGraphics(W()); }));
+	{
+		const TArray<FString> Levels = { TEXT("Preset"), TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Epic") };
+		Gfx.Rows.Add(IntRow(TEXT("SHADOWS"), TEXT("How sharp and how far the shadows reach. Preset follows Quality; the biggest cost after the light itself."), Levels, TEXT("GfxShadows"), 0, 0, [W]() { ApplyGraphics(W()); }));
+		Gfx.Rows.Add(IntRow(TEXT("VIEW DISTANCE"), TEXT("How far the small things - rocks, tents, flags - are drawn. Preset follows Quality."), Levels, TEXT("GfxViewDistance"), 0, 0, [W]() { ApplyGraphics(W()); }));
+		Gfx.Rows.Add(IntRow(TEXT("EFFECTS"), TEXT("Snow, spindrift, storms and the realms' lights. Preset follows Quality."), Levels, TEXT("GfxEffects"), 0, 0, [W]() { ApplyGraphics(W()); }));
+		Gfx.Rows.Add(IntRow(TEXT("TEXTURES"), TEXT("Sharper surfaces up close, more video memory. Preset follows Quality."), Levels, TEXT("GfxTextures"), 0, 0, [W]() { ApplyGraphics(W()); }));
+	}
 	Gfx.Rows.Add(IntRow(TEXT("UPSCALING"), bDLSS ? TEXT("NVIDIA DLSS renders fewer pixels and rebuilds the image.") : TEXT("TSR renders fewer pixels and rebuilds the image: the biggest saving."),
 		{ TEXT("Auto"), TEXT("Native"), TEXT("Quality"), TEXT("Balanced"), TEXT("Performance") }, TEXT("Upscaling"), 0, 0, [W]() { ApplyGraphics(W()); }));
 	Gfx.Rows.Add(IntRow(TEXT("RAY-TRACED LIGHT"), TEXT("Off is a little flatter and much lighter on the graphics card."), { TEXT("Off"), TEXT("On") }, TEXT("RayTracing"), 1, 0, [W]() { ApplyGraphics(W()); }));

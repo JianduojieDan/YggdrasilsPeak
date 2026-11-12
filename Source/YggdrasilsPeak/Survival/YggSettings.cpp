@@ -146,6 +146,22 @@ namespace YggSettings
 		{
 			GEngine->Exec(World, *(Tier < 0 ? FString(TEXT("ygg.Quality auto")) : FString::Printf(TEXT("ygg.Quality %d"), Tier)));
 		}
+		// to-do #63, the usual detail options: "Preset" (0) follows the quality tier, 1..4 = low..epic for that group alone.
+		// Through the engine's own game settings, so the automatic quality may still step a tier down when it must.
+		if (UGameUserSettings* U = GEngine ? GEngine->GetGameUserSettings() : nullptr)
+		{
+			// the tier itself: once one group differs the overall level reads "custom" (-1); post processing is never
+			// overridden here, so it still carries the tier (the automatic quality's included)
+			const int32 Overall = U->GetOverallScalabilityLevel();
+			const int32 Base = FMath::Clamp(Tier >= 0 ? Tier : (Overall >= 0 ? Overall : U->GetPostProcessingQuality()), 0, 3);
+			auto Pick = [Base](const TCHAR* Key) { const int32 V = FMath::Clamp(GetInt(Key, 0), 0, 4); return V == 0 ? Base : V - 1; };
+			U->SetShadowQuality(Pick(TEXT("GfxShadows")));
+			U->SetViewDistanceQuality(Pick(TEXT("GfxViewDistance")));
+			U->SetVisualEffectQuality(Pick(TEXT("GfxEffects")));
+			U->SetTextureQuality(Pick(TEXT("GfxTextures")));
+			U->ApplyNonResolutionSettings();
+			U->SaveSettings();
+		}
 		// Upscaling: render fewer pixels and let DLSS (when the NVIDIA plugin is installed) or TSR rebuild the full image.
 		// Auto in the packaged game = YggQualitySubsystem dynamic resolution; in the editor that system is off, so Auto
 		// means Quality there (Play used to render every pixel natively: the GPU sat at 100%).
@@ -158,6 +174,10 @@ namespace YggSettings
 		CVar(TEXT("r.Lumen.HardwareRayTracing"), float(FMath::Clamp(GetInt(TEXT("RayTracing"), 1), 0, 1)));
 		if (GetInt(TEXT("MotionBlur"), 1) == 0) { CVar(TEXT("r.MotionBlurQuality"), 0.f); }
 		else if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionBlurQuality")); C && C->GetInt() == 0) { C->Set(4, ECVF_SetByConsole); }
+		if (const UGameUserSettings* U = GEngine ? GEngine->GetGameUserSettings() : nullptr)
+		{
+			UE_LOG(LogTemp, Display, TEXT("Settings: shadows %d, view distance %d, effects %d, textures %d"), U->GetShadowQuality(), U->GetViewDistanceQuality(), U->GetVisualEffectQuality(), U->GetTextureQuality());
+		}
 		UE_LOG(LogTemp, Display, TEXT("Settings: graphics %d, upscaling %d (%s %.0f%%), ray tracing %d, footprints %d, motion blur %d"),
 			Tier, Up, bDLSS ? TEXT("DLSS") : TEXT("TSR"), Percent[Up], GetInt(TEXT("RayTracing"), 1), GetInt(TEXT("Footprints"), 1), GetInt(TEXT("MotionBlur"), 1));
 	}
@@ -268,7 +288,7 @@ namespace YggSettings
 		switch (Tab)
 		{
 		case 0: Remove({ TEXT("Units"), TEXT("Hud"), TEXT("Hints"), TEXT("FieldOfView") }); break;
-		case 1: Remove({ TEXT("Graphics"), TEXT("Upscaling"), TEXT("RayTracing"), TEXT("Footprints"), TEXT("MotionBlur") }); break;
+		case 1: Remove({ TEXT("Graphics"), TEXT("Upscaling"), TEXT("RayTracing"), TEXT("Footprints"), TEXT("MotionBlur"), TEXT("GfxShadows"), TEXT("GfxViewDistance"), TEXT("GfxEffects"), TEXT("GfxTextures") }); break;
 		case 2:
 			Remove({ TEXT("FrameCap"), TEXT("FrameLimit"), TEXT("Brightness") });
 			if (UGameUserSettings* U = GEngine ? GEngine->GetGameUserSettings() : nullptr) { U->SetVSyncEnabled(false); U->SaveSettings(); }
