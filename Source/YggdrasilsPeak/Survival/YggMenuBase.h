@@ -63,6 +63,7 @@ public:
 		bool bSplash = false;                       // centred, no options: "press any key"
 		bool bRoll = false;                         // the Body rolls up on the right (credits)
 		bool bNumbered = true;                      // 01 02 03 before the options
+		FLinearColor AccentOverride = FLinearColor::Transparent;   // alpha 0: the tone decides (gold, ember)
 	};
 
 	/** Swaps the page (the column rebuilds and comes in again). */

@@ -33,6 +33,7 @@ namespace
 
 FLinearColor UYggMenuBase::Accent() const
 {
+	if (Page.AccentOverride.A > 0.f) { return Page.AccentOverride; }
 	return Page.Tone == ETone::Death ? YggUI::Ember : YggUI::Gold;
 }
 

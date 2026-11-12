@@ -251,6 +251,8 @@ void UYggMenuWidget::ShowDeath(APlayerController* PC, const FText& Cause, float 
 	Pg.Title = DeathWord(Cause.ToString());
 	Pg.TitleSize = 92.f;
 	Pg.Tone = ETone::Death;
+	// the cold takes you in frost blue; a fall, a burial, thirst in ember
+	if (Pg.Title == TEXT("Frozen") || Pg.Title == TEXT("Breathless")) { Pg.AccentOverride = FLinearColor(0.68f, 0.84f, 0.98f, 0.96f); }
 	Pg.Context = TEXT("Lost on the mountain");
 	Pg.Line = Cause.ToString();
 	Pg.Stats = { { Height(Meters), TEXT("WHERE YOU FELL") }, { Duration(Seconds), TEXT("ON THE MOUNTAIN") }, { FString::Printf(TEXT("%d|"), Deaths), TEXT("FALLS") } };

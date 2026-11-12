@@ -52,6 +52,8 @@ namespace
 				TEXT("When the weather wheel turns to danger, find shelter before it lands."),
 				TEXT("Above eight thousand metres every breath is borrowed. Carry a spare bottle."),
 				TEXT("The mountain does not know you came."),
+				TEXT("Where the ice steepens there are fixed ropes. Clip in, and trust them."),
+				TEXT("Eat before you are hungry. Drink before you are thirsty. The cold takes the rest."),
 			};
 			Line = Lines[FMath::RandRange(0, UE_ARRAY_COUNT(Lines) - 1)];
 			Start = FSlateApplication::Get().GetCurrentTime();
