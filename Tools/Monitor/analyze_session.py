@@ -348,6 +348,10 @@ def main():
             if m:
                 rep[last] += int(m[1])
                 continue
+            m = re.match(r'total (\d+) x  (.*)', ln)               # end-of-session count of a line written only 20 times
+            if m:
+                rep[re.sub(r'(?<![A-Za-z\d])\d+(\.\d+)?', '#', m[2])[:200]] += int(m[1]) - 20
+                continue
             body = re.sub(r'^[\d.]+\s+', '', ln)
             last = re.sub(r'(?<![A-Za-z\d])\d+(\.\d+)?', '#', body)[:200]
             rep[last] += 1

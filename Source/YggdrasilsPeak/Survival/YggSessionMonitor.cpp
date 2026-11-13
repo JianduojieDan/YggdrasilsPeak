@@ -135,6 +135,11 @@ void UYggSessionMonitor::Deinitialize()
 	if (bOn)
 	{
 		Event(TEXT("session_end"), FString::Printf(TEXT("%d frames, %d hitches, %d screenshots"), Frames, Hitches, Shots));
+		LogCounts.ValueSort([](int32 A, int32 B) { return A > B; });
+		for (const TPair<FString, int32>& KV : LogCounts)
+		{
+			if (KV.Value > 20) { LogBuf += FString::Printf(TEXT("total %d x  %s%s"), KV.Value, *KV.Key, LINE_TERMINATOR); }
+		}
 		Flush();
 		if (Input.IsValid() && FSlateApplication::IsInitialized()) { FSlateApplication::Get().UnregisterInputPreProcessor(Input); }
 		if (LogDevice.IsValid()) { GLog->RemoveOutputDevice(LogDevice.Get()); }
@@ -201,7 +206,10 @@ void UYggSessionMonitor::OnLogLine(const FString& Line)
 	if (LastLogRepeats > 0) { LogBuf += FString::Printf(TEXT("%.3f  (previous line repeated %d more times)\n"), T, LastLogRepeats); LastLogRepeats = 0; }
 	LastLogLine = Clean;
 	if (Clean.StartsWith(TEXT("LogSurvival: Expedition: "))) { Event(TEXT("message"), Clean.Mid(25)); }
-	LogBuf += FString::Printf(TEXT("%.3f  %s\n"), T, *Clean);
+	// a line seen more than 20 times is only counted from then on (log.txt ends with the counts); the hitch context
+	// below still gets every line with its time
+	int32& Seen = LogCounts.FindOrAdd(Clean);
+	if (++Seen <= 20) { LogBuf += FString::Printf(TEXT("%.3f  %s\n"), T, *Clean); }
 	RecentLog.Emplace(T, Clean);
 	if (RecentLog.Num() > 64) { RecentLog.RemoveAt(0, RecentLog.Num() - 64); }
 }

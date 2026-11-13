@@ -83,6 +83,7 @@ private:
 	TArray<TPair<double, FString>> RecentLog;
 	FString LastLogLine;
 	int32 LastLogRepeats = 0;
+	TMap<FString, int32> LogCounts;
 	// state seen last poll
 	FString LastSettings, LastRealm, LastMap, LastCamp, LastUi;
 	int32 LastDeaths = -1;
