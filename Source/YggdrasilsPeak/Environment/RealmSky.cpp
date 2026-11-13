@@ -333,7 +333,9 @@ void ARealmSky::SetTargets()
 	}
 	for (int32 i = 0; i < Planets.Num(); ++i)
 	{
-		const bool bOn = (bAll && i != AsgardPillar && i != AlfheimBow) || i == int32(Shown) || (i == HelTrail && bAll);
+		// ERealm::None is 9, the same number as the Hel trail's slot: without the None check the trail (a 2,500 km
+		// translucent plane) faded in under every clear sky - a thin dotted line, and a big GPU cost wherever it was in view
+		const bool bOn = (bAll && i != AsgardPillar && i != AlfheimBow) || (Shown != ERealm::None && i == int32(Shown)) || (i == HelTrail && bAll);
 		Planets[i].Target = bOn ? 1.f : 0.f;
 	}
 	ChangeWeather();

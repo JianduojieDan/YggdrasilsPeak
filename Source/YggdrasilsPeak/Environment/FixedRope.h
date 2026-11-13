@@ -42,6 +42,11 @@ public:
 	UPROPERTY(EditAnywhere, Category="Fixed Rope|Lay")
 	TArray<FVector> OldLayPoints;
 
+	/** Draw the old ropes? Off since 2026-11-13: from a few metres away they read as a black stick beside the real rope
+	 *  (user: "a very strange black line next to the fixed rope"). The points are kept for a better look later. */
+	UPROPERTY(EditAnywhere, Category="Fixed Rope|Lay")
+	bool bShowOldRopes = false;
+
 	UPROPERTY(EditAnywhere, Category="Fixed Rope|Lay")
 	TArray<FTransform> PicketAnchors;
 

@@ -30,6 +30,9 @@
 #include "Engine/FontFace.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
+#include "DynamicRHI.h"
+#include "RenderTimer.h"
+#include "Misc/App.h"
 
 namespace
 {
@@ -375,6 +378,27 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 		Paint.WeatherNow = Sky->GetShownRealm() == ERealm::None ? -1 : Sky->GetShownIndex();
 	}
 	Paint.Extreme = FMath::Max(FMath::Clamp((-Paint.AirC - 35.f) / 50.f, 0.f, 1.f), FMath::Clamp((Paint.AirC - 30.f) / 25.f, 0.f, 1.f));
+	// FPS monitor: real frames per second (averaged over half a second), the 1% low from the last 600 frames
+	{
+		const float Dt = FMath::Max(float(FApp::GetDeltaTime()), 1e-4f);
+		FpsTime += Dt;
+		++FpsFrames;
+		if (FrameHistory.Num() < 600) { FrameHistory.Add(Dt); }
+		else { FrameHistory[FrameHead] = Dt; FrameHead = (FrameHead + 1) % 600; }
+		if (FpsTime >= 0.5f)
+		{
+			Paint.Fps = FpsFrames / FpsTime;
+			Paint.FrameMs = 1000.f * FpsTime / FpsFrames;
+			TArray<float> Sorted = FrameHistory;
+			Sorted.Sort();
+			Paint.LowFps = 1.f / Sorted[FMath::Clamp(FMath::FloorToInt(Sorted.Num() * 0.99f), 0, Sorted.Num() - 1)];
+			Paint.GpuMs = float(FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles(0)));
+			Paint.GameMs = float(FPlatformTime::ToMilliseconds(GGameThreadTime));
+			Paint.DrawMs = float(FPlatformTime::ToMilliseconds(GRenderThreadTime));
+			FpsTime = 0.f;
+			FpsFrames = 0;
+		}
+	}
 	// the camps for the route line (names and heights), refreshed now and then
 	if ((Paint.CampsAge += InDeltaTime) > 2.f)
 	{
@@ -819,7 +843,10 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 	// the air top right. The air runs -100..+60 C with the realms; extreme air grows and turns red there (the second
 	// warning beside the wheel). A light shadow under everything; no panels, no halos.
 	const FSurvivalSnapshot& Snap = Paint.Snapshot;
-	const float S = FMath::Clamp(Size.Y / 1080.f, 0.75f, 1.6f);           // drawn for 1080 lines
+	// drawn for 1080 lines; Settings > Game > HUD size (user 2026-11-13: "the UI at the bottom left is too large" - Normal
+	// is now about three quarters of the first v8 size)
+	const int32 HudSize = YggSettings::GetInt(TEXT("HudSize"), 1);
+	const float S = FMath::Clamp(Size.Y / 1080.f, 0.75f, 1.6f) * (HudSize == 0 ? 0.62f : HudSize == 2 ? 0.92f : 0.76f);
 	const float Wa = Paint.WatchShown;
 	const FLinearColor White = FLinearColor::FromSRGBColor(FColor(244, 246, 248));
 	const FLinearColor Red = FLinearColor::FromSRGBColor(FColor(238, 70, 58));
@@ -1035,6 +1062,29 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 		P.TextSRightOnBase(FString::Join(Line2, TEXT("   ·   ")), RX, LY - 26.f * S, KitF, WithA(White, 0.78f), 0.6f);
 		P.TextSRightOnBase(FString::Printf(TEXT("food %d  %s      water %d  %s"), Paint.Food, *YggSettings::KeyLabel(TEXT("Eat"), EKeys::One),
 			Paint.Water, *YggSettings::KeyLabel(TEXT("Drink"), EKeys::Two)), RX, LY + 5.f * S, KitF, WithA(White, 0.78f), 0.6f);
+	}
+
+	// ---- top left: the FPS monitor (Settings > Game > FPS counter), small and quiet, the frame rate first
+	if (const int32 FpsLevel = YggSettings::GetInt(TEXT("FpsCounter"), 0); FpsLevel > 0 && Paint.Fps > 0.f)
+	{
+		const FSlateFontInfo NumF = Roboto(TEXT("Light"), 24.f), CapF = Roboto(TEXT("Medium"), 10.f, 200), SmallF = Roboto(TEXT("Regular"), 13.f);
+		const float FX = M * 0.6f, FY = 40.f * S;
+		const FString Num = FString::FromInt(FMath::RoundToInt(Paint.Fps));
+		const FLinearColor NumC = Paint.Fps < 30.f ? Red : WithA(White, 0.92f);
+		P.TextSOnBase(Num, FX, FY, NumF, NumC, 0.6f);
+		float X = FX + P.Width(Num, NumF) + 6.f * S;
+		P.TextSOnBase(TEXT("FPS"), X, FY, CapF, WithA(White, Soft), 0.6f);
+		X += P.Width(TEXT("FPS"), CapF) + 18.f * S;
+		if (FpsLevel >= 2)
+		{
+			const FString More = FString::Printf(TEXT("%.1f ms   \u00b7   1%% low %d"), Paint.FrameMs, FMath::RoundToInt(Paint.LowFps));
+			P.TextSOnBase(More, X, FY, SmallF, WithA(White, Soft), 0.6f);
+		}
+		if (FpsLevel >= 3)
+		{
+			const FString Detail = FString::Printf(TEXT("GPU %.1f ms   \u00b7   game %.1f ms   \u00b7   render %.1f ms"), Paint.GpuMs, Paint.GameMs, Paint.DrawMs);
+			P.TextSOnBase(Detail, FX, FY + 20.f * S, SmallF, WithA(White, Soft * 0.9f), 0.6f);
+		}
 	}
 
 	// ---- bottom centre: a subtitle, in the HUD's own type, no box

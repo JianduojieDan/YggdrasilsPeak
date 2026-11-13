@@ -5,6 +5,8 @@ m = unreal.load_asset(f"{D}/M_RealmRing") or at.create_asset("M_RealmRing", D, u
 mel.delete_all_material_expressions(m)
 m.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
 m.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT); m.set_editor_property("two_sided", True)
+# clouds over the rings too (2026-11-13: the planets showed in front of the clouds): per-pixel fog + cloud fogging
+m.set_editor_property("use_translucency_vertex_fog", True); m.set_editor_property("compute_fog_per_pixel", True); m.set_editor_property("apply_cloud_fogging", True)
 c = mel.create_material_expression(m, unreal.MaterialExpressionCustom, -500, 0)
 c.set_editor_property("code", open("F:/UE_project/YggdrasilsPeak/Tools/Materials/M_RealmRing.hlsl").read())
 c.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT4)

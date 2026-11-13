@@ -410,6 +410,7 @@ One line per finished block: date · ID · what was delivered · evidence path �
 - 2026-11-13 · A2 (part) · Docs/Thesis/Physiology_Model.md draft 0.1; Tools/Thesis/physio_model.py; finding: the game's linear SpO2 rule reads 100 % at Base Camp; physiology model matches Grocott 2009 at 8,400 m (PaO2 24.8 vs 24.6 Torr).
 - 2026-11-13 · A6 (part) · Compass readable in storms: compass-only fill light at the eyes, cool, no specular, 5 lm (user accepted). Backpack proposals Saved/Review/pack_proposal_1/2.png.
 - 2026-11-13 · A7 (part) · Settings > Game > Body effects Full / Reduced / Off (checked: Off shows nothing). Play_Game.bat / Play_Game_Windowed.bat added.
+- 2026-11-13 · fixes (user play-test) · Thin dotted line in a clear sky = Realm_HelTrail (2,500 km plane) shown because ERealm::None == its slot 9; fixed (same view: frame 12.75 -> 8.24 ms, 640k -> 65k triangles). Planets and Asgard rings behind the volumetric clouds (cloud fogging on, aerial perspective cancelled in M_RealmPlanet.hlsl). Old faded ropes hidden (bShowOldRopes, read as a black stick). HUD SIZE setting (Normal = 76% of v8). FPS COUNTER setting Off / FPS / Frame times / Detailed, top left. Pack round 2: three designs Saved/Review/pack_v2_*.png (A journal, B rack, C pocket map), waiting for the user's pick.
 
 ---
 
@@ -420,6 +421,8 @@ One line per finished block: date · ID · what was delivered · evidence path �
 | 7, 24 | 2026-11-03 / 11-06 | Character floats on steep snow slopes | A6 |
 | 66 | 2026-11-13 | Compass unreadable in storms — fixed 2026-11-13 | A6 |
 | — | 2026-11-13 | "Bad backpack": pack screen needs a new arrangement | A6 |
+| — | 2026-11-13 | Sky line + FPS drop (Hel trail), planets in front of clouds, black line by the rope, HUD too large, FPS counter wanted — all fixed 2026-11-13 | — |
+| — | 2026-11-13 | Thin cirrus clouds painted on the sky dome can never cover a planet (only the volumetric clouds can) | B7 (look) |
 | — | 2026-11-13 | No heartbeat sound | A7 |
 | 12, 32, 33 | 2026-11-03 / 11-07 | Glacier and icefall look | A4, B7 |
 | 5, 13, 18, 25 | 2026-10/11 | Hard, stepped shadows on ridges and the summit | B7 |

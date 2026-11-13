@@ -95,7 +95,7 @@ void AFixedRope::OnConstruction(const FTransform& Transform)
 	if (LayPoints.Num() >= 2)
 	{
 		AddPieces(Rope, LayPoints, RopeDiameter);
-		AddPieces(OldRope, OldLayPoints, OldRopeDiameter);
+		if (bShowOldRopes) { AddPieces(OldRope, OldLayPoints, OldRopeDiameter); }
 		Stakes->AddInstances(PicketAnchors, false, true);
 		Screws->AddInstances(ScrewAnchors, false, true);
 		Pitons->AddInstances(PitonAnchors, false, true);
@@ -110,6 +110,7 @@ void AFixedRope::OnConstruction(const FTransform& Transform)
 void AFixedRope::BeginPlay()
 {
 	Super::BeginPlay();
+	if (OldRope && !bShowOldRopes) { OldRope->SetVisibility(false); }   // instances saved in the level before the switch
 	// Construction does not rerun for saved actors in a packaged game, and the bounds are not saved.
 	UpdateBounds();
 }

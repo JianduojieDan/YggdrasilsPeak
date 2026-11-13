@@ -25,9 +25,11 @@ except Exception as e:
 # lifts a black planet (Svartalfheim, Hel) to sky colour. Translucent still depth-tests, so ridges hide planets.
 m.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
 m.set_editor_property("two_sided", False)   # two-sided translucent drew the far half over the near half (bright blob at the pole)
-m.set_editor_property("use_translucency_vertex_fog", False)
-m.set_editor_property("compute_fog_per_pixel", False)
-m.set_editor_property("apply_cloud_fogging", False)
+# fog + cloud fogging ON (2026-11-13, user: the planets showed in front of the clouds): the clouds now cover the planets;
+# the aerial perspective the fog adds is cancelled in M_RealmPlanet.hlsl (AP input), so dark planets stay dark
+m.set_editor_property("use_translucency_vertex_fog", True)
+m.set_editor_property("compute_fog_per_pixel", True)
+m.set_editor_property("apply_cloud_fogging", True)
 c = mel.create_material_expression(m, unreal.MaterialExpressionCustom, -400, 0)
 c.set_editor_property("code", code)
 c.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT3)

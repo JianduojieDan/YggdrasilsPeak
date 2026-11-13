@@ -328,6 +328,8 @@ void USettingsWidget::DefineTabs()
 	}
 	Game.Rows.Add(IntRow(TEXT("UNITS"), TEXT("Height in metres or in feet, on the HUD and in the menus."), { TEXT("Metres"), TEXT("Feet") }, TEXT("Units"), 0, 0, nullptr));
 	Game.Rows.Add(IntRow(TEXT("HUD"), TEXT("Everything shows every reading. Quiet keeps the screen empty until your body needs you - then only that."), { TEXT("Everything"), TEXT("Quiet") }, TEXT("Hud"), 0, 0, nullptr));
+	Game.Rows.Add(IntRow(TEXT("HUD SIZE"), TEXT("How large the readings are on the screen."), { TEXT("Small"), TEXT("Normal"), TEXT("Large") }, TEXT("HudSize"), 1, 0, nullptr));
+	Game.Rows.Add(IntRow(TEXT("FPS COUNTER"), TEXT("Frames per second in the top left corner. FPS: just the number. Frame times: the time per frame and the 1% low (the slowest frames). Detailed: also the GPU, game and render times."), { TEXT("Off"), TEXT("FPS"), TEXT("Frame times"), TEXT("Detailed") }, TEXT("FpsCounter"), 0, 0, nullptr));
 	Game.Rows.Add(IntRow(TEXT("BODY EFFECTS"), TEXT("What thin air, cold and exhaustion do to your view: the tunnel, frost on the lens, the swaying, the grey-out. Reduced halves them and stops the shaking; Off leaves only the HUD's warnings."), { TEXT("Full"), TEXT("Reduced"), TEXT("Off") }, TEXT("BodyFx"), 0, 0, nullptr));
 	Tabs.Add(Game);
 

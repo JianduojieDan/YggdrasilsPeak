@@ -245,6 +245,8 @@ namespace YggSettings
 		S.Add(TEXT("[game] units feet"), Imperial() ? TEXT("1") : TEXT("0"));
 		S.Add(TEXT("[game] hud quiet"), HudHidden() ? TEXT("1") : TEXT("0"));
 		S.Add(TEXT("[game] body effects"), FString::FromInt(GetInt(TEXT("BodyFx"), 0)));
+		S.Add(TEXT("[game] hud size"), FString::FromInt(GetInt(TEXT("HudSize"), 1)));
+		S.Add(TEXT("[game] fps counter"), FString::FromInt(GetInt(TEXT("FpsCounter"), 0)));
 		S.Add(TEXT("[game] soft flashes"), SoftFlashes() ? TEXT("1") : TEXT("0"));
 		S.Add(TEXT("[game] colour vision"), FString::FromInt(ColourVision()));
 		return S;
@@ -356,7 +358,7 @@ namespace YggSettings
 		auto Remove = [](std::initializer_list<const TCHAR*> Keys) { for (const TCHAR* K : Keys) { GConfig->RemoveKey(Sec, K, GGameUserSettingsIni); Cache().Remove(K); } };
 		switch (Tab)
 		{
-		case 0: Remove({ TEXT("Units"), TEXT("Hud"), TEXT("BodyFx"), TEXT("Hints"), TEXT("FieldOfView") }); break;
+		case 0: Remove({ TEXT("Units"), TEXT("Hud"), TEXT("HudSize"), TEXT("FpsCounter"), TEXT("BodyFx"), TEXT("Hints"), TEXT("FieldOfView") }); break;
 		case 1: Remove({ TEXT("Graphics"), TEXT("Upscaling"), TEXT("Upscaler"), TEXT("FrameGen"), TEXT("Reflex"), TEXT("RayTracing"), TEXT("Footprints"), TEXT("MotionBlur"), TEXT("GfxShadows"), TEXT("GfxViewDistance"), TEXT("GfxEffects"), TEXT("GfxTextures") }); break;
 		case 2:
 			Remove({ TEXT("FrameCap"), TEXT("FrameLimit"), TEXT("Brightness") });

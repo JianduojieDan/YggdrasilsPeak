@@ -251,6 +251,9 @@ private:
 		bool bAirKnown = false;
 		int32 WeatherNow = -1;           // the shown realm, -1 none
 		float Extreme = 0.f;             // 0..1, how extreme the air is (from -35 down to -85, from +30 up to +55)
+		// FPS monitor (Settings > Game > FPS counter): frames per second over half a second, 1% low over the last ~5 s,
+		// and the GPU / game-thread / render-thread times
+		float Fps = 0.f, FrameMs = 0.f, LowFps = 0.f, GpuMs = 0.f, GameMs = 0.f, DrawMs = 0.f;
 		bool bExhausted = false, bLowHealth = false;
 		int32 PackKg = 0, PackMax = 0, Food = 0, Water = 0;
 		FString Subtitle;
@@ -269,6 +272,10 @@ private:
 
 	void TickWheel(float DeltaTime);
 	int32 WheelSerial = 0;
+	float FpsTime = 0.f;
+	int32 FpsFrames = 0;
+	TArray<float> FrameHistory;
+	int32 FrameHead = 0;
 	float WheelTime = 0.f;
 	bool bWheelOn = false;
 	static constexpr float WheelTotal = 4.2f;   // in 0.3, spin 1.0, slow 0.8, result ~2, fade 0.4

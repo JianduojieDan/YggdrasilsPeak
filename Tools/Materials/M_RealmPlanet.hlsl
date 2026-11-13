@@ -198,9 +198,12 @@ float lt = amb < 0.99 ? litB : lit;
 float3 col = A * (ambW + (1.0 - ambW) * lt) * limb * Bright + E * Bright;
 // the engine adds the sky's aerial perspective on top of opaque surfaces (inscatter + transmittance at this pixel);
 // looking up through thin air the transmittance stays high, so pre-compensate: the planet then shows its own colour
-float Tr = 1.0; AP = float4(0, 0, 0, 1);   // translucent, fog off: no aerial perspective is added any more
+// 2026-11-13: fog is ON again (Apply Fogging + Cloud Fogging) so the volumetric clouds draw over the planets (they are
+// thousands of km away, the clouds a few km); the engine then adds the aerial perspective on top: cancel it here
+float Tr = max(AP.a, 0.05);
 float Elev = 6326.3 + (Cam.z - 129770.0) / 100.0;   // camera elevation, m
 // low on the mountain the thicker air washes the planet into the day sky (Midgard: recognisable only high up)
 float w = wash * saturate((8200.0 - Elev) / 3500.0);
 col = lerp(col, Sky, w);
-return max((col - AP.rgb * (1.0 - w)) / Tr, 0.0);
+// no clamp at 0: a dark planet needs a negative value here to cancel the inscatter the engine adds back
+return (col - AP.rgb * (1.0 - w)) / Tr;
