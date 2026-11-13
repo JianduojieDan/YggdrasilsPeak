@@ -7,6 +7,7 @@
 #include "Survival/YggTime.h"
 #include "Environment/RealmSky.h"
 #include "Async/Async.h"
+#include "Containers/Queue.h"
 #include "Blueprint/UserWidget.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
@@ -70,24 +71,26 @@ private:
 	TWeakObjectPtr<UYggSessionMonitor> Owner;
 };
 
-/** The engine's log, filtered to what helps explain a session (and to what a player would never see). */
+/** The engine's log, filtered to what helps explain a session (and to what a player would never see). After start-up
+ *  the engine hands lines over on its own logging thread (and any thread may log), so lines wait in a thread-safe queue
+ *  that the game thread empties every frame (the first version only listened on the game thread and heard nothing). */
 class FYggMonitorLog : public FOutputDevice
 {
 public:
-	explicit FYggMonitorLog(UYggSessionMonitor* InOwner) : Owner(InOwner) { bAutoEmitLineTerminator = false; }
+	FYggMonitorLog() { bAutoEmitLineTerminator = false; }
+	virtual bool CanBeUsedOnAnyThread() const override { return true; }
+	virtual bool CanBeUsedOnMultipleThreads() const override { return true; }
+	TQueue<TPair<double, FString>, EQueueMode::Mpsc> Lines;
 	virtual void Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const FName& Category) override
 	{
-		if (!Owner.IsValid() || !IsInGameThread()) { return; }
 		static const FName Keep[] = { TEXT("LogRenderer"), TEXT("LogStreaming"), TEXT("LogStaticMesh"), TEXT("LogShaders"), TEXT("LogRHI"),
 			TEXT("LogD3D12RHI"), TEXT("LogAudio"), TEXT("LogNiagara"), TEXT("LogTemp"), TEXT("LogSurvival"), TEXT("LogTexture"), TEXT("LogContentStreaming"),
 			TEXT("LogPSO"), TEXT("LogShaderCompilers"), TEXT("LogMaterial"), TEXT("LogLumen"), TEXT("LogNanite"), TEXT("LogViewport"), TEXT("LogLoad"), TEXT("LogWorld"),
 			TEXT("LogGarbage"), TEXT("LogConsoleResponse"), TEXT("LogEngine"), TEXT("LogStats"), TEXT("LogStreamline"), TEXT("LogDLSS") };
 		bool bKeep = Verbosity <= ELogVerbosity::Warning;
 		for (const FName& K : Keep) { bKeep |= Category == K; }
-		if (bKeep) { Owner->OnLogLine(FString::Printf(TEXT("%s: %s"), *Category.ToString(), V)); }
+		if (bKeep) { Lines.Enqueue(TPair<double, FString>(FPlatformTime::Seconds(), FString::Printf(TEXT("%s: %s"), *Category.ToString(), V))); }
 	}
-private:
-	TWeakObjectPtr<UYggSessionMonitor> Owner;
 };
 
 void UYggSessionMonitor::Initialize(FSubsystemCollectionBase& Collection)
@@ -123,7 +126,7 @@ void UYggSessionMonitor::Start()
 		FSlateApplication::Get().RegisterInputPreProcessor(Input);
 	}
 	ImageWrappers = &FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-	LogDevice = MakeShared<FYggMonitorLog>(this);
+	LogDevice = MakeShared<FYggMonitorLog>();
 	GLog->AddOutputDevice(LogDevice.Get());
 	// session.txt is written once the first level is up (viewport, player and settings exist), again on each new level
 	Event(TEXT("session_start"), Dir);
@@ -135,6 +138,8 @@ void UYggSessionMonitor::Deinitialize()
 	if (bOn)
 	{
 		Event(TEXT("session_end"), FString::Printf(TEXT("%d frames, %d hitches, %d screenshots"), Frames, Hitches, Shots));
+		if (LogDevice.IsValid()) { GLog->RemoveOutputDevice(LogDevice.Get()); }
+		DrainLog();
 		LogCounts.ValueSort([](int32 A, int32 B) { return A > B; });
 		for (const TPair<FString, int32>& KV : LogCounts)
 		{
@@ -197,10 +202,16 @@ void UYggSessionMonitor::OnKey(const FString& Key, bool bDown)
 	else if (KeysDown.Remove(Key) > 0) { Event(TEXT("key_up"), Key); }
 }
 
-void UYggSessionMonitor::OnLogLine(const FString& Line)
+void UYggSessionMonitor::DrainLog()
+{
+	TPair<double, FString> L;
+	while (LogDevice.IsValid() && LogDevice->Lines.Dequeue(L)) { OnLogLine(L.Value, L.Key); }
+}
+
+void UYggSessionMonitor::OnLogLine(const FString& Line, double When)
 {
 	if (!bOn) { return; }
-	const double T = FPlatformTime::Seconds() - StartReal;
+	const double T = FMath::Max(0.0, When - StartReal);
 	FString Clean = Line; Clean.TrimEndInline();
 	if (Clean == LastLogLine) { ++LastLogRepeats; return; }               // fold repeats (one line spammed 200,000 times before)
 	if (LastLogRepeats > 0) { LogBuf += FString::Printf(TEXT("%.3f  (previous line repeated %d more times)\n"), T, LastLogRepeats); LastLogRepeats = 0; }
@@ -219,6 +230,7 @@ void UYggSessionMonitor::Tick(float DeltaTime)
 	if (!bOn) { return; }
 	const float Dt = float(FApp::GetDeltaTime());
 	++Frames;
+	DrainLog();                                                            // before the frame row: a hitch sees its log lines
 	FrameRow(Dt);
 	const double Now = FPlatformTime::Seconds();
 	if (Now - LastSecond >= 1.0) { SecondRow(); PollChanges(); LastSecond = Now; }

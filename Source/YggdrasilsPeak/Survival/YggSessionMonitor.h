@@ -48,7 +48,7 @@ public:
 	void Event(const TCHAR* Type, const FString& Detail);
 	void OnKey(const FString& Key, bool bDown);
 	void OnMouse(float Dx, float Dy) { MouseDx += Dx; MouseDy += Dy; }
-	void OnLogLine(const FString& Line);
+	void OnLogLine(const FString& Line, double When);
 
 private:
 	void Start();
@@ -60,6 +60,7 @@ private:
 	void OnShotCaptured(int32 W, int32 H, const TArray<FColor>& Px);
 	void Flush();
 	void PollChanges();
+	void DrainLog();
 
 	bool bOn = false;
 	FString Dir;
