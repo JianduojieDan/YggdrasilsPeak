@@ -890,6 +890,10 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 			const FSlateFontInfo AltF = Roboto(TEXT("Light"), 80.f, -25), UnitBig = Roboto(TEXT("Light"), 26.f);
 			const FString Alt = YggSettings::AltitudeNumber(Snap.ElevationMeters);
 			W.TextSOnBase(TEXT("ALTITUDE"), X0, LY - 104.f * S, CapF, WithA(White, Soft), 0.6f);
+			if (Snap.ElevationMeters >= 8000.f)          // above 8,000 m: the death zone, named beside the label
+			{
+				W.TextSOnBase(TEXT("DEATH ZONE"), X0 + W.Width(TEXT("ALTITUDE"), CapF) + 14.f * S, LY - 104.f * S, CapF, WithA(Red, 0.75f + 0.25f * Pulse), 0.6f);
+			}
 			W.TextSOnBase(Alt, X0 - 4.f * S, LY - 22.f * S, AltF, WithA(White, 0.98f), 0.5f);
 			const float AX = X0 - 4.f * S + W.Width(Alt, AltF);
 			W.TextSOnBase(YggSettings::AltitudeUnit(), AX + 7.f * S, LY - 22.f * S, UnitBig, WithA(White, Soft), 0.5f);

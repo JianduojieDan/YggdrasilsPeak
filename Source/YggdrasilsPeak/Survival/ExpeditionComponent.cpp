@@ -19,6 +19,12 @@
 #include "Survival/StoryClue.h"
 #include "Environment/RouteLandmark.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Environment/RealmSky.h"
+#include "Survival/YggBodyCameraModifier.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Character.h"
@@ -34,6 +40,13 @@ static TAutoConsoleVariable<int32> CVarLoadOnStart(TEXT("ygg.Save.LoadOnStart"),
 
 static TAutoConsoleVariable<int32> CVarLoadInEditor(TEXT("ygg.Save.LoadInEditor"), 0,
 	TEXT("0 = the editor's Play button ignores the save and starts at the PlayerStart, 1 = it continues from the save like the real game."));
+
+// The body on the view, held at a value for screenshots and tuning (-1 = live)
+static TAutoConsoleVariable<float> CVarBodyHypoxia(TEXT("ygg.Body.Hypoxia"), -1.f, TEXT("Hold the thin-air tunnel at 0..1 (-1 = live)."));
+static TAutoConsoleVariable<float> CVarBodyFrost(TEXT("ygg.Body.Frost"), -1.f, TEXT("Hold the frost on the lens at 0..1 (-1 = live)."));
+static TAutoConsoleVariable<float> CVarBodyExhaust(TEXT("ygg.Body.Exhaust"), -1.f, TEXT("Hold the spent swim and sway at 0..1 (-1 = live)."));
+static TAutoConsoleVariable<float> CVarBodyFaint(TEXT("ygg.Body.Faint"), -1.f, TEXT("Hold the near-collapse grey waves at 0..1 (-1 = live)."));
+static TAutoConsoleVariable<float> CVarBodyShiver(TEXT("ygg.Body.Shiver"), -1.f, TEXT("Hold the shiver at 0..1 (-1 = live)."));
 
 static FAutoConsoleCommand CmdNewGame(TEXT("ygg.NewGame"), TEXT("Deletes the expedition save; the next start is a new game."),
 	FConsoleCommandDelegate::CreateLambda([]()
@@ -621,11 +634,96 @@ void UExpeditionComponent::UpdateScreenEffect(float DeltaTime)
 
 	FPostProcessSettings& PP = Camera->PostProcessSettings;
 	PP.bOverride_VignetteIntensity = true;
-	PP.VignetteIntensity = FMath::Lerp(0.4f, 1.6f, DisplayedHypoxia);
+	PP.VignetteIntensity = FMath::Lerp(0.4f, 0.9f, DisplayedHypoxia);   // the tunnel in M_PP_Body does the rest
 	PP.bOverride_ColorSaturation = true;
-	const float Saturation = FMath::Lerp(1.f, 0.45f, DisplayedHypoxia);
+	const float Saturation = FMath::Lerp(1.f, 0.55f, DisplayedHypoxia);
 	PP.ColorSaturation = FVector4(Saturation, Saturation, Saturation, 1.f);
 	Camera->PostProcessBlendWeight = 1.f;
+
+	// ---- The body on the view (2026-11-13, "a death zone you can feel"): a heart that answers thin air, effort, exhaustion
+	// and cold; its beat tightens the thin-air tunnel; frost grows on the lens with the cold; the view swims when spent and
+	// greys out near collapse. One post-process pass (M_PP_Body, Tools/UI/shaders/pp_body.hlsl), weight 0 while fine.
+	const FSurvivalSnapshot Snap = Survival->GetSnapshot();
+	const ACharacter* Me = Cast<ACharacter>(GetOwner());
+	const float Speed = Me ? float(Me->GetVelocity().Size2D()) : 0.f;
+	const float Core = Snap.BodyTemperature;
+	const float Effort = Snap.bSprinting ? 55.f : FMath::Clamp(Speed / 230.f, 0.f, 1.f) * 24.f;
+	const float HeartTarget = FMath::Clamp(64.f + FMath::Max(0.f, 96.f - Oxygen) * 1.5f + Effort + (Snap.bExhausted ? 18.f : 0.f)
+		+ FMath::Clamp((C->NormalTemperature - 1.f - Core) * 6.f, 0.f, 12.f), 48.f, 188.f);
+	HeartRate = FMath::FInterpTo(HeartRate, HeartTarget, DeltaTime, HeartTarget > HeartRate ? 0.6f : 0.25f);
+	HeartPhase = FMath::Fmod(HeartPhase + HeartRate / 60.f * DeltaTime, 1.f);
+	const auto Bump = [](float X, float At, float W) { const float D = (X - At) / W; return FMath::Exp(-D * D); };
+	const float Beat = FMath::Max(Bump(HeartPhase, 0.06f, 0.05f), 0.6f * Bump(HeartPhase, 0.26f, 0.05f));   // lub-dub
+
+	// cold: the core (35.8 -> nothing, 33.2 -> full) and, out in killing air, the lens frosting at its edges
+	float AirFrost = 0.f;
+	if (const ARealmSky* Sky = ARealmSky::Get(GetWorld()))
+	{
+		AirFrost = FMath::Clamp((-40.f - Sky->GetAirTemperature(Snap.ElevationMeters)) / 60.f, 0.f, 0.45f);
+	}
+	const float FrostTarget = Snap.bSheltered ? 0.f : FMath::Max(FMath::Clamp((C->NormalTemperature - 0.8f - Core) / 2.6f, 0.f, 1.f), AirFrost);
+	DisplayedFrost = FMath::FInterpTo(DisplayedFrost, FrostTarget, DeltaTime, FrostTarget > DisplayedFrost ? 0.25f : 0.5f);
+	const float Stam = Survival->GetStatNormalized(ESurvivalStat::Stamina);
+	const float ExTarget = Snap.bExhausted ? 1.f : FMath::Clamp((0.18f - Stam) / 0.18f, 0.f, 0.5f);
+	DisplayedExhaust = FMath::FInterpTo(DisplayedExhaust, ExTarget, DeltaTime, 1.5f);
+	DisplayedFaint = FMath::FInterpTo(DisplayedFaint, FMath::Clamp((C->OxygenDamageBelow - Oxygen) / 10.f, 0.f, 1.f), DeltaTime, 0.8f);
+
+	// test switches (ygg.Body.*, -1 = off) hold a state for screenshots
+	const auto Held = [](const TCHAR* Name, float Live) { const IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(Name); return V && V->GetFloat() >= 0.f ? V->GetFloat() : Live; };
+	const float Hyp = Held(TEXT("ygg.Body.Hypoxia"), DisplayedHypoxia), Frost = Held(TEXT("ygg.Body.Frost"), DisplayedFrost);
+	const float Ex = Held(TEXT("ygg.Body.Exhaust"), DisplayedExhaust), Faint = Held(TEXT("ygg.Body.Faint"), DisplayedFaint);
+	const float Shiver = Held(TEXT("ygg.Body.Shiver"), FMath::Clamp((C->NormalTemperature - 1.2f - Core) / 2.2f, 0.f, 1.f));
+	const float HeartShown = FMath::Max(Hyp, Ex * 0.7f);
+
+	if (!BodyMID)
+	{
+		if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/UI/Materials/M_PP_Body.M_PP_Body"), nullptr, LOAD_NoWarn | LOAD_Quiet))
+		{
+			BodyMID = UMaterialInstanceDynamic::Create(M, this);
+		}
+	}
+	if (BodyMID)
+	{
+		FVector2D View(16.f, 9.f);
+		if (GEngine && GEngine->GameViewport) { GEngine->GameViewport->GetViewportSize(View); }
+		BodyMID->SetScalarParameterValue(TEXT("T"), GetWorld()->GetTimeSeconds());
+		BodyMID->SetScalarParameterValue(TEXT("Aspect"), View.Y > 0.f ? float(View.X / View.Y) : 1.7778f);
+		BodyMID->SetScalarParameterValue(TEXT("Hyp"), Hyp);
+		BodyMID->SetScalarParameterValue(TEXT("Beat"), Beat * HeartShown);
+		BodyMID->SetScalarParameterValue(TEXT("Frost"), Frost);
+		BodyMID->SetScalarParameterValue(TEXT("Exhaust"), Ex);
+		BodyMID->SetScalarParameterValue(TEXT("Faint"), Faint);
+		// weight 0 = the pass is not drawn: nothing is spent while the body is fine
+		const float Weight = FMath::Max(FMath::Max(Hyp, Frost), FMath::Max(Ex, Faint)) > 0.01f ? 1.f : 0.f;
+		FWeightedBlendable* Entry = PP.WeightedBlendables.Array.FindByPredicate([this](const FWeightedBlendable& B) { return B.Object == BodyMID; });
+		if (Entry) { Entry->Weight = Weight; }
+		else { PP.WeightedBlendables.Array.Add(FWeightedBlendable(Weight, BodyMID)); }
+	}
+	if (!BodyCam.IsValid())
+	{
+		const APawn* Pawn = Cast<APawn>(GetOwner());
+		if (APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr)
+		{
+			if (PC->PlayerCameraManager) { BodyCam = Cast<UYggBodyCameraModifier>(PC->PlayerCameraManager->AddNewCameraModifier(UYggBodyCameraModifier::StaticClass())); }
+		}
+	}
+	if (BodyCam.IsValid())
+	{
+		BodyCam->Shiver = Shiver;
+		BodyCam->Sway = Ex * 0.8f;
+		BodyCam->Pulse = Beat * HeartShown;
+	}
+
+	// the death zone: said once on the way up, again after going back below 7,850 m
+	if (!bDeathZoneSaid && Snap.ElevationMeters >= 8000.f)
+	{
+		bDeathZoneSaid = true;
+		Say(NSLOCTEXT("Expedition", "DeathZone", "8,000 metres. The death zone: up here the body is slowly dying."), 8.f);
+	}
+	else if (bDeathZoneSaid && Snap.ElevationMeters < 7850.f)
+	{
+		bDeathZoneSaid = false;
+	}
 }
 
 void UExpeditionComponent::Say(const FText& Message, float Seconds)

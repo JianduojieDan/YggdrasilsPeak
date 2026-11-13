@@ -31,6 +31,9 @@ public:
 
 	UExpeditionComponent();
 
+	/** Beats per minute: rest ~64, up with thin air, effort, exhaustion and cold (drives the heartbeat on the view). */
+	float GetHeartRate() const { return HeartRate; }
+
 	/** Inside this distance (cm, horizontal) of a camp's centre you are sheltered and it becomes your checkpoint. */
 	UPROPERTY(EditAnywhere, Category="Expedition", meta=(ClampMin="100"))
 	float CampRadius = 1600.f;
@@ -196,6 +199,16 @@ private:
 	void FinishRest();
 	float CampCheckTimer = 0.f;
 	float DisplayedHypoxia = 0.f;
+	// The body on the view (UpdateScreenEffect): M_PP_Body on the camera and a camera modifier, driven by a heart rate
+	UPROPERTY(Transient)
+	TObjectPtr<class UMaterialInstanceDynamic> BodyMID;
+	TWeakObjectPtr<class UYggBodyCameraModifier> BodyCam;
+	float HeartRate = 64.f;
+	float HeartPhase = 0.f;
+	float DisplayedFrost = 0.f;
+	float DisplayedExhaust = 0.f;
+	float DisplayedFaint = 0.f;
+	bool bDeathZoneSaid = false;
 	float StartTime = 0.f;
 	int32 Deaths = 0;
 	int32 CheckpointBottles = 0;
