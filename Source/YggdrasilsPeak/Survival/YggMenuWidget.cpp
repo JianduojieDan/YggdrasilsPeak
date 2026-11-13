@@ -2,6 +2,7 @@
 
 #include "Survival/YggMenuWidget.h"
 
+#include "Survival/BackpackWidget.h"
 #include "Survival/ExpeditionComponent.h"
 #include "Survival/SettingsWidget.h"
 #include "Survival/SurvivalComponent.h"
@@ -114,6 +115,7 @@ UYggMenuWidget* UYggMenuWidget::Make(APlayerController* PC)
 		return nullptr;
 	}
 	USettingsWidget::CloseIfOpen(PC);
+	UBackpackWidget::CloseIfOpen(PC);
 	if (UYggMenuWidget* Old = FindOpen(PC)) { Old->RemoveFromParent(); }
 	return CreateWidget<UYggMenuWidget>(PC, UYggMenuWidget::StaticClass());
 }

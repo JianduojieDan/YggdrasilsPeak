@@ -492,6 +492,18 @@ static FAutoConsoleCommandWithWorld CmdPack(TEXT("ygg.Pack"), TEXT("Opens or clo
 
 // ---------------------------------------------------------------- pack screen
 
+void UBackpackWidget::CloseIfOpen(APlayerController* PC)
+{
+	// the pack takes every click on the screen; under a death page it would swallow the clicks that miss a button
+	if (!PC) { return; }
+	TArray<UUserWidget*> Open;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(PC, Open, UBackpackWidget::StaticClass(), false);
+	for (UUserWidget* W : Open)
+	{
+		if (UBackpackWidget* Pack = Cast<UBackpackWidget>(W)) { if (!Pack->bClosing) { Pack->Close(); } }
+	}
+}
+
 void UBackpackWidget::Toggle(APlayerController* PC)
 {
 	if (!PC)

@@ -1,4 +1,6 @@
 #include "Survival/YggRouteCheck.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Survival/ClimbingComponent.h"
 #include "Survival/OxygenPickup.h"
 #include "Survival/SnowTrailComponent.h"
@@ -327,6 +329,13 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRouteCheck(TEXT("ygg.RouteCheck"),
 
 void UYggRouteCheck::Begin(const TArray<FString>& Args, UWorld* World)
 {
+	// it flies the climber through every camp: the expedition would write the real save and open the summit screen
+	// (2026-11-14 review). Tools/Route/route_check.ps1 passes -YggNoSave.
+	if (!FParse::Param(FCommandLine::Get(), TEXT("YggNoSave")))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RouteCheck: needs a game started with -YggNoSave (it passes through every camp and would overwrite your save). Use Tools/Route/route_check.ps1."));
+		return;
+	}
 	if (Step != EYggRouteCheckStep::Idle)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("RouteCheck: already running (ygg.RouteCheck stop ends it)."));

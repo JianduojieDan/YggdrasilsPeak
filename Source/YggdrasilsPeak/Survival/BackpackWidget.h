@@ -30,6 +30,8 @@ public:
 
 	/** Opens (adds to the viewport) or closes the pack for the owning player. */
 	static void Toggle(APlayerController* PC);
+	/** Closes the pack if it is open (a menu opening above it: death, pause, summit), 2026-11-14 review. */
+	static void CloseIfOpen(APlayerController* PC);
 
 	bool IsClosing() const { return bClosing; }
 

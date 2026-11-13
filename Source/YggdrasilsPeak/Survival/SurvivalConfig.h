@@ -227,22 +227,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
 	bool bPhysiologyModel = true;
 
-	/** Thresholds on the model's lower scale (fatigue from about Camp 2 walking, warning around the South Col without a
-	 *  bottle, damage only when working hard high in the death zone without one). */
+	/** Thresholds on the model's lower scale, tuned on the adaptation play really reaches (adapted at most to 7,000 m,
+	 *  breathing floor 0.75; 2026-11-14 review): fatigue from about Camp 2 walking; warning resting from about 8,200 m and
+	 *  walking from the South Col without a bottle; damage walking uphill above about 8,250 m without one. With a bottle
+	 *  saturation stays above 66 everywhere. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
 	float PhysioFatigueBelow = 72.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
-	float PhysioWarningEnter = 58.f;
+	float PhysioWarningEnter = 52.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
-	float PhysioWarningExit = 63.f;
+	float PhysioWarningExit = 57.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
-	float PhysioDamageBelow = 45.f;
+	float PhysioDamageBelow = 40.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
-	float PhysioAutoBottleBelow = 62.f;
+	float PhysioAutoBottleBelow = 58.f;
 
 	/** Resting in a camp's shelter (warmth, calm breathing). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
@@ -290,7 +292,7 @@ public:
 	/** A trekker's breathing is never as bad as someone flown in: the breathing adaptation never falls below this
 	 *  (0 = just arrived, 1 = acclimatised to where you are). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology", meta=(ClampMin="0", ClampMax="1"))
-	float PhysioMinAcclimatised = 0.5f;
+	float PhysioMinAcclimatised = 0.75f;
 
 	// ---- Deep snow ----
 

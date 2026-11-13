@@ -43,5 +43,10 @@ cores), a game run (GPU), packaging (cook, 30-60 min), Blender. What does not: a
 | Performance pass | 03:14 | 03:23 | 9 min | 7 (6 perf runs + build) | worst route spot (Icefall start) 39 fps at 1080p High: tessellation 17 of 23 GPU ms; dicing by tier (High 8 px) -> 67 fps |
 | Oxygen physiology model | 03:24 | 03:37 | 13 min | 4 (2 builds + 2 test runs) | first test: a camp jump to the South Col arrived unacclimatised (33.9 %, instant damage) -> camp jumps/continues adapt to the camp, trekker floor 0.5 |
 | Breathing follows SpO2 | 03:39 | 03:41 | 2 min | 0 | existing recorded phrases only |
-| Packaged build | 03:38 | | | | Development Win64 -> F:\UE_project\Builds\2026-11-14 |
+| Packaged build | 03:38 | 03:42 | 4 min | 4 | Development Win64 -> F:\UE_project\Builds\2026-11-14 (15 min last time; the cook reused the cache); 2,552 packages, 0 cook warnings; packaged game runs on both maps, 3.4 GB resident |
+| Loader warnings in the packaged game | 03:43 | 03:45 | 2 min | 1 (build) | numbered sound sets / backdrops asked for files that do not exist |
+| Push code + docs to GitHub | 03:45 | 03:47 | 2 min | 0 | worktree robocopy + push (56 files) |
+| Independent code review (3 agents) | 03:42 | 03:59 | 17 min | 0 | threads/IO: none; UI: 1 (pack under death page); body: 3 (doubled eye drop, death-zone tuning on wrong values, route check could write the save) |
+| Review fixes + verify | 03:59 | 04:05 | 6 min | 2 (build + sweep run) | menu_shots could not get the game window in front twice -> used a start-up command instead of keys |
+| Morning report | 04:05 | 04:10 | 5 min | 0 | Docs/Development/2026-11-14-morning-report.md + Saved/Review/morning_2026-11-14.jpg |
 | Snow "before" shots + references | 01:21 | 01:27 | 6 min | 3 (2 game runs) | first two shots were under the ground (route.json z is not ground height) |

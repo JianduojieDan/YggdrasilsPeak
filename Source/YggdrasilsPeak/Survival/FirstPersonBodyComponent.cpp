@@ -27,8 +27,8 @@ static TAutoConsoleVariable<int32> CVarFeetLog(TEXT("ygg.Feet.Log"), 0,
 	TEXT("positive = floating), the plain animation's gap, the lift, the animated height, plant weight and tilt."));
 static TAutoConsoleVariable<int32> CVarFeetWorldIK(TEXT("ygg.Feet.WorldIK"), 1,
 	TEXT("1 = what others, mirrors and the shadow see is a posed copy of the body with its legs fitted to the ground like your own; 0 = the plain animated body (only lowered)."));
-static TAutoConsoleVariable<int32> CVarFeetViewDrop(TEXT("ygg.Feet.ViewDrop"), 1,
-	TEXT("1 = the first-person body and the eye come down with the hips on a slope (your legs stay under your jacket); 0 = they stay at the capsule's height (legs hang below on steep ground)."));
+static TAutoConsoleVariable<int32> CVarFeetViewDrop(TEXT("ygg.Feet.ViewDrop"), 0,
+	TEXT("Extra eye drop on slopes. 0 (default, 2026-11-14 review): the first-person mesh and its camera are children of the world body, so they already come down with the hips; 1 added the drop a second time (the eye fell about twice the hips drop)."));
 
 namespace
 {

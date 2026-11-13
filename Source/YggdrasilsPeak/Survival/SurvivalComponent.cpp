@@ -857,16 +857,20 @@ namespace
 			struct FCamp { const TCHAR* Name; float M; };
 			const FCamp Camps[] = { { TEXT("Dingboche"), 4410.f }, { TEXT("Base Camp"), 5364.f }, { TEXT("Camp 1"), 6065.f }, { TEXT("Camp 2"), 6400.f },
 				{ TEXT("Camp 3"), 7160.f }, { TEXT("South Col"), 7906.f }, { TEXT("8,400 m"), 8400.f }, { TEXT("Summit"), 8849.f } };
-			UE_LOG(LogSurvival, Display, TEXT("Physio sweep (acclimatised; thresholds fatigue %.0f, warning %.0f, damage %.0f):  rest  walk  climb | bottle walk climb | arrived rest"),
-				C->PhysioFatigueBelow, C->PhysioWarningEnter, C->PhysioDamageBelow);
+			UE_LOG(LogSurvival, Display, TEXT("Physio sweep (as in play: adapted to min(camp, %.0f m); fatigue %.0f, warning %.0f, damage %.0f):  A  rest  walk  climb | bottle walk climb | arrived rest"),
+				C->AdaptMaxMeters, C->PhysioFatigueBelow, C->PhysioWarningEnter, C->PhysioDamageBelow);
 			for (const FCamp& K : Camps)
 			{
-				const float Rest = USurvivalComponent::PhysioSpO2(K.M, 1.f, C->GapRestTorr);
-				const float Walk = USurvivalComponent::PhysioSpO2(K.M, 1.f, C->GapRestTorr + C->GapWalkTorr);
-				const float Climb = USurvivalComponent::PhysioSpO2(K.M, 1.f, C->GapRestTorr + C->GapSprintTorr + C->GapPerGradeTorr);
+				// the breathing adaptation play really reaches there (the review found the table at A = 1 misleading)
+				const float Adapted = FMath::Min(K.M, C->AdaptMaxMeters);
+				const auto AFor = [C, Adapted](float Breathed) { return FMath::Clamp(1.f - (Breathed - Adapted) / FMath::Max(C->AdaptSpanMeters, 1.f), C->PhysioMinAcclimatised, 1.f); };
+				const float A = AFor(K.M);
+				const float Rest = USurvivalComponent::PhysioSpO2(K.M, A, C->GapRestTorr);
+				const float Walk = USurvivalComponent::PhysioSpO2(K.M, A, C->GapRestTorr + C->GapWalkTorr);
+				const float Climb = USurvivalComponent::PhysioSpO2(K.M, A, C->GapRestTorr + C->GapSprintTorr + C->GapPerGradeTorr);
 				const float B = FMath::Max(0.f, K.M - C->BottleAltitudeDropMeters);
-				UE_LOG(LogSurvival, Display, TEXT("  %-10s %5.0f m   %5.1f %5.1f %5.1f |  %5.1f %5.1f |  %5.1f"), K.Name, K.M, Rest, Walk, Climb,
-					USurvivalComponent::PhysioSpO2(B, 1.f, C->GapRestTorr + C->GapWalkTorr), USurvivalComponent::PhysioSpO2(B, 1.f, C->GapRestTorr + C->GapSprintTorr + C->GapPerGradeTorr),
+				UE_LOG(LogSurvival, Display, TEXT("  %-10s %5.0f m  %4.2f  %5.1f %5.1f %5.1f |  %5.1f %5.1f |  %5.1f"), K.Name, K.M, A, Rest, Walk, Climb,
+					USurvivalComponent::PhysioSpO2(B, AFor(B), C->GapRestTorr + C->GapWalkTorr), USurvivalComponent::PhysioSpO2(B, AFor(B), C->GapRestTorr + C->GapSprintTorr + C->GapPerGradeTorr),
 					USurvivalComponent::PhysioSpO2(K.M, 0.f, C->GapRestTorr));
 			}
 			if (USurvivalComponent* Survival = FindLocalSurvival(World))
