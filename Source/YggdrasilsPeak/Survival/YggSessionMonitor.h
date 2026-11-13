@@ -82,8 +82,6 @@ private:
 	TSet<FString> KeysDown;
 	// recent log lines (for the hitch context) and repeat folding
 	TArray<TPair<double, FString>> RecentLog;
-	FString LastLogLine;
-	int32 LastLogRepeats = 0;
 	TMap<FString, int32> LogCounts;
 	// state seen last poll
 	FString LastSettings, LastRealm, LastMap, LastCamp, LastUi;

@@ -213,12 +213,10 @@ void UYggSessionMonitor::OnLogLine(const FString& Line, double When)
 	if (!bOn) { return; }
 	const double T = FMath::Max(0.0, When - StartReal);
 	FString Clean = Line; Clean.TrimEndInline();
-	if (Clean == LastLogLine) { ++LastLogRepeats; return; }               // fold repeats (one line spammed 200,000 times before)
-	if (LastLogRepeats > 0) { LogBuf += FString::Printf(TEXT("%.3f  (previous line repeated %d more times)\n"), T, LastLogRepeats); LastLogRepeats = 0; }
-	LastLogLine = Clean;
 	if (Clean.StartsWith(TEXT("LogSurvival: Expedition: "))) { Event(TEXT("message"), Clean.Mid(25)); }
-	// a line seen more than 20 times is only counted from then on (log.txt ends with the counts); the hitch context
-	// below still gets every line with its time
+	// a line seen more than 20 times is only counted from then on (log.txt ends with "total N x line"); the hitch context
+	// below still gets every line with its time. (The first version also folded runs of one line into "repeated N more
+	// times", which credited the runs of a suppressed line to the last line written: wrong counts in the first report.)
 	int32& Seen = LogCounts.FindOrAdd(Clean);
 	if (++Seen <= 20) { LogBuf += FString::Printf(TEXT("%.3f  %s\n"), T, *Clean); }
 	RecentLog.Emplace(T, Clean);
@@ -279,11 +277,13 @@ void UYggSessionMonitor::FrameRow(float Dt)
 	const bool bLoading = IsAsyncLoading();
 	const int32 Streaming = IStreamingManager::Get().GetNumWantingResources();
 
-	// hitch: over 33 ms, or over 2.5x the recent median. Column value 2 = slow because of the monitor's own screenshot
+	// hitch: see below. Column value 2 = slow because of the monitor's own screenshot
 	// (the frame is read back), so the analyser can leave it out; level loads are told apart by the analyser.
 	TArray<float> Sorted = Recent; Sorted.Sort();
 	const float Median = Sorted[Sorted.Num() / 2];
-	const bool bSlow = Frames > 5 && (DtMs > 33.4f || DtMs > Median * 2.5f) && DtMs > 20.f;
+	// twice the recent median, at least 25 ms: at 60 fps a 33 ms frame, at 120 fps 25 ms; with frame generation pacing
+	// the rendered frames at 30 fps, 67 ms (the first rule, "over 33 ms", called every one of those frames a hitch)
+	const bool bSlow = Frames > 5 && DtMs > FMath::Max(Median * 2.f, 25.f);
 	const bool bOwnShot = Now < ShotQuietUntil;
 	const bool bHitch = bSlow && !bOwnShot;
 	Recent[RecentHead] = DtMs; RecentHead = (RecentHead + 1) % Recent.Num();

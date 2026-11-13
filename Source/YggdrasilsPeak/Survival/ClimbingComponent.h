@@ -63,6 +63,9 @@ public:
 
 	UClimbingComponent();
 
+	/** A teleport is not a fall: forget the height the current fall started from (it is measured again from here). */
+	void ForgetFall() { bTrackingFall = false; }
+
 	UFUNCTION(BlueprintPure, Category="Climbing")
 	bool IsClimbing() const { return bClimbing; }
 

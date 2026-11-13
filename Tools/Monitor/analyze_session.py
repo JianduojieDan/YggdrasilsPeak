@@ -128,8 +128,9 @@ def main():
         w(f'- Rendered frames: median {fps:.1f} fps ({med(ft):.2f} ms), 1% low {low1:.1f} fps, 0.1% low {low01:.1f} fps, worst frame {max(ft):.0f} ms.')
         if pres:
             w(f'- Shown on screen with DLSS frame generation: median {med(pres):.0f} fps (what the player sees).')
-        w(f'- Frames slower than 50 fps: {under50:.1f}% of play.')
-        w(f'- Hitches: {h33} frames over 33 ms ({h33 / mins:.1f} a minute), {h50} over 50 ms, {h100} over 100 ms.')
+        w(f'- Frames slower than 50 fps: {under50:.1f}% of play; slower than 30 fps: {h33}; over 50 ms: {h50}; over 100 ms: {h100}.')
+        real = [f for f in play if f['hitch'] == 1]
+        w(f'- Hitches (a frame over twice the recent median, at least 25 ms): {len(real)} ({len(real) / mins:.1f} a minute).')
         g = med([f['game_ms'] for f in play]); r = med([f['render_ms'] for f in play]); p = med([f['gpu_ms'] for f in play])
         rh = med([f['rhi_ms'] for f in play])
         bound = max((p, 'the GPU'), (r, 'the render thread'), (g, 'the game thread'))[1]
@@ -138,6 +139,44 @@ def main():
         vs = cv.get('r.VSync', '?')
         if vs not in ('0', '?'):
             w(f'- VSync is on: rendered fps cannot rise above the monitor rate; drops show as steps (60 -> 30/40/45...).')
+
+    # ---------------------------------------------------------------- one row per settings period
+    # the settings state at each moment: session.txt at the start, then every "settings" event (full key=value list)
+    periods = []
+    state = dict(st)
+    cuts = [(e['t'], e['detail']) for e in E if e['type'] == 'settings'] + [(t, None) for t in level_t]
+    cuts.sort(key=lambda c: c[0])
+    edges = [0.0] + [c[0] for c in cuts] + [dur + 1]
+    states = [dict(state)]
+    for t, d in cuts:
+        if d:
+            state = dict(state)
+            state.update(kv.split('=', 1) for kv in d.split('; ') if '=' in kv)
+        states.append(dict(state))
+    for i in range(len(edges) - 1):
+        a, b = edges[i], edges[i + 1]
+        sel = [f for f in play if a <= f['t'] < b]
+        if sum(f['dt_ms'] for f in sel) < 5000:
+            continue
+        s = states[i]
+        tier = {'0': 'Low', '1': 'Medium', '2': 'High', '3': 'Epic'}.get(s.get('sg.ShadowQuality', '?'), s.get('sg.ShadowQuality', '?'))
+        fg = s.get('r.Streamline.DLSSG.Enable', '0') == '1'
+        fgx = int(s.get('r.Streamline.DLSSG.FramesToGenerate', '1') or 1) + 1
+        dt = [f['dt_ms'] for f in sel]
+        up = [f['dt_ms'] for f in sel if f['pitch'] > 20]
+        lv = [f['dt_ms'] for f in sel if -20 <= f['pitch'] <= 20]
+        pres = [f['fps_presented'] for f in sel if f['fps_presented'] > 0]
+        periods.append((a, min(b, dur), tier, f'{fgx}x' if fg else 'off', s.get('t.MaxFPS', '?'), s.get('r.ScreenPercentage', '?'),
+                        1000 / med(dt), 1000 / pct(dt, 0.99), med([f['gpu_ms'] for f in sel]), med(pres) if pres else 0,
+                        1000 / med(lv) if len(lv) > 30 else 0, 1000 / med(up) if len(up) > 30 else 0, sum(1 for f in sel if f['hitch'] == 1)))
+    if periods:
+        w('\n## By settings period (quality, frame generation, cap)\n')
+        w('| from - to | quality | frame gen | fps cap | render % | rendered fps | 1% low | GPU ms | on screen | level | looking up | hitches |')
+        w('|---|---|---|---|---|---|---|---|---|---|---|---|')
+        for p in periods:
+            a, b, tier, fg, cap, sp, fps_, low, gpu, pres, lv, up, nh = p
+            w(f'| {fmt_t(a)} - {fmt_t(b)} | {tier} | {fg} | {cap} | {sp} | {fps_:.0f} | {low:.0f} | {gpu:.1f} | {pres:.0f} | {lv:.0f} | {up:.0f} | {nh} |')
+        w('(level / looking up: rendered fps with the camera within 20 degrees of level / pitched up more than 20 degrees; 0 = not enough frames)')
 
     # ---------------------------------------------------------------- hitches with context
     ev_by_type = collections.defaultdict(list)
@@ -206,7 +245,7 @@ def main():
                 tags.append('Unreal editor or another game running')
             if y['hard_faults_s'] > 500:
                 tags.append(f'paging to disk ({y["hard_faults_s"]:.0f} pages/s)')
-            if y['gpu_slowdown'] and any(k in y['gpu_slowdown'] for k in ('thermal', 'power', 'hw-slowdown')):
+            if y['gpu_slowdown'] and any(k in y['gpu_slowdown'] for k in ('thermal', 'hw-slowdown', 'power-brake')):   # power-cap is a laptop at full load
                 tags.append(f'GPU slowed ({y["gpu_slowdown"]})')
         if not tags:
             tags.append('unexplained')
@@ -302,8 +341,8 @@ def main():
             w(f'Altitude {alts[0]:.0f} m at start, {alts[-1]:.0f} m at the end, highest {max(alts):.0f} m.  ')
         o2 = [s['spo2'] for s in S if s['spo2'] > 0]
         if o2:
-            w(f'SpO2 lowest {min(o2):.0f}%, heart rate highest {max(s["hr_bpm"] for s in S):.0f} bpm, core lowest {min(s["core_c"] for s in S if s["core_c"] > 0):.1f} C, health lowest {min(s["health"] for s in S):.0f}.  ')
-        sc = collections.Counter(s['state'] for s in S if s['paused'] == 0)
+            w(f'SpO2 lowest {min(o2):.0f}%, heart rate highest {max(s["hr_bpm"] for s in S):.0f} bpm, core lowest {min(s["core_c"] for s in S if s["core_c"] > 0):.1f} C, health lowest {min(s["health"] for s in S if s["state"] != "-"):.0f}.  ')
+        sc = collections.Counter(s['state'] for s in S if s['paused'] == 0 and s['state'] != '-')
         w('Time spent: ' + ', '.join(f'{k} {v} s' for k, v in sc.most_common()) + '.')
     for t in ('death', 'camp', 'realm', 'level'):
         if ev_by_type.get(t):

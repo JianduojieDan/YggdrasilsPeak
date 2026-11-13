@@ -60,4 +60,8 @@ private:
 	float Percent = 75.f;
 	float Warmup = 25.f, WindowTime = 0.f, CalmTime = 0.f;
 	int32 WindowFrames = 0;
+	// 2026-11-14: frame times of the current window (judged by their median), slow windows in a row, and the tier the
+	// next pause will switch to (-1 = none)
+	TArray<float> WindowMs;
+	int32 SlowWindows = 0, PendingTier = -1;
 };

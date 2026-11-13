@@ -114,7 +114,7 @@ void UYggQualitySubsystem::Configure(int32 TierChoice, int32 UpscalingChoice)
 	Upscaling = FMath::Clamp(UpscalingChoice, 0, 4);
 	SessionTier = IsAutoTier() ? MachineTier : ChosenTier;
 	Percent = FixedPercent(Upscaling);
-	WindowTime = 0.f; WindowFrames = 0; CalmTime = 0.f; Warmup = 6.f;
+	WindowTime = 0.f; WindowFrames = 0; CalmTime = 0.f; Warmup = 15.f; WindowMs.Reset(); SlowWindows = 0; PendingTier = -1;
 	ApplyTier(SessionTier);
 	ApplyPercent();
 	UE_LOG(LogTemp, Display, TEXT("YggQuality: quality %s -> tier %d, upscaling %d -> %.0f%%%s"), IsAutoTier() ? TEXT("auto") : TEXT("fixed"), SessionTier,
@@ -162,44 +162,66 @@ void UYggQualitySubsystem::Tick(float DeltaTime)
 {
 	if (!ShouldAdapt() || (!IsAutoTier() && !IsAutoPercent())) { return; }
 	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
-	if (!World || UGameplayStatics::IsGamePaused(World)) { return; }
-	if (Warmup > 0.f) { Warmup -= DeltaTime; return; }   // loading and shader hitches say nothing
-	WindowTime += DeltaTime; ++WindowFrames;
-	if (WindowTime < 4.f) { return; }
-	const float Ms = WindowTime * 1000.f / WindowFrames;
-	WindowTime = 0.f; WindowFrames = 0;
+	if (!World) { return; }
+	// Rules from the user's monitored session (2026-11-14). A change of quality tier rebuilds the sky light capture and
+	// the shaders: a 0.5-0.7 s freeze with a flash of light, and the old 4 s average dropped the tier mid-play whenever
+	// the sky filled the view, twice down to Low without the player knowing. Now:
+	//  - a tier change is decided during play but carried out only while the game is paused (a menu hides it);
+	//  - the judge is the MEDIAN frame time of 10 s windows (hitches do not count), slow for two windows in a row;
+	//  - with frame generation nothing is judged: the rendered rate is paced by it (120 Hz with 4x is exactly 30 fps);
+	//  - the warm-up counts real playing time (one long loading frame used to end it at once).
+	const bool bPaused = UGameplayStatics::IsGamePaused(World);
+	if (bPaused && PendingTier >= 0 && PendingTier != SessionTier)
+	{
+		UE_LOG(LogTemp, Display, TEXT("YggQuality: paused, switching to tier %d (machine tier %d)"), PendingTier, MachineTier);
+		SessionTier = PendingTier;
+		ApplyTier(SessionTier);
+		PendingTier = -1;
+		Warmup = 15.f;
+	}
+	if (bPaused) { return; }
+	if (Warmup > 0.f) { Warmup -= FMath::Min(DeltaTime, 0.05f); return; }   // loading and shader hitches say nothing
+	static IConsoleVariable* FrameGen = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Streamline.DLSSG.Enable"));
+	if (FrameGen && FrameGen->GetInt() != 0) { WindowTime = 0.f; WindowMs.Reset(); SlowWindows = 0; CalmTime = 0.f; return; }
+	WindowTime += DeltaTime;
+	WindowMs.Add(DeltaTime * 1000.f);
+	if (WindowTime < 10.f) { return; }
+	WindowMs.Sort();
+	const float Ms = WindowMs[WindowMs.Num() / 2];
+	WindowTime = 0.f; WindowMs.Reset();
 	if (Ms > SlowMs)
 	{
 		CalmTime = 0.f;
+		if (++SlowWindows < 2) { return; }
+		SlowWindows = 0;
 		if (IsAutoPercent() && Percent > MinPercent)
 		{
-			Percent = FMath::Max(MinPercent, Percent - 8.f);
+			Percent = FMath::Max(MinPercent, Percent - 8.f);        // the render resolution is a light change: at once
 			ApplyPercent();
-			UE_LOG(LogTemp, Display, TEXT("YggQuality: %.1f ms, resolution %.0f%%"), Ms, Percent);
+			UE_LOG(LogTemp, Display, TEXT("YggQuality: median %.1f ms, resolution %.0f%%"), Ms, Percent);
 		}
-		else if (IsAutoTier() && SessionTier > 0)
+		else if (IsAutoTier() && SessionTier > 0 && PendingTier != SessionTier - 1)
 		{
-			ApplyTier(--SessionTier);
-			Warmup = 6.f;
-			UE_LOG(LogTemp, Display, TEXT("YggQuality: %.1f ms, tier %d for now (machine tier %d)"), Ms, SessionTier, MachineTier);
+			PendingTier = SessionTier - 1;
+			UE_LOG(LogTemp, Display, TEXT("YggQuality: median %.1f ms, tier %d at the next pause (machine tier %d)"), Ms, PendingTier, MachineTier);
 		}
 	}
 	else if (Ms < RoomMs)
 	{
-		CalmTime += 4.f;
-		if (IsAutoTier() && SessionTier < MachineTier && CalmTime >= 30.f && (!IsAutoPercent() || Percent >= MaxPercent))
+		SlowWindows = 0;
+		CalmTime += 10.f;
+		if (IsAutoTier() && SessionTier < MachineTier && CalmTime >= 60.f && (!IsAutoPercent() || Percent >= MaxPercent))
 		{
 			CalmTime = 0.f;
-			ApplyTier(++SessionTier);
-			Warmup = 6.f;
-			UE_LOG(LogTemp, Display, TEXT("YggQuality: %.1f ms, back to tier %d"), Ms, SessionTier);
+			PendingTier = SessionTier + 1;
+			UE_LOG(LogTemp, Display, TEXT("YggQuality: median %.1f ms, back to tier %d at the next pause"), Ms, PendingTier);
 		}
-		else if (IsAutoPercent() && CalmTime >= 12.f && Percent < MaxPercent)
+		else if (IsAutoPercent() && CalmTime >= 20.f && Percent < MaxPercent)
 		{
 			CalmTime = 0.f;
 			Percent = FMath::Min(MaxPercent, Percent + 4.f);
 			ApplyPercent();
 		}
 	}
-	else { CalmTime = 0.f; }
+	else { CalmTime = 0.f; SlowWindows = 0; }
 }

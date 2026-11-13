@@ -633,6 +633,9 @@ void UExpeditionComponent::TeleportNear(AActor* Where)
 	const FVector Target = Where->GetActorLocation() + FVector(-400.f, 0.f, Character->GetSimpleCollisionHalfHeight() + 150.f);
 	Character->TeleportTo(Target, Character->GetActorRotation(), false, true);
 	Character->GetCharacterMovement()->StopMovementImmediately();
+	// the climber spawns in the air at the level's start and falls; without this the teleport down to the camp counted
+	// as part of that fall: "A hard landing", -25 health on every continue (seen by the session monitor 2026-11-13)
+	if (UClimbingComponent* Climb = Character->FindComponentByClass<UClimbingComponent>()) { Climb->ForgetFall(); }
 	CurrentCamp.Reset();
 }
 

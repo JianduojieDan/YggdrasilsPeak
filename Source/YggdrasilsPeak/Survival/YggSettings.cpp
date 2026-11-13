@@ -78,6 +78,15 @@ namespace
 		return Mix.Get();
 	}
 
+	// test switch (2026-11-14): the audio device logs "RecursiveApplyAdjuster failed" ~180 times a second; this takes every
+	// pushed sound mix away to see whether one of them is the source
+	FAutoConsoleCommandWithWorld GClearMixes(TEXT("ygg.Sound.ClearMixes"), TEXT("Test: remove every pushed sound mix (the settings volumes too) until the next settings apply."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			UGameplayStatics::ClearSoundMixModifiers(World);
+			UE_LOG(LogTemp, Display, TEXT("Sound: all sound mix modifiers cleared (test)"));
+		}));
+
 	float BaseYaw = 0.f, BasePitch = 0.f;
 }
 
@@ -231,11 +240,14 @@ namespace YggSettings
 			{
 				// the audio device's live values may only be read on the audio thread (reading them here crashed the
 				// session monitor, 2026-11-13; the self-test never saw it because it runs with -NoSound): the master
-				// volume when that is safe, the kinds of sound from the settings sound mix that applies them
+				// volume when that is safe; for the kinds of sound, the value the settings mix applies, or that the class
+				// is gone (it was garbage collected before 2026-11-14 and the setting silently stopped working)
 				if (IsInAudioThread()) { S.Add(TEXT("volume master"), FString::SanitizeFloat(Dev->GetTransientPrimaryVolume())); }
-				for (const FSoundClassAdjuster& A : SettingsMix()->SoundClassEffects)
+				static const TCHAR* const Kinds[] = { TEXT("SC_Effects"), TEXT("SC_Ambience"), TEXT("SC_Voices"), TEXT("SC_Interface") };
+				for (int32 i = 0; i < 4; ++i)
 				{
-					if (A.SoundClassObject) { S.Add(FString(TEXT("volume ")) + A.SoundClassObject->GetName(), FString::SanitizeFloat(A.VolumeAdjuster)); }
+					const bool bAlive = FindObject<USoundClass>(nullptr, *FString::Printf(TEXT("/Game/Audio/Classes/%s.%s"), Kinds[i], Kinds[i])) != nullptr;
+					S.Add(FString(TEXT("volume ")) + Kinds[i], bAlive ? FString::SanitizeFloat(Volume(ESound(i + 1))) : FString(TEXT("class not loaded")));
 				}
 			}
 		}
@@ -310,6 +322,11 @@ namespace YggSettings
 			const FString Path = FString::Printf(TEXT("/Game/Audio/Classes/%s.%s"), Classes[i], Classes[i]);
 			if (USoundClass* C = LoadObject<USoundClass>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet))
 			{
+				// kept for good: the audio device holds the override with a plain pointer, so nothing kept the class
+				// alive; the first garbage collection (the level change, or 61 s in) unregistered it, the volume setting
+				// stopped working and the device logged "RecursiveApplyAdjuster failed" ~100-180 times a second
+				// (found by the session monitor, 2026-11-14)
+				C->AddToRoot();
 				UGameplayStatics::SetSoundMixClassOverride(World, Mix, C, FMath::Max(Volume(ESound(i)), 0.0001f), 1.f, 0.05f, true);
 			}
 		}
