@@ -104,6 +104,9 @@ public:
 	float GetRealmWind(float& OutBlend) const { OutBlend = FMath::Min(Look.Active * 4.f, 1.f); return Look.Wind; }
 	bool IsDemo() const { return DemoIndex >= 0; }
 	int32 GetShownIndex() const { return int32(Shown); }
+	/** The air in degrees C for the HUD, -100 (a blizzard, the eclipse) to +60 (Emberfall): the mountain's own air at this
+	 *  height, pulled towards the shown realm's as the realm arrives. */
+	float GetAirTemperature(float ElevationMeters) const;
 	void LogStatus() const;
 	float GetForecastSeconds() const { return DemoIndex >= 0 ? DemoLeft : WeatherLeft; }
 	int32 GetForecastSerial() const { return ForecastSerial; }

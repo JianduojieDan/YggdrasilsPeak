@@ -247,6 +247,10 @@ private:
 		struct FCampMark { FString Name; float Elev = 0.f; };
 		TArray<FCampMark> Camps;
 		float CampsAge = 99.f;
+		float AirC = 0.f;                // the air, eased towards ARealmSky::GetAirTemperature
+		bool bAirKnown = false;
+		int32 WeatherNow = -1;           // the shown realm, -1 none
+		float Extreme = 0.f;             // 0..1, how extreme the air is (from -35 down to -85, from +30 up to +55)
 		bool bExhausted = false, bLowHealth = false;
 		int32 PackKg = 0, PackMax = 0, Food = 0, Water = 0;
 		FString Subtitle;

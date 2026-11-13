@@ -823,6 +823,28 @@ void ARealmSky::DoFlash(const FStrike& S)
 }
 
 const FRealmWeatherInfo& ARealmSky::GetWeatherInfo(int32 Index) { return GInfo[FMath::Clamp(Index, 0, NumRealms - 1)]; }
+
+float ARealmSky::GetAirTemperature(float ElevationMeters) const
+{
+	// the mountain's own air: about -10 at Dingboche, -23 at Camp 2, -37 on the summit
+	const float Own = 16.f - 6.f * ElevationMeters / 1000.f;
+	// each realm's air (user, 2026-11-13: "60 is that lava planet, and minus 100 is the storm, like the blizzard or that
+	// eclipse"); the gentle realms only nudge the mountain's own
+	float Realm = Own;
+	switch (Shown)
+	{
+	case ERealm::Niflheim:     Realm = -45.f; break;        // the white-out
+	case ERealm::Muspelheim:   Realm = 60.f; break;         // Emberfall
+	case ERealm::Jotunheim:    Realm = -100.f; break;       // the blizzard
+	case ERealm::Alfheim:      Realm = Own + 4.f; break;
+	case ERealm::Vanaheim:     Realm = Own - 6.f; break;    // aurora dusk
+	case ERealm::Svartalfheim: Realm = -92.f; break;        // the eclipse
+	case ERealm::Hel:          Realm = -60.f; break;        // Starfall Frost
+	case ERealm::Asgard:       Realm = Own + 12.f; break;   // the golden hush
+	default: break;
+	}
+	return FMath::Clamp(FMath::Lerp(Own, Realm, FMath::Clamp(Look.Active, 0.f, 1.f)), -100.f, 60.f);
+}
 int32 ARealmSky::NumWeathers() { return NumRealms; }
 const FString& ARealmSky::GetLandingSound(int32 Index) { return GLanding[FMath::Clamp(Index, 0, NumRealms - 1)]; }
 

@@ -26,6 +26,7 @@
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
 #include "Engine/Font.h"
+#include "Engine/Texture2D.h"
 #include "Engine/FontFace.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
@@ -365,6 +366,15 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	Paint.Satiety = FMath::FInterpTo(Paint.Satiety, Bound->GetStatNormalized(ESurvivalStat::Satiety), InDeltaTime, BarInterpSpeed);
 	Paint.Hydration = FMath::FInterpTo(Paint.Hydration, Bound->GetStatNormalized(ESurvivalStat::Hydration), InDeltaTime, BarInterpSpeed);
 	Paint.bExhausted = Snapshot.bExhausted; Paint.bLowHealth = bLowHealth;
+	// the air eases towards the realm's, so a change of weather is seen coming in the numbers
+	if (const ARealmSky* Sky = ARealmSky::Get(GetWorld()))
+	{
+		const float Target = Sky->GetAirTemperature(Snapshot.ElevationMeters);
+		Paint.AirC = Paint.bAirKnown ? FMath::FInterpTo(Paint.AirC, Target, InDeltaTime, 0.6f) : Target;
+		Paint.bAirKnown = true;
+		Paint.WeatherNow = Sky->GetShownRealm() == ERealm::None ? -1 : Sky->GetShownIndex();
+	}
+	Paint.Extreme = FMath::Max(FMath::Clamp((-Paint.AirC - 35.f) / 50.f, 0.f, 1.f), FMath::Clamp((Paint.AirC - 30.f) / 25.f, 0.f, 1.f));
 	// the camps for the route line (names and heights), refreshed now and then
 	if ((Paint.CampsAge += InDeltaTime) > 2.f)
 	{
@@ -682,26 +692,24 @@ namespace
 		return F;
 	}
 	FLinearColor WithA(const FLinearColor& C, float A) { return FLinearColor(C.R, C.G, C.B, A); }
-	/** HUD v5 colour sets (Tools/UI/hud_mockups.py PALETTES keeps the same numbers): numerals, labels and tracks, the five
-	 *  readout lines, the climbed part of the route and breath, and what needs you. */
-	struct FHudInk { FLinearColor Text, Soft, Alert, Route; FLinearColor Bars[5]; };
-	FHudInk MakeInk(FColor T, FColor So, FColor Al, FColor Bar) { const FLinearColor B = FLinearColor::FromSRGBColor(Bar);
-		return { FLinearColor::FromSRGBColor(T), FLinearColor::FromSRGBColor(So), FLinearColor::FromSRGBColor(Al), B, { B, B, B, B, B } }; }
-	const FHudInk& HudInk(int32 Index)
+	/** HUD v8 line icons (Tools/UI/hud_icons.py -> /Game/UI/HUD/Icons6/T_HUD6_<Name>), white, tinted when drawn. Kept for
+	 *  the session; the brushes never move (the element list holds pointers to them until the frame is drawn). */
+	const FSlateBrush* Hud6Brush(const TCHAR* Name)
 	{
-		static const FHudInk Sets[] = {
-			{ FLinearColor::FromSRGBColor(FColor(238, 243, 248)), FLinearColor::FromSRGBColor(FColor(204, 214, 226)), FLinearColor::FromSRGBColor(FColor(228, 98, 74)),
-			  FLinearColor::FromSRGBColor(FColor(238, 243, 248)), { FLinearColor::FromSRGBColor(FColor(156, 205, 238)), FLinearColor::FromSRGBColor(FColor(246, 168, 128)),
-			  FLinearColor::FromSRGBColor(FColor(238, 243, 248)), FLinearColor::FromSRGBColor(FColor(244, 190, 138)), FLinearColor::FromSRGBColor(FColor(156, 205, 238)) } }, // 0 Glacier
-			MakeInk(FColor(246, 248, 250), FColor(200, 208, 218), FColor(240, 96, 78), FColor(246, 248, 250)),    // 1 Snow
-			MakeInk(FColor(246, 240, 228), FColor(230, 202, 148), FColor(234, 92, 62), FColor(232, 186, 102)),    // 2 Ivory Gold
-			MakeInk(FColor(238, 248, 252), FColor(146, 214, 238), FColor(255, 176, 70), FColor(84, 210, 246)),    // 3 Arctic
-			MakeInk(FColor(238, 250, 246), FColor(150, 226, 202), FColor(255, 118, 104), FColor(108, 232, 188)),  // 4 Aurora
-			MakeInk(FColor(244, 242, 252), FColor(196, 188, 248), FColor(255, 142, 116), FColor(170, 158, 252)) }; // 5 Frost Lilac
-		return Sets[FMath::Clamp(Index, 0, int32(UE_ARRAY_COUNT(Sets)) - 1)];
+		static TMap<FName, TSharedPtr<FSlateBrush>> Cache;
+		TSharedPtr<FSlateBrush>& B = Cache.FindOrAdd(FName(Name));
+		if (!B.IsValid())
+		{
+			B = MakeShared<FSlateBrush>();
+			const FString Path = FString::Printf(TEXT("/Game/UI/HUD/Icons6/T_HUD6_%s.T_HUD6_%s"), Name, Name);
+			if (UTexture2D* T = LoadObject<UTexture2D>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet))
+			{
+				T->AddToRoot();
+				*B = YggUI::TextureBrush(T, FVector2D(128.f, 128.f));
+			}
+		}
+		return B->GetResourceObject() ? B.Get() : nullptr;
 	}
-	TAutoConsoleVariable<int32> CVarHudPalette(TEXT("ygg.HUD.Palette"), 3,
-		TEXT("HUD colours: 0 Glacier, 1 Snow, 2 Ivory Gold, 3 Arctic, 4 Aurora, 5 Frost Lilac (Saved/Review/hud_v5_palettes.png)"));
 	/** "VEIL OF MIST" -> "Veil of Mist" (the weather names are stored in capitals; v3 has no shouting). */
 	FString HudTitle(const FString& In)
 	{
@@ -805,122 +813,200 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 	const FSlateFontInfo Line = YggUI::SerifInfo(19);
 	const auto Serif = [](int32 Sz, int32 Track) { (void)Track; return YggUI::SerifInfo(Sz); };
 
-	// v5 (2026-11-13): the user picked "Altimeter" from three mockups (Tools/UI/hud_mockups.py concept_a2) - "make it
-	// better". Bottom left, a precise instrument in Roboto: the altitude in big light numerals over the route line (every
-	// camp a tick, the next camp named with what is left to climb), five readouts above it (SpO2, core temperature, body,
-	// food, water: a light numeral, a 2 px line, a small word) and the one thing that needs you, in the accent. Breath is
-	// a thin line under the centre of the view while it is spent. No panels: every letter has a soft shadow under it.
+	// v8 (2026-11-13): the Altimeter developed (Tools/UI/hud_v8_mockup.py). The user: "what we had before is acceptable,
+	// develop based on that... modernize, minimalist, futuristic, elegant". One typeface (Roboto), white and one red (danger
+	// only), line icons instead of words, the next camp beside the altitude, the route as camps on a line, the weather and
+	// the air top right. The air runs -100..+60 C with the realms; extreme air grows and turns red there (the second
+	// warning beside the wheel). A light shadow under everything; no panels, no halos.
 	const FSurvivalSnapshot& Snap = Paint.Snapshot;
 	const float S = FMath::Clamp(Size.Y / 1080.f, 0.75f, 1.6f);           // drawn for 1080 lines
 	const float Wa = Paint.WatchShown;
-	// colours (user: "change the color, what we have right now is not very good"): six sets drawn side by side in
-	// Saved/Review/hud_v5_palettes.png (hud_mockups.py palettes); ygg.HUD.Palette picks one, the numerals stay near-white
-	const FHudInk& K = HudInk(CVarHudPalette.GetValueOnGameThread());
-	const FLinearColor White = K.Text, Pale = K.Soft, Ember = K.Alert, Route = K.Route;
-	// Slate sizes are points: px * 0.75
-	const auto Roboto = [S](const TCHAR* Face, float Px) { return FCoreStyle::GetDefaultFontStyle(FName(Face), FMath::Max(6, FMath::RoundToInt(Px * 0.75f * S))); };
+	const FLinearColor White = FLinearColor::FromSRGBColor(FColor(244, 246, 248));
+	const FLinearColor Red = FLinearColor::FromSRGBColor(FColor(238, 70, 58));
+	constexpr float Soft = 0.72f;                                           // the second voice: units, hints, what is not yet climbed
+	// Slate sizes are points: px * 0.75; LetterSpacing in thousandths of an em
+	const auto Roboto = [S](const TCHAR* Face, float Px, int32 Track = 0)
+	{
+		FSlateFontInfo F = FCoreStyle::GetDefaultFontStyle(FName(Face), FMath::Max(6, FMath::RoundToInt(Px * 0.75f * S)));
+		F.LetterSpacing = Track;
+		return F;
+	};
+	const auto Icon = [&](const FPen& Pn, const TCHAR* Name, FVector2f TopLeft, float H, const FLinearColor& C)
+	{
+		if (const FSlateBrush* B = Hud6Brush(Name))
+		{
+			FSlateDrawElement::MakeBox(Out, Pn.Layer, G.ToPaintGeometry(FVector2f(H, H), FSlateLayoutTransform(TopLeft + FVector2f(0.5f, 1.f))), B, ESlateDrawEffect::None, Pn.A(FLinearColor(0.f, 0.024f, 0.063f, 0.45f * C.A)));
+			FSlateDrawElement::MakeBox(Out, Pn.Layer + 1, G.ToPaintGeometry(FVector2f(H, H), FSlateLayoutTransform(TopLeft)), B, ESlateDrawEffect::None, Pn.A(C));
+		}
+	};
 	const float X0 = M;
-	const float LineY = Size.Y - 62.f * S;                                  // the route line
-	const float ReadY = LineY - 132.f * S;                                  // baseline of the readout numerals
+	const float LY = Size.Y - 58.f * S;                                     // the route line
+	const float TY = LY - 158.f * S;                                        // baseline of the readings
 
 	// what needs you, most urgent first
 	struct FNeed { FString Word, Hint; float Strength; };
 	TArray<FNeed> Needs;
 	const float Cold = WarningStrength[3], Hungry = WarningStrength[1], Thirsty = WarningStrength[2];
-	if (Cold > 0.02f) { Needs.Add({ TEXT("freezing"), TEXT("find shelter or warm up"), Cold }); }
-	if (Snap.Oxygen < 60.f) { Needs.Add({ TEXT("thin air"), Snap.CarriedBottles > 0 ? TEXT("slow down, or open a bottle") : TEXT("slow down"), FMath::Clamp((60.f - Snap.Oxygen) / 8.f, 0.4f, 1.f) }); }
-	if (Paint.bLowHealth) { Needs.Add({ TEXT("hurt"), TEXT("rest at a camp"), 1.f }); }
-	if (Thirsty > 0.02f) { Needs.Add({ TEXT("thirsty"), FString::Printf(TEXT("drink  %s"), *YggSettings::KeyLabel(TEXT("Drink"), EKeys::Two)), Thirsty }); }
-	if (Hungry > 0.02f) { Needs.Add({ TEXT("hungry"), FString::Printf(TEXT("eat  %s"), *YggSettings::KeyLabel(TEXT("Eat"), EKeys::One)), Hungry }); }
-	if (Paint.bExhausted) { Needs.Add({ TEXT("out of breath"), TEXT("stand still a moment"), 1.f }); }
+	if (Cold > 0.02f) { Needs.Add({ TEXT("Freezing"), TEXT("find shelter or warm up"), Cold }); }
+	if (Snap.Oxygen < 60.f) { Needs.Add({ TEXT("Thin air"), Snap.CarriedBottles > 0 ? TEXT("slow down, or open a bottle") : TEXT("slow down"), FMath::Clamp((60.f - Snap.Oxygen) / 8.f, 0.4f, 1.f) }); }
+	if (Paint.bLowHealth) { Needs.Add({ TEXT("Hurt"), TEXT("rest at a camp"), 1.f }); }
+	if (Thirsty > 0.02f) { Needs.Add({ TEXT("Thirsty"), FString::Printf(TEXT("drink  %s"), *YggSettings::KeyLabel(TEXT("Drink"), EKeys::Two)), Thirsty }); }
+	if (Hungry > 0.02f) { Needs.Add({ TEXT("Hungry"), FString::Printf(TEXT("eat  %s"), *YggSettings::KeyLabel(TEXT("Eat"), EKeys::One)), Hungry }); }
+	if (Paint.bExhausted) { Needs.Add({ TEXT("Out of breath"), TEXT("stand still a moment"), 1.f }); }
 
 	if (Wa > 0.01f)
 	{
 		const FPen W{ G, Out, Layer, Wa };
-		// the readouts
-		struct FRead { FString Name, Sub, Value; float V; FLinearColor C; bool bAlert; };
+		// ---- five readings: an icon and a light numeral on one baseline, a fine line under both
+		struct FRead { const TCHAR* Icon; FString Value, Unit; float V; bool bAlert; };
 		const FRead Reads[5] = {
-			{ TEXT("SpO"), TEXT("2"), FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Snap.Oxygen)), Snap.Oxygen / 100.f, K.Bars[0], Snap.Oxygen < 60.f },
-			{ TEXT("core"), TEXT(""), FString::Printf(TEXT("%.1f°"), Snap.BodyTemperature), Paint.Temperature, K.Bars[1], Cold > 0.5f },
-			{ TEXT("body"), TEXT(""), FString::FromInt(FMath::RoundToInt(Paint.Health * 100.f)), Paint.Health, K.Bars[2], Paint.bLowHealth },
-			{ TEXT("food"), TEXT(""), FString::FromInt(FMath::RoundToInt(Paint.Satiety * 100.f)), Paint.Satiety, K.Bars[3], Hungry > 0.5f },
-			{ TEXT("water"), TEXT(""), FString::FromInt(FMath::RoundToInt(Paint.Hydration * 100.f)), Paint.Hydration, K.Bars[4], Thirsty > 0.5f } };
-		const FSlateFontInfo ValF = Roboto(TEXT("Light"), 27.f), LabF = Roboto(TEXT("Regular"), 13.f), SubF = Roboto(TEXT("Regular"), 9.f);
+			{ TEXT("Lungs"), FString::FromInt(FMath::RoundToInt(Snap.Oxygen)), TEXT("%"), Snap.Oxygen / 100.f, Snap.Oxygen < 60.f },
+			{ TEXT("Thermo"), FString::Printf(TEXT("%.1f°"), Snap.BodyTemperature), TEXT(""), Paint.Temperature, Cold > 0.5f },
+			{ TEXT("Heart"), FString::FromInt(FMath::RoundToInt(Paint.Health * 100.f)), TEXT(""), Paint.Health, Paint.bLowHealth },
+			{ TEXT("Food"), FString::FromInt(FMath::RoundToInt(Paint.Satiety * 100.f)), TEXT(""), Paint.Satiety, Hungry > 0.5f },
+			{ TEXT("Drop"), FString::FromInt(FMath::RoundToInt(Paint.Hydration * 100.f)), TEXT(""), Paint.Hydration, Thirsty > 0.5f } };
+		const FSlateFontInfo ValF = Roboto(TEXT("Light"), 32.f), UnitF = Roboto(TEXT("Regular"), 15.f);
+		const float Step = 122.f * S, BarW = 86.f * S, IconH = 22.f * S, BarH = FMath::Max(2.f, 2.f * S);
 		float CX = X0;
 		for (const FRead& R : Reads)
 		{
 			if (bQuiet && !R.bAlert) { continue; }                          // Quiet: only what needs you
-			const FLinearColor Vc = R.bAlert ? WithA(Ember, 0.75f + 0.25f * Pulse) : WithA(White, 0.97f);
-			W.TextSOnBase(R.Value, CX, ReadY, ValF, Vc, 0.55f);
-			const float BarW = 54.f * S, BarH = FMath::Max(2.f, 2.f * S);
-			W.Rect(FVector2f(CX, ReadY + 8.f * S), FVector2f(BarW, BarH), WithA(Pale, 0.3f));
-			W.Rect(FVector2f(CX, ReadY + 8.f * S), FVector2f(BarW * FMath::Clamp(R.V, 0.f, 1.f), BarH), R.bAlert ? Vc : WithA(R.C, 0.95f));
-			W.TextSOnBase(R.Name, CX, ReadY + 26.f * S, LabF, R.bAlert ? Vc : WithA(Pale, 0.95f), 0.6f);
-			if (!R.Sub.IsEmpty()) { W.TextSOnBase(R.Sub, CX + W.Width(R.Name, LabF) + 1.f, ReadY + 29.f * S, SubF, WithA(Pale, 0.95f), 0.6f); }
-			CX += 72.f * S;
+			const FLinearColor C = R.bAlert ? Red : White;
+			const float V = FMath::Clamp(R.V, 0.f, 1.f);
+			if (R.bAlert) { W.Glow(FVector2f(CX - 6.f * S, TY + 4.f * S), FVector2f(BarW * V + 12.f * S, 16.f * S), WithA(Red, 0.55f * (0.7f + 0.3f * Pulse))); }
+			Icon(W, R.Icon, FVector2f(CX, TY - IconH), IconH, WithA(C, R.bAlert ? 1.f : 0.92f));
+			const float NX = CX + IconH + 9.f * S;
+			W.TextSOnBase(R.Value, NX, TY, ValF, C, 0.6f);
+			if (!R.Unit.IsEmpty()) { W.TextSOnBase(R.Unit, NX + W.Width(R.Value, ValF) + 2.f * S, TY, UnitF, WithA(C, 0.8f), 0.6f); }
+			W.Rect(FVector2f(CX, TY + 11.f * S + 1.f), FVector2f(BarW, BarH), FLinearColor(0.f, 0.024f, 0.063f, 0.2f));   // the line's own shadow
+			W.Rect(FVector2f(CX, TY + 11.f * S), FVector2f(BarW, BarH), WithA(White, 0.3f));
+			W.Rect(FVector2f(CX, TY + 11.f * S), FVector2f(BarW * V, BarH), WithA(C, 0.95f));
+			CX += Step;
 		}
 		if (!bQuiet)
 		{
-			// the altitude, the hero
-			const FSlateFontInfo AltF = Roboto(TEXT("Light"), 76.f), UnitF = Roboto(TEXT("Regular"), 20.f);
+			const FSlateFontInfo CapF = Roboto(TEXT("Medium"), 11.f, 220);
+			// ---- the altitude, the hero
+			const FSlateFontInfo AltF = Roboto(TEXT("Light"), 80.f, -25), UnitBig = Roboto(TEXT("Light"), 26.f);
 			const FString Alt = YggSettings::AltitudeNumber(Snap.ElevationMeters);
-			W.TextSOnBase(Alt, X0 - 3.f * S, LineY - 18.f * S, AltF, WithA(White, 0.98f), 0.5f);
-			W.TextSOnBase(YggSettings::AltitudeUnit(), X0 + W.Width(Alt, AltF) + 6.f * S, LineY - 20.f * S, UnitF, WithA(Pale, 0.9f), 0.5f);
-			// the route line: Dingboche to the summit, every camp a tick, the next one taller and named at the end
+			W.TextSOnBase(TEXT("ALTITUDE"), X0, LY - 104.f * S, CapF, WithA(White, Soft), 0.6f);
+			W.TextSOnBase(Alt, X0 - 4.f * S, LY - 22.f * S, AltF, WithA(White, 0.98f), 0.5f);
+			const float AX = X0 - 4.f * S + W.Width(Alt, AltF);
+			W.TextSOnBase(YggSettings::AltitudeUnit(), AX + 7.f * S, LY - 22.f * S, UnitBig, WithA(White, Soft), 0.5f);
+			// ---- the next camp, its own column beside the altitude
+			const FPaintState::FCampMark* Next = Paint.Camps.FindByPredicate([&](const FPaintState::FCampMark& C) { return C.Elev > Snap.ElevationMeters + 15.f; });
+			const float DX = AX + 7.f * S + W.Width(YggSettings::AltitudeUnit(), UnitBig) + 30.f * S;
+			W.Line({ FVector2f(DX, LY - 110.f * S), FVector2f(DX, LY - 24.f * S) }, WithA(White, 0.3f), 1.f);
+			const float NC = DX + 26.f * S;
+			W.TextSOnBase(Next ? TEXT("NEXT CAMP") : TEXT("SUMMIT"), NC, LY - 104.f * S, CapF, WithA(White, Soft), 0.6f);
+			Icon(W, TEXT("Tent"), FVector2f(NC, LY - 72.f * S), 20.f * S, WithA(White, 0.95f));
+			const FSlateFontInfo NameF = Roboto(TEXT("Regular"), 20.f), MetreF = Roboto(TEXT("Light"), 20.f);
+			W.TextSOnBase(Next ? Next->Name : FString(TEXT("Reached")), NC + 30.f * S, LY - 54.f * S, NameF, WithA(White, 0.97f), 0.6f);
+			if (Next)
+			{
+				W.TextSOnBase(FString::Printf(TEXT("+%s %s"), *YggSettings::AltitudeNumber(Next->Elev - Snap.ElevationMeters), YggSettings::AltitudeUnit()),
+					NC, LY - 22.f * S, MetreF, WithA(White, Soft), 0.6f);
+			}
+			// ---- the route: Dingboche to the summit, a dot per camp, the climbed part lit, you a ring, the summit a triangle
 			if (Paint.Camps.Num() >= 2)
 			{
-				const float Lo = Paint.Camps[0].Elev, Hi = FMath::Max(Paint.Camps.Last().Elev, Lo + 1.f), LW = 330.f * S;
+				const float Lo = Paint.Camps[0].Elev, Hi = FMath::Max(Paint.Camps.Last().Elev, Lo + 1.f), LW = 404.f * S;
 				const auto LX = [&](float E) { return X0 + FMath::Clamp((E - Lo) / (Hi - Lo), 0.f, 1.f) * LW; };
-				const FPaintState::FCampMark* Next = Paint.Camps.FindByPredicate([&](const FPaintState::FCampMark& C) { return C.Elev > Snap.ElevationMeters + 15.f; });
-				W.Line({ FVector2f(X0, LineY), FVector2f(X0 + LW, LineY) }, WithA(Pale, 0.4f), 1.f);
-				W.Line({ FVector2f(X0, LineY), FVector2f(LX(Snap.ElevationMeters), LineY) }, WithA(Route, 0.95f), FMath::Max(2.f, 2.f * S));
-				for (const FPaintState::FCampMark& C : Paint.Camps)
+				const float You = LX(Snap.ElevationMeters);
+				W.Line({ FVector2f(You, LY), FVector2f(X0 + LW, LY) }, WithA(White, 0.35f), 1.f);
+				W.Glow(FVector2f(X0 - 4.f * S, LY - 6.f * S), FVector2f(You - X0 + 8.f * S, 12.f * S), WithA(White, 0.22f));
+				W.Line({ FVector2f(X0, LY), FVector2f(You, LY) }, WithA(White, 0.95f), FMath::Max(2.f, 2.f * S));
+				for (int32 i = 0; i < Paint.Camps.Num() - 1; ++i)
 				{
-					const bool bNext = &C == Next;
-					const float T = (bNext ? 6.f : 3.f) * S;
-					W.Line({ FVector2f(LX(C.Elev), LineY - T), FVector2f(LX(C.Elev), LineY + T) }, (C.Elev <= Snap.ElevationMeters || bNext) ? WithA(White, bNext ? 0.95f : 0.7f) : WithA(Pale, 0.6f), 1.f);
+					const FPaintState::FCampMark& C = Paint.Camps[i];
+					if (C.Elev <= Snap.ElevationMeters) { W.Bead(FVector2f(LX(C.Elev), LY), 3.f * S, WithA(White, 0.95f)); }
+					else { W.Circle(FVector2f(LX(C.Elev), LY), 3.f * S, WithA(White, 0.5f), 1.f); }
 				}
-				W.Diamond(FVector2f(LX(Snap.ElevationMeters), LineY), 5.f * S, WithA(White, 1.f));
-				const FSlateFontInfo NextF = Roboto(TEXT("Regular"), 13.f);
-				if (Next)
-				{
-					const float NX = X0 + LW + 14.f * S;
-					W.TextSOnBase(Next->Name, NX, LineY + 5.f * S, NextF, WithA(White, 0.9f), 0.6f);
-					W.TextSOnBase(FString::Printf(TEXT("+%s %s"), *YggSettings::AltitudeNumber(Next->Elev - Snap.ElevationMeters), YggSettings::AltitudeUnit()),
-						NX + W.Width(Next->Name, NextF) + 8.f * S, LineY + 5.f * S, NextF, WithA(Pale, 0.85f), 0.6f);
-				}
+				const float SX = LX(Paint.Camps.Last().Elev);
+				W.Line({ FVector2f(SX - 5.f * S, LY + 3.f * S), FVector2f(SX, LY - 6.f * S), FVector2f(SX + 5.f * S, LY + 3.f * S), FVector2f(SX - 5.f * S, LY + 3.f * S) }, WithA(White, 0.6f), 1.f);
+				W.Circle(FVector2f(You, LY), 6.5f * S, WithA(White, 1.f), FMath::Max(1.5f, 2.f * S));
 			}
 		}
-		// what needs you: a dot in the accent, the word, and what to do
+		// ---- what needs you: one line above the readings, the only sentence on the left
 		if (Needs.Num())
 		{
 			const FNeed& N = Needs[0];
-			const float NY = ReadY - 35.f * S;
-			const FLinearColor Nc = WithA(Ember, FMath::Clamp(N.Strength, 0.f, 1.f) * (0.75f + 0.25f * Pulse));
-			W.Diamond(FVector2f(X0 + 3.5f * S, NY - 6.f * S), 3.5f * S, Nc);
-			const FSlateFontInfo WordF = Roboto(TEXT("Medium"), 14.f), HintF = Roboto(TEXT("Regular"), 14.f);
-			W.TextSOnBase(N.Word, X0 + 14.f * S, NY, WordF, Nc, 0.65f);
-			W.TextSOnBase(N.Hint, X0 + 14.f * S + W.Width(N.Word, WordF) + 10.f * S, NY, HintF, WithA(White, 0.9f * FMath::Clamp(N.Strength, 0.f, 1.f)), 0.65f);
+			const float AY = TY - 52.f * S, K = FMath::Clamp(N.Strength, 0.f, 1.f);
+			const FSlateFontInfo WordF = Roboto(TEXT("Medium"), 16.f), HintF = Roboto(TEXT("Regular"), 16.f);
+			W.Bead(FVector2f(X0 + 4.f * S, AY - 5.f * S), 3.5f * S, WithA(Red, K * (0.75f + 0.25f * Pulse)));
+			W.TextSOnBase(N.Word, X0 + 16.f * S, AY, WordF, WithA(Red, K), 0.6f);
+			W.TextSOnBase(N.Hint, X0 + 16.f * S + W.Width(N.Word, WordF) + 10.f * S, AY, HintF, WithA(White, 0.88f * K), 0.6f);
 			if (Needs.Num() > 1)
 			{
 				FString More;
-				for (int32 i = 1; i < Needs.Num(); ++i) { More += (i > 1 ? TEXT("   ") : TEXT("")) + Needs[i].Word; }
-				W.TextSOnBase(More, X0 + 14.f * S, NY - 22.f * S, HintF, WithA(Ember, 0.7f), 0.6f);
+				for (int32 i = 1; i < Needs.Num(); ++i) { More += (i > 1 ? TEXT("   ·   ") : TEXT("")) + Needs[i].Word; }
+				W.TextSOnBase(More, X0 + 16.f * S, AY - 24.f * S, HintF, WithA(Red, 0.7f), 0.6f);
 			}
 		}
 	}
-	// breath: a thin line under the centre of the view, only while it is spent or coming back
+
+	// ---- top right: the weather and the air. Extreme air grows and turns red (with the wheel, the second warning);
+	// in Quiet it shows only then
+	const float RX = Size.X - M;
+	const float AirShown = bQuiet ? FMath::Clamp((Paint.Extreme - 0.25f) * 2.f, 0.f, 1.f) : 1.f;
+	float WeatherBottom = 60.f * S;
+	if (AirShown > 0.01f && Paint.bAirKnown)
+	{
+		const FPen T{ G, Out, Layer, AirShown };
+		const float E = Paint.Extreme, Hot = Paint.AirC > 0.f ? 1.f : 0.f;
+		const float FY = 60.f * S;
+		const FLinearColor TC = FMath::Lerp(White, Red, FMath::SmoothStep(0.f, 0.35f, E));
+		const FSlateFontInfo TF = Roboto(TEXT("Light"), FMath::Lerp(26.f, 46.f, FMath::SmoothStep(0.f, 1.f, E)));
+		const int32 Deg = FMath::RoundToInt(Paint.AirC);
+		const FString TStr = FString::Printf(TEXT("%s%d°"), Deg < 0 ? TEXT("−") : TEXT(""), FMath::Abs(Deg));
+		const float TW = T.Width(TStr, TF);
+		if (E > 0.05f)
+		{
+			// a soft dark under the number (red on a red Emberfall sky still stands out), then a breath of red light
+			T.Glow(FVector2f(RX - TW - 30.f * S, FY - 56.f * S), FVector2f(TW + 60.f * S, 84.f * S), FLinearColor(0.f, 0.01f, 0.03f, 0.42f * E));
+			T.Glow(FVector2f(RX - TW - 12.f * S, FY - 40.f * S), FVector2f(TW + 24.f * S, 50.f * S), WithA(Red, 0.22f * E * (0.6f + 0.4f * Pulse)));
+		}
+		T.TextSOnBase(TStr, RX - TW, FY, TF, TC, FMath::Lerp(0.6f, 0.95f, E));
+		float X = RX - TW - 16.f * S;
+		T.Line({ FVector2f(X, FY - 22.f * S), FVector2f(X, FY + 2.f * S) }, WithA(White, 0.35f), 1.f);
+		X -= 16.f * S;
+		const FSlateFontInfo WF = Roboto(TEXT("Light"), 22.f);
+		const FString WName = Paint.WeatherNow >= 0 ? HudTitle(ARealmSky::GetWeatherInfo(Paint.WeatherNow).Name) : FString(TEXT("Clear"));
+		const float WW = T.Width(WName, WF);
+		T.TextSOnBase(WName, X - WW, FY, WF, WithA(White, 0.95f), 0.6f);
+		DrawIcon(T, WeatherIcons[FMath::Max(0, Paint.WeatherNow)], FVector2f(X - WW - 20.f * S, FY - 8.f * S), 8.5f * S, WithA(White, 0.9f), 1.2f);
+		WeatherBottom = FY;
+		if (E > 0.45f)
+		{
+			const FSlateFontInfo CapF = Roboto(TEXT("Medium"), 13.f, 220);
+			const FString Cap = Hot > 0.f ? TEXT("EXTREME HEAT") : TEXT("EXTREME COLD");
+			WeatherBottom = FY + 26.f * S;
+			T.TextSRightOnBase(Cap, RX, WeatherBottom, CapF, WithA(Red, FMath::Clamp((E - 0.45f) * 4.f, 0.f, 1.f) * (0.85f + 0.15f * Pulse)), 0.95f);
+		}
+	}
+	// what comes next, once the wheel has told it: under the weather, small
+	if (Paint.bForecast && !bWheelOn && !bQuiet)
+	{
+		const bool bDanger = ARealmSky::GetWeatherInfo(Paint.ForecastIndex).Danger > 0;
+		const FString Next = FString::Printf(TEXT("%s in %d:%02d"), *HudTitle(ARealmSky::GetWeatherInfo(Paint.ForecastIndex).Name),
+			FMath::FloorToInt(Paint.ForecastSeconds / 60.f), FMath::FloorToInt(Paint.ForecastSeconds) % 60);
+		const FSlateFontInfo NF = Roboto(TEXT("Regular"), 15.f);
+		const float NY = WeatherBottom + 28.f * S, NW = P.Width(Next, NF);
+		const FLinearColor C = bDanger ? WithA(Red, 0.95f) : WithA(White, Soft);
+		P.TextSRightOnBase(Next, RX, NY, NF, C, 0.6f);
+		DrawIcon(P, WeatherIcons[Paint.ForecastIndex], FVector2f(RX - NW - 14.f * S, NY - 5.f * S), 6.f * S, C, 1.1f);
+	}
+
+	// ---- breath: a thin line under the centre of the view, only while it is spent or coming back
 	if (Paint.Stamina < 0.985f || Snap.bSprinting)
 	{
-		const float V = FMath::Clamp(Paint.Stamina, 0.f, 1.f), HW = 85.f * S, BY = Size.Y - 34.f * S;
-		const FLinearColor C = Paint.bExhausted ? WithA(Ember, 0.75f + 0.25f * Pulse) : WithA(Route, 0.95f);
-		P.Line({ FVector2f(Size.X * 0.5f - HW, BY), FVector2f(Size.X * 0.5f + HW, BY) }, WithA(Pale, 0.3f), 1.f);
+		const float V = FMath::Clamp(Paint.Stamina, 0.f, 1.f), HW = 90.f * S, BY = Size.Y - 34.f * S;
+		const FLinearColor C = Paint.bExhausted ? WithA(Red, 0.75f + 0.25f * Pulse) : WithA(White, 0.95f);
+		P.Line({ FVector2f(Size.X * 0.5f - HW, BY), FVector2f(Size.X * 0.5f + HW, BY) }, WithA(White, 0.25f), 1.f);
 		P.Line({ FVector2f(Size.X * 0.5f - HW * V, BY), FVector2f(Size.X * 0.5f + HW * V, BY) }, C, FMath::Max(2.f, 2.f * S));
 	}
 
-	// Bottom right (Everything only): the state of things, then what is in the pack
-	const float RX = Size.X - M;
-	const float BaseY = Size.Y - M - 30.f * S;
+	// ---- bottom right (Everything only): the state of things, then what is in the pack
 	if (!bQuiet)
 	{
 		const FSlateFontInfo KitF = Roboto(TEXT("Regular"), 15.f);
@@ -930,28 +1016,17 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 		if (Snap.OxygenBottleSeconds > 0.f) { Line2.Add(FString::Printf(TEXT("bottle %d:%02d"), FMath::FloorToInt(Snap.OxygenBottleSeconds / 60.f), FMath::FloorToInt(Snap.OxygenBottleSeconds) % 60)); }
 		if (Snap.CarriedBottles > 0) { Line2.Add(FString::Printf(TEXT("%d spare bottle%s"), Snap.CarriedBottles, Snap.CarriedBottles > 1 ? TEXT("s") : TEXT(""))); }
 		Line2.Add(FString::Printf(TEXT("pack %d / %d kg"), Paint.PackKg, Paint.PackMax));
-		P.TextSRightOnBase(FString::Join(Line2, TEXT("   ·   ")), RX, Size.Y - 74.f * S, KitF, WithA(Pale, 0.9f), 0.6f);
+		P.TextSRightOnBase(FString::Join(Line2, TEXT("   ·   ")), RX, LY - 26.f * S, KitF, WithA(White, 0.78f), 0.6f);
 		P.TextSRightOnBase(FString::Printf(TEXT("food %d  %s      water %d  %s"), Paint.Food, *YggSettings::KeyLabel(TEXT("Eat"), EKeys::One),
-			Paint.Water, *YggSettings::KeyLabel(TEXT("Drink"), EKeys::Two)), RX, Size.Y - 50.f * S, KitF, WithA(Pale, 0.9f), 0.6f);
+			Paint.Water, *YggSettings::KeyLabel(TEXT("Drink"), EKeys::Two)), RX, LY + 5.f * S, KitF, WithA(White, 0.78f), 0.6f);
 	}
 
-	// Bottom centre: a subtitle, in the serif, no box
+	// ---- bottom centre: a subtitle, in the HUD's own type, no box
 	if (Paint.SubtitleTimer > 0.f && !Paint.Subtitle.IsEmpty())
 	{
 		const FPen PS{ G, Out, Layer, FMath::Clamp(Paint.SubtitleTimer * 2.f, 0.f, 1.f) };
-		PS.TextCentre(Paint.Subtitle, FVector2f(Size.X * 0.5f, Size.Y - M - 72.f * S), YggUI::SerifInfo(23), Ivory);
-	}
-
-	// After the reveal: a small icon and the countdown above the readings, nothing else
-	if (Paint.bForecast && !bWheelOn)
-	{
-		const FString T = FString::Printf(TEXT("%d:%02d"), FMath::FloorToInt(Paint.ForecastSeconds / 60.f), FMath::FloorToInt(Paint.ForecastSeconds) % 60);
-		const bool bDanger = ARealmSky::GetWeatherInfo(Paint.ForecastIndex).Danger > 0;
-		const FLinearColor C = bDanger ? Amber : WithA(Quiet, 0.8f);
-		const float TY = BaseY - 74.f;
-		const FSlateFontInfo CF = YggUI::SerifInfo(19);
-		P.TextRight(T, FVector2f(RX, TY), CF, C);
-		DrawIcon(P, WeatherIcons[Paint.ForecastIndex], FVector2f(RX - P.Width(T, CF) - 16.f, TY + 12.f), 7.f, C, 1.2f);
+		const FSlateFontInfo SF = Roboto(TEXT("Regular"), 21.f);
+		PS.TextS(Paint.Subtitle, FVector2f(Size.X * 0.5f - PS.Width(Paint.Subtitle, SF) * 0.5f, Size.Y - 122.f * S - PS.Base(SF)), SF, WithA(White, 0.97f), 0.6f);
 	}
 
 	// Presentation only: the weather now, under the top edge, in the serif
