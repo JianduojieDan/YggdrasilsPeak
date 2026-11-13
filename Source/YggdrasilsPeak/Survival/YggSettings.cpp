@@ -229,13 +229,13 @@ namespace YggSettings
 		{
 			if (FAudioDeviceHandle Dev = World->GetAudioDevice())
 			{
-				S.Add(TEXT("volume master"), FString::SanitizeFloat(Dev->GetTransientPrimaryVolume()));
-				for (const TCHAR* Cls : { TEXT("SC_Effects"), TEXT("SC_Ambience"), TEXT("SC_Voices"), TEXT("SC_Interface") })
+				// the audio device's live values may only be read on the audio thread (reading them here crashed the
+				// session monitor, 2026-11-13; the self-test never saw it because it runs with -NoSound): the master
+				// volume when that is safe, the kinds of sound from the settings sound mix that applies them
+				if (IsInAudioThread()) { S.Add(TEXT("volume master"), FString::SanitizeFloat(Dev->GetTransientPrimaryVolume())); }
+				for (const FSoundClassAdjuster& A : SettingsMix()->SoundClassEffects)
 				{
-					if (USoundClass* C = LoadObject<USoundClass>(nullptr, *FString::Printf(TEXT("/Game/Audio/Classes/%s.%s"), Cls, Cls), nullptr, LOAD_NoWarn | LOAD_Quiet))
-					{
-						if (const FSoundClassProperties* Props = Dev->GetSoundClassCurrentProperties(C)) { S.Add(FString(TEXT("volume ")) + Cls, FString::SanitizeFloat(Props->Volume)); }
-					}
+					if (A.SoundClassObject) { S.Add(FString(TEXT("volume ")) + A.SoundClassObject->GetName(), FString::SanitizeFloat(A.VolumeAdjuster)); }
 				}
 			}
 		}

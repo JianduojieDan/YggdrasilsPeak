@@ -12,7 +12,7 @@ $cmds = "Ghost, BugItGo $X $Y $Z $P $W 0, ygg.Snow.Spindrift $Spindrift, t.MaxFP
 if ($Extra) { $cmds = "$cmds, $Extra" }
 $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -PassThru -ArgumentList @(
     "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=1920", "-ResY=1080",
-    "-nosplash", "-NoSound", "-unattended", "-log=PerfRun.log", "-csvCaptureFrames=$Frames", "-csvStartFrame=900", "-ExitAfterCsvProfiling",
+    "-nosplash", "-NoSound", "-unattended", "-YggNoSave", "-log=PerfRun.log", "-csvCaptureFrames=$Frames", "-csvStartFrame=900", "-ExitAfterCsvProfiling",
     "-ExecCmds=`"$cmds`"")
 $proc.WaitForExit(420000) | Out-Null
 if (Test-Path $savBak) { Copy-Item $savBak $sav -Force }

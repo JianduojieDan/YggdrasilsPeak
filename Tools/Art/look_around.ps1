@@ -1,7 +1,7 @@
 # One game run, several views: stands at a spot and screenshots each (pitch,yaw) with `stat unit` on, to find what is
 # where and what it costs. Saved/Compare/look_<name>_<i>.png, plus a contact sheet Saved/Review/look_<name>.png.
 #   powershell -File Tools/Art/look_around.ps1 -Name:sky -X:338533 -Y:2468724 -Z:-68990 -Views "35,0;35,45;35,90" [-Extra "cmd, cmd"] [-Wait:16]
-param([string]$Name = "look", [double]$X, [double]$Y, [double]$Z, [string]$Views = "35,0;35,90;35,180;35,270", [string]$Extra = "", [int]$Wait = 16, [switch]$Ghost)
+param([string]$Name = "look", [double]$X, [double]$Y, [double]$Z, [string]$Views = "35,0;35,90;35,180;35,270", [string]$Extra = "", [int]$Wait = 16, [switch]$Ghost, [int]$ResX = 1920, [int]$ResY = 1080)
 $proj = "F:\UE_project\YggdrasilsPeak"
 $shots = "$proj\Saved\Screenshots\WindowsEditor"
 $sav = "$proj\Saved\SaveGames\Expedition.sav"; $savBak = "$env:TEMP\ygg_expedition_keep_look.sav"
@@ -20,8 +20,8 @@ $cmds += "ygg.Later $($t + 2) quit"
 if ($Extra) { $cmds = @($Extra -split ',\s*') + $cmds }
 $exec = $cmds -join ", "
 $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -PassThru -ArgumentList @(
-    "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=1920", "-ResY=1080",
-    "-nosplash", "-NoSound", "-unattended", "-log=Look.log", "-ExecCmds=`"$exec`"")
+    "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=$ResX", "-ResY=$ResY",
+    "-nosplash", "-NoSound", "-unattended", "-YggNoSave", "-log=Look.log", "-ExecCmds=`"$exec`"")
 $proc.WaitForExit(($t + 90) * 1000) | Out-Null
 if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
 if (Test-Path $savBak) { Copy-Item $savBak $sav -Force }

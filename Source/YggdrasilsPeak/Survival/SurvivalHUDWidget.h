@@ -254,6 +254,8 @@ private:
 		// FPS monitor (Settings > Game > FPS counter): frames per second over half a second, 1% low over the last ~5 s,
 		// and the GPU / game-thread / render-thread times
 		float Fps = 0.f, FrameMs = 0.f, LowFps = 0.f, GpuMs = 0.f, GameMs = 0.f, DrawMs = 0.f;
+		float RenderedFps = 0.f;         // frames the game renders; Fps is what reaches the screen (more with DLSS frame generation)
+		bool bFrameGen = false;
 		bool bExhausted = false, bLowHealth = false;
 		int32 PackKg = 0, PackMax = 0, Food = 0, Water = 0;
 		FString Subtitle;

@@ -22,7 +22,7 @@ public class YggdrasilsPeak : ModuleRules
 			"SlateCore"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "Landscape", "AnimationCore", "Niagara", "Json", "RenderCore", "RHI", "ProceduralMeshComponent", "MoviePlayer" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Landscape", "AnimationCore", "Niagara", "Json", "RenderCore", "RHI", "ProceduralMeshComponent", "MoviePlayer", "ImageWrapper" });
 
 		if (Target.bBuildEditor)
 		{

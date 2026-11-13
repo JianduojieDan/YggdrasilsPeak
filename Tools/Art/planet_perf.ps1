@@ -15,7 +15,7 @@ foreach ($realm in $Realms.Split(',')) {
     $cmds = "Ghost, BugItGo $X $Y $Z 0 0 0, ygg.Realm.Force $realm, ygg.Realm.LookAt $look, t.MaxFPS 0, r.VSync 0, r.GPUCsvStatsEnabled 1$Extra"
     $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -PassThru -ArgumentList @(
         "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=$ResX", "-ResY=$ResY",
-        "-nosplash", "-NoSound", "-unattended", "-log=PlanetPerf.log", "-csvCaptureFrames=600", "-csvStartFrame=900", "-ExitAfterCsvProfiling",
+        "-nosplash", "-NoSound", "-unattended", "-YggNoSave", "-log=PlanetPerf.log", "-csvCaptureFrames=600", "-csvStartFrame=900", "-ExitAfterCsvProfiling",
         "-ExecCmds=`"ygg.Realm.StartTime 1000, $cmds`"")
     $proc.WaitForExit(420000) | Out-Null
     if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force; "$realm TIMEOUT"; continue }

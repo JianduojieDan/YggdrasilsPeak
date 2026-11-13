@@ -25,7 +25,7 @@ if ($UI) { $cmds = "ygg.ShotUI 1, $cmds" }                 # -UI: a normal scree
 if ($Extra) { $cmds = "$cmds, $Extra" }
 $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -PassThru -ArgumentList @(
     "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=$ResX", "-ResY=$ResY",
-    "-nosplash", "-NoSound", "-unattended", "-log=Shot.log", "-ExecCmds=`"$cmds`"")
+    "-nosplash", "-NoSound", "-unattended", "-YggNoSave", "-log=Shot.log", "-ExecCmds=`"$cmds`"")
 $found = $null
 for ($i = 0; $i -lt 80 -and -not $found -and -not $proc.HasExited; $i++) { Start-Sleep -Seconds 3; $found = Get-ChildItem $shots -Include "HighresScreenshot*.png","ScreenShot*.png" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 }
 if ($found) { Start-Sleep -Seconds 2; Copy-Item $found.FullName "$proj\Saved\Compare\shot_$Name.png" -Force; "saved shot_$Name.png" } else { "NO SCREENSHOT" }

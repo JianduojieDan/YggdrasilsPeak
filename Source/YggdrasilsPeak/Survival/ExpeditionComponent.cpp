@@ -2,6 +2,8 @@
 
 #include "Survival/ExpeditionComponent.h"
 #include "Survival/YggMenuWidget.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 
 #include "Survival/InventoryComponent.h"
 #include "Survival/ClimbingComponent.h"
@@ -478,8 +480,14 @@ void UExpeditionComponent::SaveCheckpoint(AActor* Where, const FString& Name)
 	WriteSave();
 }
 
+// -YggNoSave on the command line: test runs (screenshots, perf runs) neither load nor write the player's save. Without
+// it a test that teleported through thin air and then into a camp saved the damaged health over the player's save
+// (2026-11-13: the user's climber started at 1 health).
+static bool NoSave() { static const bool b = FParse::Param(FCommandLine::Get(), TEXT("YggNoSave")); return b; }
+
 void UExpeditionComponent::WriteSave()
 {
+	if (NoSave()) { return; }
 	UYggSaveGame* Save = Cast<UYggSaveGame>(UGameplayStatics::CreateSaveGameObject(UYggSaveGame::StaticClass()));
 	Save->CampName = LastCheckpointName;
 	Save->Stats = CheckpointStats;
@@ -509,6 +517,7 @@ void UExpeditionComponent::UpdateTrailCheckpoints()
 
 void UExpeditionComponent::LoadSavedExpedition()
 {
+	if (NoSave()) { return; }
 	const UYggSaveGame* Save = Cast<UYggSaveGame>(UGameplayStatics::LoadGameFromSlot(UYggSaveGame::SlotName, 0));
 	if (!Save || Save->Version != GetDefault<UYggSaveGame>()->Version)
 	{

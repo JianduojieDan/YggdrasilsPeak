@@ -8,7 +8,7 @@ $log = "$proj\Saved\Logs\SettingsTest.log"
 Remove-Item $log -ErrorAction SilentlyContinue
 $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -PassThru -ArgumentList @(
     "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=1920", "-ResY=1080",
-    "-nosplash", "-NoSound", "-unattended", "-log=SettingsTest.log", "-ExecCmds=`"ygg.Settings.Test`"")
+    "-nosplash", "-NoSound", "-unattended", "-YggNoSave", "-log=SettingsTest.log", "-ExecCmds=`"ygg.Settings.Test`"")
 $done = $false
 for ($i = 0; $i -lt 120 -and -not $done; $i++) {
     Start-Sleep -Seconds 3

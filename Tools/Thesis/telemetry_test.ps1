@@ -13,7 +13,7 @@ $exec = ($cmds -join ", ")
 if ($Extra) { $exec = "$exec, $Extra" }
 $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -PassThru -ArgumentList @(
     "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=1280", "-ResY=720",
-    "-nosplash", "-NoSound", "-unattended", "-log=Telemetry.log", "-ExecCmds=`"$exec`"")
+    "-nosplash", "-NoSound", "-unattended", "-YggNoSave", "-log=Telemetry.log", "-ExecCmds=`"$exec`"")
 $proc.WaitForExit(($t + 120) * 1000) | Out-Null
 if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force; "TIMEOUT (killed)" }
 if (Test-Path $savBak) { Copy-Item $savBak $sav -Force }

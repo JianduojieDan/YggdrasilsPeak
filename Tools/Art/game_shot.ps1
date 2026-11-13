@@ -14,7 +14,7 @@ Get-ChildItem $shots, "$proj\Saved\Screenshots" -Recurse -Filter "HighresScreens
 $cmds = "Ghost, ViewActor $camName, r.HighResScreenshotDelay $Delay, HighResShot 1"
 $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -PassThru -ArgumentList @(
     "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=1920", "-ResY=1080",
-    "-nosplash", "-NoSound", "-unattended", "-log=GameShot.log", "-ExecCmds=`"$cmds`"")
+    "-nosplash", "-NoSound", "-unattended", "-YggNoSave", "-log=GameShot.log", "-ExecCmds=`"$cmds`"")
 $found = $null
 for ($i = 0; $i -lt 100 -and -not $found; $i++) {
     Start-Sleep -Seconds 3

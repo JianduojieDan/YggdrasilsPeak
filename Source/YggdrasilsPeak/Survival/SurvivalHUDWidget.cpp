@@ -387,8 +387,27 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 		else { FrameHistory[FrameHead] = Dt; FrameHead = (FrameHead + 1) % 600; }
 		if (FpsTime >= 0.5f)
 		{
-			Paint.Fps = FpsFrames / FpsTime;
+			Paint.RenderedFps = FpsFrames / FpsTime;
+			Paint.Fps = Paint.RenderedFps;
 			Paint.FrameMs = 1000.f * FpsTime / FpsFrames;
+			// DLSS frame generation presents more frames than the game renders: ask the Streamline plugin for the real
+			// presented rate (2026-11-13, user: "with DLSS the FPS count shows only 30"). Through reflection, so the game
+			// still builds and runs without the NVIDIA plugin.
+			{
+				static UClass* Lib = FindObject<UClass>(nullptr, TEXT("/Script/StreamlineDLSSGBlueprint.StreamlineLibraryDLSSG"));
+				static UFunction* Timing = Lib ? Lib->FindFunctionByName(TEXT("GetDLSSGFrameTiming")) : nullptr;
+				Paint.bFrameGen = false;
+				if (Timing && Timing->ParmsSize >= int32(sizeof(float) + sizeof(int32)))
+				{
+					struct { float FrameRateInHertz = 0.f; int32 FramesPresented = 0; } Parms;
+					Lib->GetDefaultObject()->ProcessEvent(Timing, &Parms);
+					if (Parms.FramesPresented > 1 && Parms.FrameRateInHertz > Paint.RenderedFps * 1.2f)
+					{
+						Paint.Fps = Parms.FrameRateInHertz;
+						Paint.bFrameGen = true;
+					}
+				}
+			}
 			TArray<float> Sorted = FrameHistory;
 			Sorted.Sort();
 			Paint.LowFps = 1.f / Sorted[FMath::Clamp(FMath::FloorToInt(Sorted.Num() * 0.99f), 0, Sorted.Num() - 1)];
@@ -869,6 +888,7 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 	const float X0 = M;
 	const float LY = Size.Y - 58.f * S;                                     // the route line
 	const float TY = LY - 158.f * S;                                        // baseline of the readings
+	const float BlockW = 470.f * S;                                         // the bottom-left block's one width (readings = route line)
 
 	// what needs you, most urgent first
 	struct FNeed { FString Word, Hint; float Strength; };
@@ -892,8 +912,10 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 			{ TEXT("Heart"), FString::FromInt(FMath::RoundToInt(Paint.Health * 100.f)), TEXT(""), Paint.Health, Paint.bLowHealth },
 			{ TEXT("Food"), FString::FromInt(FMath::RoundToInt(Paint.Satiety * 100.f)), TEXT(""), Paint.Satiety, Hungry > 0.5f },
 			{ TEXT("Drop"), FString::FromInt(FMath::RoundToInt(Paint.Hydration * 100.f)), TEXT(""), Paint.Hydration, Thirsty > 0.5f } };
-		const FSlateFontInfo ValF = Roboto(TEXT("Light"), 32.f), UnitF = Roboto(TEXT("Regular"), 15.f);
-		const float Step = 122.f * S, BarW = 86.f * S, IconH = 22.f * S, BarH = FMath::Max(2.f, 2.f * S);
+		// one width for the whole block (user 2026-11-13: the five readings must be as long as the altitude and route
+		// below): the last reading's line ends exactly where the route line ends
+		const FSlateFontInfo ValF = Roboto(TEXT("Light"), 28.f), UnitF = Roboto(TEXT("Regular"), 14.f);
+		const float BarW = 72.f * S, Step = (BlockW - BarW) / 4.f, IconH = 20.f * S, BarH = FMath::Max(2.f, 2.f * S);
 		float CX = X0;
 		for (const FRead& R : Reads)
 		{
@@ -941,7 +963,7 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 			// ---- the route: Dingboche to the summit, a dot per camp, the climbed part lit, you a ring, the summit a triangle
 			if (Paint.Camps.Num() >= 2)
 			{
-				const float Lo = Paint.Camps[0].Elev, Hi = FMath::Max(Paint.Camps.Last().Elev, Lo + 1.f), LW = 404.f * S;
+				const float Lo = Paint.Camps[0].Elev, Hi = FMath::Max(Paint.Camps.Last().Elev, Lo + 1.f), LW = BlockW;
 				const auto LX = [&](float E) { return X0 + FMath::Clamp((E - Lo) / (Hi - Lo), 0.f, 1.f) * LW; };
 				const float You = LX(Snap.ElevationMeters);
 				W.Line({ FVector2f(You, LY), FVector2f(X0 + LW, LY) }, WithA(White, 0.35f), 1.f);
@@ -1077,7 +1099,9 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 		X += P.Width(TEXT("FPS"), CapF) + 18.f * S;
 		if (FpsLevel >= 2)
 		{
-			const FString More = FString::Printf(TEXT("%.1f ms   \u00b7   1%% low %d"), Paint.FrameMs, FMath::RoundToInt(Paint.LowFps));
+			const FString More = Paint.bFrameGen
+				? FString::Printf(TEXT("rendered %d   \u00b7   %.1f ms   \u00b7   1%% low %d"), FMath::RoundToInt(Paint.RenderedFps), Paint.FrameMs, FMath::RoundToInt(Paint.LowFps))
+				: FString::Printf(TEXT("%.1f ms   \u00b7   1%% low %d"), Paint.FrameMs, FMath::RoundToInt(Paint.LowFps));
 			P.TextSOnBase(More, X, FY, SmallF, WithA(White, Soft), 0.6f);
 		}
 		if (FpsLevel >= 3)
