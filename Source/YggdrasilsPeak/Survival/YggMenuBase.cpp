@@ -25,8 +25,13 @@
 #include "Engine/PostProcessVolume.h"
 #include "Engine/World.h"
 #include "Framework/Application/SlateApplication.h"
+#include "GameFramework/InputSettings.h"
 #include "GameFramework/PlayerController.h"
+#include "HAL/IConsoleManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
+
+static TAutoConsoleVariable<float> CVarMenuTitleFreeze(TEXT("ygg.Menu.TitleFreeze"), -1.f,
+	TEXT("Testing: holds the start menu's title glide this many seconds after the key (-1 = off). Start it with ygg.Menu.TitleGo."));
 
 namespace
 {
@@ -37,6 +42,34 @@ namespace
 		while (R.Contains(TEXT("  "))) { R.ReplaceInline(TEXT("  "), TEXT(" ")); }
 		return R.TrimStartAndEnd();
 	}
+
+	// The start menu's title glide, seconds from the key on the title page: the old words fade as the title lifts, it
+	// lands at the top-left and hands over to the resting title, then the options come in one by one, top to bottom.
+	constexpr float MenuGlideOut = 0.25f;           // the tagline and "press any key" go
+	constexpr float MenuGlideStart = 0.05f;         // the title begins to move
+	constexpr float MenuGlideSeconds = 1.5f;        // centre to top-left
+	constexpr float MenuGlideSwap = 0.12f;          // the moving title hands over to the resting one (each half)
+	constexpr float MenuGlideOptStep = 0.1f;        // between one option and the next
+	constexpr float MenuGlideOptFade = 0.45f;       // one option fading in...
+	constexpr float MenuGlideOptRise = 10.f;        // ...and rising this far
+	constexpr float MenuGlideSkipAfter = 0.2f;      // a quick double tap is not a skip
+	constexpr float MenuGlideSkipGuard = 0.6f;      // after a skip no option acts this long: the second half of a double
+	                                                // click (OS default 0.5 s between the presses) or tap is not a choice
+	constexpr float MenuGlideLand = MenuGlideStart + MenuGlideSeconds;
+	constexpr float MenuGlideOpts = MenuGlideLand + MenuGlideSwap;   // the first option begins
+	float MenuGlideEnd(int32 NumOptions) { return MenuGlideOpts + MenuGlideOptStep * FMath::Max(NumOptions - 1, 0) + MenuGlideOptFade; }
+	/** Smootherstep: leaves and arrives at rest, never overshoots. */
+	float MenuGlideEase(float T) { T = FMath::Clamp(T, 0.f, 1.f); return T * T * T * (T * (T * 6.f - 15.f) + 10.f); }
+
+	// a bTitleTop page: the title's capitals stand this far down the screen, the options' middle lower in the column
+	constexpr float MenuTitleCapTop = 0.1f;
+	constexpr float MenuOptionsMid = 0.55f;
+	constexpr float MenuTitleGap = 56.f;            // never closer than this under the title block (small screens)
+	/** From the top of a title's line to the top of its capitals: Alegreya's ascender is 1.016 em, its capitals 0.645 em,
+	 *  and Slate's sizes are points at 96 dpi. Places the letters themselves, not their box, at MenuTitleCapTop. */
+	float MenuTitleCapOffset(float TitleSize) { return TitleSize * (96.f / 72.f) * (1.016f - 0.645f); }
+	/** How dark the far side of the cloud shadow is: deeper under a side panel or the credits, and under a centred page. */
+	float MenuVeilRight(const UYggMenuBase::FPage& P) { return (P.Side.Num() > 0 || P.bRoll) ? 0.55f : ((P.bModal || P.bSplash) ? 0.45f : 0.18f); }
 }
 
 FLinearColor UYggMenuBase::Accent() const
@@ -47,6 +80,25 @@ FLinearColor UYggMenuBase::Accent() const
 
 void UYggMenuBase::SetPage(const FPage& InPage)
 {
+	// (a new page while the title glides: the glide ends first)
+	FinishTitleGlide();
+	// a requested glide starts from the title page's words where they stand now - read before the column is rebuilt
+	const bool bWantGlide = bGlideNext && bBuilt && Page.bSplash && InPage.bTitleTop && !InPage.bModal && !InPage.bSplash;
+	bGlideNext = false;
+	UTextBlock* OldTitle = bWantGlide ? TitleText.Get() : nullptr;
+	UWidget* OldWords[2] = { bWantGlide ? LineText.Get() : nullptr, bWantGlide ? SplashPrompt.Get() : nullptr };
+	FVector2D TitlePos = FVector2D::ZeroVector;
+	FVector2D WordsPos[2] = { FVector2D::ZeroVector, FVector2D::ZeroVector };
+	const float OldAlpha = Column ? Column->GetRenderOpacity() : 1.f;   // (a key while the title page was still coming in)
+	const float WordsAlpha[2] = { OldAlpha, OldAlpha * (SplashPrompt ? SplashPrompt->GetRenderOpacity() : 0.f) };
+	const float OldSize = Page.TitleSize;
+	const float OldVeil = MenuVeilRight(Page);
+	if (OldTitle && !CanvasTopLeft(OldTitle, TitlePos)) { OldTitle = nullptr; }   // never laid out: no glide, just the page
+	for (int32 k = 0; k < 2; ++k)
+	{
+		if (OldWords[k] && !CanvasTopLeft(OldWords[k], WordsPos[k])) { OldWords[k] = nullptr; }
+	}
+
 	Page = InPage;
 	Selected = FMath::Clamp(Page.Selected, 0, FMath::Max(Page.Options.Num() - 1, 0));
 	PageAge = 0.f;
@@ -54,6 +106,58 @@ void UYggMenuBase::SetPage(const FPage& InPage)
 	{
 		BuildColumn();
 	}
+	if (!OldTitle || !Canvas)
+	{
+		return;
+	}
+	// the old words have just left the column: they stay on the canvas exactly where they stood, the title to travel
+	auto Pin = [this](UWidget* X, const FVector2D& P, float Alpha)
+	{
+		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(X);
+		S->SetAnchors(FAnchors(0.f, 0.f));
+		S->SetAlignment(FVector2D(0.f, 0.f));
+		S->SetAutoSize(true);
+		S->SetPosition(P);
+		X->SetVisibility(ESlateVisibility::HitTestInvisible);
+		X->SetRenderOpacity(Alpha);
+	};
+	Pin(OldTitle, TitlePos, OldAlpha);
+	OldTitle->SetRenderTransformPivot(FVector2D(0.f, 0.f));   // it shrinks towards its top-left, which is what travels
+	GlideTitle = OldTitle;
+	for (int32 k = 0; k < 2; ++k)
+	{
+		if (!OldWords[k]) { continue; }
+		Pin(OldWords[k], WordsPos[k], WordsAlpha[k]);
+		GlideGhosts.Add(OldWords[k]);
+		GlideGhostAlpha.Add(WordsAlpha[k]);
+	}
+	GlideFrom = TitlePos;
+	GlideFromSize = OldSize;
+	GlideFromAlpha = OldAlpha;
+	GlideVeilFrom = OldVeil;
+	GlideT = 0.f;
+	// what the new page brings waits for its moment, and nothing in it can be clicked meanwhile
+	if (Column) { Column->SetVisibility(ESlateVisibility::HitTestInvisible); }
+	if (TitleText) { TitleText->SetRenderOpacity(0.f); }
+	if (LineText) { LineText->SetRenderOpacity(0.f); }
+	for (UButton* B : OptButtons) { if (B) { B->SetRenderOpacity(0.f); } }
+	if (PromptRow) { PromptRow->SetRenderOpacity(0.f); }
+	if (PadRow) { PadRow->SetRenderOpacity(0.f); }
+	if (VeilMID) { VeilMID->SetScalarParameterValue(TEXT("Right"), OldVeil); }
+}
+
+bool UYggMenuBase::CanvasTopLeft(const UWidget* W, FVector2D& Out) const
+{
+	// where a widget was last drawn, in the canvas's own units (any DPI scale, the column's slide included)
+	if (!W || !Canvas) { return false; }
+	const FGeometry& G = W->GetCachedGeometry();
+	const FGeometry& CG = Canvas->GetCachedGeometry();
+	const FVector2f Size = G.GetLocalSize();
+	const FVector2f CanvasSize = CG.GetLocalSize();
+	if (Size.X < 1.f || CanvasSize.X < 1.f) { return false; }
+	const FVector2f P = CG.AbsoluteToLocal(G.LocalToAbsolute(FVector2f::ZeroVector));
+	Out = FVector2D(P);
+	return true;
 }
 
 TSharedRef<SWidget> UYggMenuBase::RebuildWidget()
@@ -117,6 +221,11 @@ void UYggMenuBase::BuildFrame()
 	Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("Column"));
 	ColumnSlot = Canvas->AddChildToCanvas(Column);
 	ColumnSlot->SetAutoSize(true);
+	// the start menu's title on its own at the top-left (bTitleTop pages); empty and collapsed everywhere else
+	TopBlock = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("TopBlock"));
+	TopBlock->SetVisibility(ESlateVisibility::Collapsed);
+	TopBlockSlot = Canvas->AddChildToCanvas(TopBlock);
+	TopBlockSlot->SetAutoSize(true);
 
 	SidePanel = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("Side"));
 	{
@@ -150,25 +259,55 @@ void UYggMenuBase::BuildFrame()
 void UYggMenuBase::BuildColumn()
 {
 	Column->ClearChildren();
+	if (TopBlock) { TopBlock->ClearChildren(); }
 	OptButtons.Reset(); OptTexts.Reset(); OptSubs.Reset(); OptGlows.Reset(); Proxies.Reset(); OptHot.Reset();
 	SplashPrompt = nullptr;
+	TitleText = nullptr;
+	LineText = nullptr;
 	const bool bCentre = Page.bModal || Page.bSplash;
+	const bool bTop = Page.bTitleTop && !bCentre && TopBlock != nullptr;
 	if (ColumnSlot)
 	{
-		ColumnSlot->SetAnchors(bCentre ? FAnchors(0.5f, 0.5f) : FAnchors(ColumnX, 0.5f));
-		ColumnSlot->SetAlignment(bCentre ? FVector2D(0.5f, 0.5f) : FVector2D(0.f, 0.5f));
-		ColumnSlot->SetPosition(FVector2D(0.f, bCentre ? -20.f : 30.f));
+		if (bTop)
+		{
+			// the options alone in the column, lower down: NativeTick keeps them clear of the title block
+			ColumnSlot->SetAnchors(FAnchors(ColumnX, 0.f));
+			ColumnSlot->SetAlignment(FVector2D(0.f, 0.f));
+			ColumnSlot->SetPosition(FVector2D(0.f, TopColumnY));
+		}
+		else
+		{
+			ColumnSlot->SetAnchors(bCentre ? FAnchors(0.5f, 0.5f) : FAnchors(ColumnX, 0.5f));
+			ColumnSlot->SetAlignment(bCentre ? FVector2D(0.5f, 0.5f) : FVector2D(0.f, 0.5f));
+			ColumnSlot->SetPosition(FVector2D(0.f, bCentre ? -20.f : 30.f));
+		}
+	}
+	if (TopBlock)
+	{
+		TopBlock->SetVisibility(bTop ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		TopBlock->SetRenderOpacity(0.f);
+		if (bTop && TopBlockSlot)
+		{
+			// the title's left edge on the options' left edge, its capitals a tenth of the way down
+			TopBlockSlot->SetAnchors(FAnchors(ColumnX, MenuTitleCapTop));
+			TopBlockSlot->SetAlignment(FVector2D(0.f, 0.f));
+			TopBlockSlot->SetPosition(FVector2D(0.f, -MenuTitleCapOffset(Page.TitleSize)));
+		}
 	}
 	const EHorizontalAlignment HA = bCentre ? HAlign_Center : HAlign_Left;
-	auto Add = [this, HA](UWidget* W, float Gap)
+	auto AddTo = [HA](UVerticalBox* Box, UWidget* W, float Gap)
 	{
-		UVerticalBoxSlot* S = Column->AddChildToVerticalBox(W);
+		UVerticalBoxSlot* S = Box->AddChildToVerticalBox(W);
 		S->SetHorizontalAlignment(HA);
 		S->SetPadding(FMargin(0.f, 0.f, 0.f, Gap));
 	};
+	auto Add = [this, &AddTo](UWidget* W, float Gap) { AddTo(Column, W, Gap); };
+	// the title and its lines: in the column, or on their own at the top-left
+	UVerticalBox* Head = bTop ? TopBlock.Get() : Column.Get();
+	auto AddHead = [Head, &AddTo](UWidget* W, float Gap) { AddTo(Head, W, Gap); };
 	auto Centre = [bCentre](UTextBlock* T) { if (bCentre) { T->SetJustification(ETextJustify::Center); } return T; };
 
-	if (!Page.Eyebrow.IsEmpty()) { Add(Centre(YggUI::Words(WidgetTree, Page.Eyebrow, 20, YggUI::Mist)), 2.f); }
+	if (!Page.Eyebrow.IsEmpty()) { AddHead(Centre(YggUI::Words(WidgetTree, Page.Eyebrow, 20, YggUI::Mist)), 2.f); }
 	TitleLetters.Reset();
 	TitleBox = nullptr;
 	const float TitleGap = Page.bSplash ? 10.f : 16.f;
@@ -187,21 +326,25 @@ void UYggMenuBase::BuildColumn()
 			TitleLetters.Add(L);
 		}
 		TitleBox->AddChildToOverlay(Row);
-		Add(TitleBox, TitleGap);
+		AddHead(TitleBox, TitleGap);
 	}
 	else
 	{
-		Add(Centre(YggUI::Words(WidgetTree, Page.Title, int32(Page.TitleSize), YggUI::Snow)), TitleGap);
+		TitleText = Centre(YggUI::Words(WidgetTree, Page.Title, int32(Page.TitleSize), YggUI::Snow));
+		AddHead(TitleText, TitleGap);
 	}
+	// (on its own at the top the block ends at its last line: the gap to the options is NativeTick's)
+	const float HeadEnd = bTop ? 0.f : 46.f;
 	if (!Page.Line.IsEmpty())
 	{
 		UTextBlock* L = Centre(YggUI::Words(WidgetTree, Page.Line, 24, YggUI::Mist));
 		L->SetWrapTextAt(700.f);   // a fixed measure: auto wrap followed the narrow column and broke the line early
-		Add(L, Page.Facts.IsEmpty() ? 46.f : 8.f);
+		AddHead(L, Page.Facts.IsEmpty() ? HeadEnd : 8.f);
+		LineText = L;
 	}
 	if (!Page.Facts.IsEmpty())
 	{
-		Add(Centre(YggUI::Words(WidgetTree, Page.Facts, 19, YggUI::Shade)), 46.f);
+		AddHead(Centre(YggUI::Words(WidgetTree, Page.Facts, 19, YggUI::Shade)), HeadEnd);
 	}
 	if (Page.Body.Num() > 0 && !Page.bRoll)
 	{
@@ -275,7 +418,7 @@ void UYggMenuBase::BuildColumn()
 	}
 	Column->SetRenderOpacity(0.f);
 	// the far side's shadow deepens under a side panel or the credits (the world is brightest there)
-	if (VeilMID) { VeilMID->SetScalarParameterValue(TEXT("Right"), (Page.Side.Num() > 0 || Page.bRoll) ? 0.55f : (bCentre ? 0.45f : 0.18f)); }
+	if (VeilMID) { VeilMID->SetScalarParameterValue(TEXT("Right"), MenuVeilRight(Page)); }
 	if (ToneGlow) { ToneGlow->SetVisibility(Page.Tone == ETone::Summit ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed); }
 	BuildSide();
 	BuildRoll();
@@ -472,7 +615,8 @@ void UYggMenuBase::SetColumnVisible(bool bVisible)
 {
 	// the words fade out slowly (and come back the same way); only the picture stays under the settings
 	WordsTarget = bVisible ? 1.f : 0.f;
-	if (Column && bVisible) { Column->SetVisibility(ESlateVisibility::Visible); }
+	if (Column && bVisible) { Column->SetVisibility(GlideT >= 0.f ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Visible); }
+	if (TopBlock && bVisible && Page.bTitleTop) { TopBlock->SetVisibility(ESlateVisibility::HitTestInvisible); }
 }
 
 void UYggMenuBase::SetHudVisible(APlayerController* PC, bool bVisible)
@@ -551,7 +695,7 @@ void UYggMenuBase::CloseMenu()
 
 void UYggMenuBase::Activate(int32 Index)
 {
-	if (!Page.Options.IsValidIndex(Index) || PageAge < 0.15f)
+	if (!Page.Options.IsValidIndex(Index) || PageAge < 0.15f || Age < ActivateAfter)
 	{
 		return;
 	}
@@ -572,6 +716,15 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	Age += InDeltaTime;
 	PageAge += InDeltaTime;
+	if (GlideT >= 0.f)
+	{
+		// the title glide's own clock (ygg.Menu.TitleFreeze holds it still for pictures)
+		GlideT += InDeltaTime;
+		const float Freeze = CVarMenuTitleFreeze.GetValueOnGameThread();
+		if (Freeze >= 0.f) { GlideT = FMath::Min(GlideT, Freeze); }
+		if (GlideT >= MenuGlideEnd(OptButtons.Num())) { FinishTitleGlide(); }
+	}
+	const bool bGlide = GlideT >= 0.f;
 	const FVector2D View = MyGeometry.GetLocalSize();
 	const bool bFate = Page.Fate != YggFate::None;
 	// the menu comes in: the shadow first, then the words (a death slower)
@@ -580,12 +733,33 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	Words = FMath::FInterpConstantTo(Words, WordsTarget, InDeltaTime, 1.6f);   // ~0.6 s to fade
 	const float W = YggUI::Ease(Words);
 	const bool bCentre = Page.bModal || Page.bSplash;
+	const bool bTop = Page.bTitleTop && !bCentre && TopBlock != nullptr;
+	if (bTop && ColumnSlot && Column)
+	{
+		// the options' middle a little below the screen's, never closer than a gap under the title block (from the
+		// widgets' own sizes, so any resolution or DPI); moved only when it changes
+		const float Below = View.Y * MenuTitleCapTop - MenuTitleCapOffset(Page.TitleSize) + TopBlock->GetDesiredSize().Y + MenuTitleGap;
+		const float Y = FMath::Max(View.Y * MenuOptionsMid - Column->GetDesiredSize().Y * 0.5f, Below);
+		if (FMath::Abs(Y - TopColumnY) > 0.5f || FMath::Abs(ColumnSlot->GetPosition().Y - Y) > 0.5f)
+		{
+			TopColumnY = Y;
+			ColumnSlot->SetPosition(FVector2D(0.f, Y));
+		}
+	}
 	if (Column)
 	{
-		const float C = YggUI::Ease((PageAge - (bFate ? 0.5f : 0.f)) * (Page.bSplash ? 0.8f : 2.4f));
-		Column->SetRenderOpacity(C * W);
-		Column->SetRenderTranslation(bCentre ? FVector2D(0.f, 12.f * (1.f - C)) : FVector2D(-20.f * (1.f - C) - 18.f * (1.f - W), 0.f));
-		if (WordsTarget <= 0.f && Words <= 0.001f && Column->GetVisibility() != ESlateVisibility::Hidden) { Column->SetVisibility(ESlateVisibility::Hidden); }
+		// (while the title glides in, the column stands still: its words keep their own timing below)
+		const float C = bGlide ? 1.f : YggUI::Ease((PageAge - (bFate ? 0.5f : 0.f)) * (Page.bSplash ? 0.8f : 2.4f));
+		const FVector2D Shift = bCentre ? FVector2D(0.f, 12.f * (1.f - C)) : FVector2D(-20.f * (1.f - C) - 18.f * (1.f - W), 0.f);
+		const bool bGone = WordsTarget <= 0.f && Words <= 0.001f;
+		auto Place = [C, W, Shift, bGone](UWidget* X)
+		{
+			X->SetRenderOpacity(C * W);
+			X->SetRenderTranslation(Shift);
+			if (bGone && X->GetVisibility() != ESlateVisibility::Hidden) { X->SetVisibility(ESlateVisibility::Hidden); }
+		};
+		Place(Column.Get());
+		if (bTop) { Place(TopBlock.Get()); }   // the title block comes and goes with the column
 	}
 	if (SidePanel)
 	{
@@ -621,11 +795,23 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	{
 		OptHot[i] = FMath::FInterpTo(OptHot[i], i == Selected ? 1.f : 0.f, InDeltaTime, 12.f);
 		const float H = OptHot[i];
-		const float In = YggUI::Ease((PageAge - (bFate ? 0.9f : 0.18f) - 0.07f * i) * 4.f);
+		float In, Rise = 0.f;
+		if (bGlide)
+		{
+			// after the title has landed, one at a time from the top, each fading in as it rises (its glow with it)
+			const float K = (GlideT - MenuGlideOpts - MenuGlideOptStep * i) / MenuGlideOptFade;
+			In = YggUI::Ease(K);
+			Rise = MenuGlideOptRise * (1.f - YggUI::EaseOut(K));
+		}
+		else
+		{
+			In = YggUI::Ease((PageAge - (bFate ? 0.9f : 0.18f) - 0.07f * i) * 4.f);
+		}
 		if (OptButtons[i])
 		{
 			OptButtons[i]->SetRenderOpacity(In);
-			OptButtons[i]->SetRenderTranslation(Page.bModal ? FVector2D(0.f, 8.f * (1.f - In)) : FVector2D(8.f * H - 12.f * (1.f - In), 0.f));
+			OptButtons[i]->SetRenderTranslation(Page.bModal ? FVector2D(0.f, 8.f * (1.f - In))
+				: (bGlide ? FVector2D(8.f * H, Rise) : FVector2D(8.f * H - 12.f * (1.f - In), 0.f)));
 		}
 		if (OptTexts[i]) { OptTexts[i]->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, H))); }
 		if (OptSubs[i]) { OptSubs[i]->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Shade, YggUI::Mist, H))); }
@@ -645,6 +831,7 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		PromptRow->SetVisibility(bPad ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 		PadRow->SetVisibility(bPad ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
+	if (bGlide) { TickTitleGlide(View, W); }
 	const float BlurTarget = bFate ? 0.f : 7.f;
 	if (Blur) { Blur->SetBlurStrength(BlurTarget * YggUI::Ease(Age * 2.5f)); }
 	float Fade = 1.f;
@@ -666,6 +853,60 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		RemoveFateWorld();
 		RemoveFromParent();
 	}
+}
+
+void UYggMenuBase::TickTitleGlide(const FVector2D& View, float W)
+{
+	const float T = GlideT;
+	const float K = MenuGlideEase((T - MenuGlideStart) / MenuGlideSeconds);
+	// the tagline and "press any key" go first, where they stood
+	const float Out = 1.f - YggUI::Ease(T / MenuGlideOut);
+	for (int32 g = 0; g < GlideGhosts.Num(); ++g)
+	{
+		if (GlideGhosts[g]) { GlideGhosts[g]->SetRenderOpacity(GlideGhostAlpha[g] * Out * W); }
+	}
+	// the title travels in a straight line to the resting title's place, shrinking to its size on the same curve; once
+	// it has landed the resting title (drawn at its own size, so sharp) fades in over it, then it goes
+	if (GlideTitle)
+	{
+		const FVector2D To(View.X * ColumnX, View.Y * MenuTitleCapTop - MenuTitleCapOffset(Page.TitleSize));
+		const float S = FMath::Lerp(1.f, Page.TitleSize / FMath::Max(GlideFromSize, 1.f), K);
+		GlideTitle->SetRenderTranslation((To - GlideFrom) * K);
+		GlideTitle->SetRenderScale(FVector2D(S, S));
+		const float Bright = FMath::Lerp(GlideFromAlpha, 1.f, YggUI::Ease(T / 0.5f));   // (pressed while it was still coming in)
+		GlideTitle->SetRenderOpacity(Bright * (1.f - YggUI::Ease((T - MenuGlideLand - MenuGlideSwap) / MenuGlideSwap)) * W);
+	}
+	if (TitleText) { TitleText->SetRenderOpacity(GlideTitle ? YggUI::Ease((T - MenuGlideLand) / MenuGlideSwap) : 1.f); }
+	// the quiet line under the title arrives with it
+	if (LineText)
+	{
+		const float L = (T - MenuGlideLand + 0.1f) / 0.6f;
+		LineText->SetRenderOpacity(YggUI::Ease(L));
+		LineText->SetRenderTranslation(FVector2D(0.f, 6.f * (1.f - YggUI::EaseOut(L))));
+	}
+	// the key hints with the options
+	const float P = YggUI::Ease((T - MenuGlideOpts) / FMath::Max(MenuGlideEnd(OptButtons.Num()) - MenuGlideOpts, 0.1f)) * W;
+	if (PromptRow) { PromptRow->SetRenderOpacity(P); }
+	if (PadRow) { PadRow->SetRenderOpacity(P); }
+	// the cloud shadow settles to the menu's as the title moves aside
+	if (VeilMID) { VeilMID->SetScalarParameterValue(TEXT("Right"), FMath::Lerp(GlideVeilFrom, MenuVeilRight(Page), K)); }
+}
+
+void UYggMenuBase::FinishTitleGlide()
+{
+	if (GlideT < 0.f) { return; }
+	GlideT = -1.f;
+	if (GlideTitle) { GlideTitle->RemoveFromParent(); }
+	GlideTitle = nullptr;
+	for (UWidget* G : GlideGhosts) { if (G) { G->RemoveFromParent(); } }
+	GlideGhosts.Reset();
+	GlideGhostAlpha.Reset();
+	if (TitleText) { TitleText->SetRenderOpacity(1.f); }
+	if (LineText) { LineText->SetRenderOpacity(1.f); LineText->SetRenderTranslation(FVector2D::ZeroVector); }
+	if (Column) { Column->SetVisibility((WordsTarget > 0.f || Words > 0.001f) ? ESlateVisibility::Visible : ESlateVisibility::Hidden); }
+	if (VeilMID) { VeilMID->SetScalarParameterValue(TEXT("Right"), MenuVeilRight(Page)); }
+	// the page's own fade-ins are long over: the menu stands as it will stay, at once
+	PageAge = FMath::Max(PageAge, 2.f);
 }
 
 namespace
@@ -779,9 +1020,28 @@ FReply UYggMenuBase::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEven
 	if (bClosing) { return FReply::Unhandled(); }
 	const FKey K = InKeyEvent.GetKey();
 	bPad = K.IsGamepadKey();
+#if ALLOW_CONSOLE
+	// the title page and its glide leave the console key to the console (testing on the title page; a build without a
+	// console keeps it as "any key")
+	if ((Page.bSplash || GlideT >= 0.f) && GetDefault<UInputSettings>()->ConsoleKeys.Contains(K)) { return FReply::Unhandled(); }
+#endif
+	// the key that started or skipped the glide is still held: its repeats choose nothing
+	if (InKeyEvent.IsRepeat() && GlideKey.IsValid() && K == GlideKey) { return FReply::Handled(); }
+	if (GlideT >= 0.f)
+	{
+		// any key while the title glides shows the menu as it will stay, at once - and never also picks an option. Every
+		// fresh press is remembered, a too-early one too: the last key pressed is the one that auto-repeats, and held on
+		// past the glide's end its repeats would otherwise reach the options
+		if (!InKeyEvent.IsRepeat())
+		{
+			GlideKey = K;
+			if (GlideT >= MenuGlideSkipAfter) { FinishTitleGlide(); ActivateAfter = Age + MenuGlideSkipGuard; }
+		}
+		return FReply::Handled();
+	}
 	if (Page.bSplash)
 	{
-		if (Page.AnyKey && PageAge > 0.6f) { TFunction<void()> F = Page.AnyKey; F(); }
+		if (Page.AnyKey && PageAge > 0.6f) { GlideKey = K; TFunction<void()> F = Page.AnyKey; F(); }
 		return FReply::Handled();
 	}
 	if (K == EKeys::Up || K == EKeys::W || K == EKeys::Gamepad_DPad_Up || K == EKeys::Gamepad_LeftStick_Up
@@ -797,14 +1057,36 @@ FReply UYggMenuBase::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEven
 	return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
 }
 
+FReply UYggMenuBase::NativeOnKeyUp(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+	if (GlideKey.IsValid() && InKeyEvent.GetKey() == GlideKey) { GlideKey = FKey(); }
+	return Super::NativeOnKeyUp(InGeometry, InKeyEvent);
+}
+
 FReply UYggMenuBase::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	if (GlideT >= 0.f)
+	{
+		// a click while the title glides shows the menu at once (the options take no clicks until then, nor for a moment
+		// after: the options are clickable at once and a double click's second half would land on one)
+		if (GlideT >= MenuGlideSkipAfter) { FinishTitleGlide(); ActivateAfter = Age + MenuGlideSkipGuard; }
+		return FReply::Handled();
+	}
 	if (Page.bSplash)
 	{
 		if (Page.AnyKey && PageAge > 0.6f) { TFunction<void()> F = Page.AnyKey; F(); }
 		return FReply::Handled();
 	}
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+FReply UYggMenuBase::NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	// (the second click of a quick pair arrives as a double click. During the glide its first click was the one that
+	// started it, or one too early to count - a skip would have ended the glide - so the pair is one gesture: it
+	// neither skips nor reaches anything else; a further click skips)
+	if (GlideT >= 0.f) { return FReply::Handled(); }
+	return Super::NativeOnMouseButtonDoubleClick(InGeometry, InMouseEvent);
 }
 
 FReply UYggMenuBase::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)

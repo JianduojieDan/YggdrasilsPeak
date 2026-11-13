@@ -12,6 +12,9 @@
 
 class FYggMonitorInput;
 class FYggMonitorLog;
+class FYggMonitorWorker;
+class FYggMonitorWatchdog;
+class FRunnableThread;
 
 /**
  *  Writes Saved/Monitor/<date_time>/:
@@ -24,7 +27,12 @@ class FYggMonitorLog;
  *                 changes, level loads, screenshots
  *    log.txt      the engine's log lines worth reading (warnings, errors, rendering/streaming/shader/audio lines),
  *                 repeats folded into counts
- *    shots/       a screenshot every 60 s and at big hitches
+ *    shots/       a screenshot every 120 s, at big hitches and deaths
+ *    stalls.txt   (2026-11-14) where the game thread was stuck whenever it had not started a frame for 0.4 s: call
+ *                 stacks taken by a watchdog thread while it is stuck (named once the game runs again); also slow
+ *                 disk writes found by the disk probe. ygg.Monitor.StallStacks 0 = only the times.
+ *  All files are written by a worker thread (the game thread never waits on the disk), which also probes the disk once a
+ *  second. The watchdog is a thread of its own that never touches the disk, so a stalled drive cannot silence it.
  *  On while ygg.Monitor is 1 (default in development builds; test runs with -YggNoSave are off unless -YggMonitor).
  */
 UCLASS()
@@ -61,6 +69,7 @@ private:
 	void Flush();
 	void PollChanges();
 	void DrainLog();
+	void DrainWorker();
 
 	bool bOn = false;
 	FString Dir;
@@ -96,4 +105,8 @@ private:
 
 	TSharedPtr<FYggMonitorInput> Input;
 	TSharedPtr<FYggMonitorLog> LogDevice;      // shared: its deleter is made in the .cpp where the type is complete
+	TSharedPtr<FYggMonitorWorker> Worker;      // writes the files, names the stall stacks, probes the disk (own thread)
+	FRunnableThread* WorkerThread = nullptr;
+	TSharedPtr<FYggMonitorWatchdog> Watchdog;  // notices a stuck game thread and takes its stack (own thread, no disk)
+	FRunnableThread* WatchdogThread = nullptr;
 };

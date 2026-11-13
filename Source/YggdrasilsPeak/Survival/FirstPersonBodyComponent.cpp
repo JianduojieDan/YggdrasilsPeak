@@ -3,6 +3,7 @@
 #include "FirstPersonBodyComponent.h"
 
 #include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -10,6 +11,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/Character.h"
 #include "Survival/ClimbingComponent.h"
@@ -17,9 +19,117 @@
 #include "Engine/SkeletalMesh.h"
 #include "HAL/IConsoleManager.h"
 #include "TwoBoneIK.h"
-
-static TAutoConsoleVariable<int32> CVarFeetLog(TEXT("ygg.Feet.Log"), 0, TEXT("1 logs each view-body foot: animated sole height over the ground, plant weight, surface."));
 #include "UObject/ConstructorHelpers.h"
+
+static TAutoConsoleVariable<int32> CVarFeetLog(TEXT("ygg.Feet.Log"), 0,
+	TEXT("Boots on the ground: 1 = log 4 times a second, 2 = every frame. Slope under the capsule and how much its round bottom lifts the body, ")
+	TEXT("hips drop (and its target), powder sink; per boot the surface, the sole's gap to it after the fit (0 on rock, -SnowContactCm - sink in snow, ")
+	TEXT("positive = floating), the plain animation's gap, the lift, the animated height, plant weight and tilt."));
+static TAutoConsoleVariable<int32> CVarFeetWorldIK(TEXT("ygg.Feet.WorldIK"), 1,
+	TEXT("1 = what others, mirrors and the shadow see is a posed copy of the body with its legs fitted to the ground like your own; 0 = the plain animated body (only lowered)."));
+static TAutoConsoleVariable<int32> CVarFeetViewDrop(TEXT("ygg.Feet.ViewDrop"), 1,
+	TEXT("1 = the first-person body and the eye come down with the hips on a slope (your legs stay under your jacket); 0 = they stay at the capsule's height (legs hang below on steep ground)."));
+
+namespace
+{
+	// Testing the feet on slopes (the floating reports were on steep snow at Camp 3 and below the summit): stands the player
+	// on the nearest steep but walkable patch of terrain, facing across the slope and looking down at the boots.
+	FAutoConsoleCommandWithWorldAndArgs GFeetGoSteepCommand(
+		TEXT("ygg.Feet.GoSteep"),
+		TEXT("ygg.Feet.GoSteep [min slope deg = 35] [radius m = 80] [surface: 0 any, 1 snow, 2 rock] - stand on the nearest steep walkable slope, facing across it (testing the feet on slopes)."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+			ACharacter* Character = PC ? Cast<ACharacter>(PC->GetPawn()) : nullptr;
+			if (!Character || !Character->GetCharacterMovement() || !Character->GetCapsuleComponent())
+			{
+				return;
+			}
+			const float MinDeg = Args.Num() > 0 ? FCString::Atof(*Args[0]) : 35.f;
+			const float Radius = (Args.Num() > 1 ? FCString::Atof(*Args[1]) : 80.f) * 100.f;
+			const int32 Surface = Args.Num() > 2 ? FCString::Atoi(*Args[2]) : 0;
+			// steeper than the walkable limit (44.8 deg, 58 clipped to a rope) the climber slides instead of standing
+			const float MaxDeg = Character->GetCharacterMovement()->GetWalkableFloorAngle() - 2.f;
+			if (MinDeg >= MaxDeg)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("GoSteep: %.0f deg is past the walkable limit here (%.0f deg)"), MinDeg, MaxDeg);
+				return;
+			}
+			struct FSteepProbe
+			{
+				FVector Point;
+				FVector Normal;
+				float Slope;
+				bool bSnow;
+				bool bRock;
+			};
+			const FVector Me = Character->GetActorLocation();
+			FCollisionQueryParams Params(SCENE_QUERY_STAT(FeetGoSteep), false, Character);
+			Params.bReturnPhysicalMaterial = true;
+			Params.bReturnFaceIndex = true;   // rock faces of the detail tiles are known by their index (USnowTrailComponent::IsRock)
+			const float Step = 200.f;
+			const int32 N = FMath::Clamp(FMath::CeilToInt(Radius / Step), 1, 60);
+			TMap<FIntPoint, FSteepProbe> Probes;
+			for (int32 y = -N; y <= N; ++y)
+			{
+				for (int32 x = -N; x <= N; ++x)
+				{
+					const FVector P = Me + FVector(x * Step, y * Step, 0.f);
+					FHitResult Hit;
+					if (World->LineTraceSingleByChannel(Hit, P + FVector(0.f, 0.f, 20000.f), P - FVector(0.f, 0.f, 20000.f), ECC_Visibility, Params)
+						&& USnowTrailComponent::IsTerrain(Hit))
+					{
+						const float Slope = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(float(Hit.ImpactNormal.Z), -1.f, 1.f)));
+						Probes.Add(FIntPoint(x, y), FSteepProbe{ Hit.ImpactPoint, Hit.ImpactNormal, Slope, USnowTrailComponent::IsSnow(Hit), USnowTrailComponent::IsRock(Hit) });
+					}
+				}
+			}
+			// nearest spot in range whose four neighbours (2 m away) are steep too: a slope, not one tilted facet
+			const FSteepProbe* Best = nullptr;
+			double BestDistance = TNumericLimits<double>::Max();
+			for (const TPair<FIntPoint, FSteepProbe>& Probe : Probes)
+			{
+				const FSteepProbe& S = Probe.Value;
+				if (S.Slope < MinDeg || S.Slope > MaxDeg || (Surface == 1 && !S.bSnow) || (Surface == 2 && !S.bRock))
+				{
+					continue;
+				}
+				bool bSlope = true;
+				for (const FIntPoint& Side : { FIntPoint(1, 0), FIntPoint(-1, 0), FIntPoint(0, 1), FIntPoint(0, -1) })
+				{
+					const FSteepProbe* Near = Probes.Find(Probe.Key + Side);
+					if (!Near || Near->Slope < MinDeg - 8.f || Near->Slope > MaxDeg + 2.f)
+					{
+						bSlope = false;
+						break;
+					}
+				}
+				const double Distance = FVector::DistSquared2D(S.Point, Me);
+				if (bSlope && Distance < BestDistance)
+				{
+					BestDistance = Distance;
+					Best = &S;
+				}
+			}
+			if (!Best)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("GoSteep: no %s slope of %.0f-%.0f deg within %.0f m (%d probes)"),
+					Surface == 1 ? TEXT("snow") : (Surface == 2 ? TEXT("rock") : TEXT("terrain")), MinDeg, MaxDeg, Radius / 100.f, Probes.Num());
+				return;
+			}
+			const FVector Uphill = -FVector(Best->Normal.X, Best->Normal.Y, 0.f).GetSafeNormal();
+			const float UphillYaw = float(Uphill.Rotation().Yaw);
+			const float AcrossYaw = float(FRotator::NormalizeAxis(UphillYaw + 90.f));
+			// the capsule's round bottom meets the slope uphill of its centre: start high enough to clear it, then drop a little
+			const float Up = Character->GetSimpleCollisionHalfHeight() + Character->GetCapsuleComponent()->GetScaledCapsuleRadius() * FMath::Tan(FMath::DegreesToRadians(Best->Slope)) + 15.f;
+			Character->TeleportTo(Best->Point + FVector(0.f, 0.f, Up), FRotator(0.f, AcrossYaw, 0.f));
+			PC->SetControlRotation(FRotator(-35.f, AcrossYaw, 0.f));
+			const FVector At = Character->GetActorLocation();
+			UE_LOG(LogTemp, Display, TEXT("GoSteep: %.1f deg %s at %s. Again: BugItGo %.0f %.0f %.0f -35 %.0f 0. Walk with ygg.Snow.AutoWalk 0.5 and ygg.Snow.AutoYaw %.0f (across), %.0f (uphill) or %.0f (downhill)."),
+				Best->Slope, Best->bRock ? TEXT("rock") : (Best->bSnow ? TEXT("snow") : TEXT("hard ground")), *Best->Point.ToCompactString(),
+				At.X, At.Y, At.Z, AcrossYaw, AcrossYaw, UphillYaw, FRotator::NormalizeAxis(UphillYaw + 180.f));
+		}));
+}
 
 UFirstPersonBodyComponent::UFirstPersonBodyComponent()
 {
@@ -55,6 +165,7 @@ void UFirstPersonBodyComponent::BeginPlay()
 	AnimatedBody = TemplateArms ? TemplateArms.Get() : Body;
 	BodyBaseLocation = AnimatedBody->GetRelativeLocation();
 	WorldBodyBaseLocation = Body->GetRelativeLocation();
+	ClimbingComponent = Character->FindComponentByClass<UClimbingComponent>();
 
 	CameraBoom = Character->FindComponentByClass<USpringArmComponent>();
 	if (CameraBoom && HeadFollow > 0.f)
@@ -167,6 +278,15 @@ void UFirstPersonBodyComponent::BeginPlay()
 	// pulled towards the camera, so its boots float over the ground and can never press into snow. The owner sees the
 	// world body's hips and legs instead (a posable copy, feet placed on the ground), the first-person body without legs.
 	ResolveLegBones(Body);
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		const FName* Bones = Side == 0 ? LeftLegBones : RightLegBones;
+		FLegFit& Leg = Legs[Side];
+		Leg.Thigh = Body->GetBoneIndex(Bones[0]);
+		Leg.Knee = Body->GetBoneIndex(Bones[1]);
+		Leg.Foot = Body->GetBoneIndex(Bones[2]);
+		Leg.Hips = Leg.Thigh != INDEX_NONE ? Body->GetBoneIndex(Body->GetParentBone(Bones[0])) : INDEX_NONE;
+	}
 	if ((TemplateArms || ViewBody) && Body->GetBoneIndex(LeftLegBones[0]) != INDEX_NONE && Body->GetBoneIndex(RightLegBones[0]) != INDEX_NONE)
 	{
 		FeetBody = NewObject<UPoseableMeshComponent>(Character, TEXT("FirstPersonFeet"));
@@ -178,6 +298,7 @@ void UFirstPersonBodyComponent::BeginPlay()
 		FeetBody->SetBoundsScale(2.f);
 		FeetBody->RegisterComponent();
 		for (int32 Slot = 0; Slot < Body->GetNumMaterials(); ++Slot) { FeetBody->SetMaterial(Slot, Body->GetMaterial(Slot)); }
+		bBodyHiddenFromOwner = Body->bOwnerNoSee || Body->FirstPersonPrimitiveType == EFirstPersonPrimitiveType::WorldSpaceRepresentation;
 		// hips and legs only: hide every other branch that leaves the hips (spine, and with it arms and head)
 		const FName Hips = Body->GetParentBone(LeftLegBones[0]);
 		const FReferenceSkeleton& Ref = Body->GetSkeletalMeshAsset()->GetRefSkeleton();
@@ -194,6 +315,43 @@ void UFirstPersonBodyComponent::BeginPlay()
 				FirstPersonBody->HideBoneByName(LeftLegBones[0], PBO_None);
 				FirstPersonBody->HideBoneByName(RightLegBones[0], PBO_None);
 			}
+		}
+
+		// What others, mirrors and the shadow see: the animated world body can't have its legs bent onto a slope from code
+		// (its foot rig never ran on these bone names), so a posed copy with the same fitted legs as FeetBody stands in for
+		// it, and the world body keeps animating unseen (the copies, the camera and the footprints read its bones). Only with
+		// the template layout, where the world body itself casts the shadow; otherwise ShadowMesh (its own animation) does
+		// and the world body keeps the plain drop.
+		if (bWorldBodyFootIK && TemplateArms)
+		{
+			WorldBody = NewObject<UPoseableMeshComponent>(Character, TEXT("WorldBodyOnGround"));
+			WorldBody->SetupAttachment(Body);
+			WorldBody->SetSkinnedAssetAndUpdate(Body->GetSkeletalMeshAsset());
+			WorldBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			WorldBody->SetGenerateOverlapEvents(false);
+			// seen, lit and shadowed exactly like the world body (SyncWorldBody keeps the visibility in step later)
+			WorldBody->bOwnerNoSee = Body->bOwnerNoSee;
+			WorldBody->bOnlyOwnerSee = Body->bOnlyOwnerSee;
+			WorldBody->FirstPersonPrimitiveType = Body->FirstPersonPrimitiveType;
+			WorldBody->CastShadow = false;   // hidden for now; a hidden copy with a hidden shadow would still draw one
+			WorldBody->bCastDynamicShadow = Body->bCastDynamicShadow;
+			WorldBody->bCastHiddenShadow = Body->bCastHiddenShadow;
+			WorldBody->bCastContactShadow = Body->bCastContactShadow;
+			WorldBody->bCastInsetShadow = Body->bCastInsetShadow;
+			WorldBody->bCastFarShadow = Body->bCastFarShadow;
+			WorldBody->bSelfShadowOnly = Body->bSelfShadowOnly;
+			WorldBody->bReceivesDecals = Body->bReceivesDecals;
+			WorldBody->bVisibleInRayTracing = Body->bVisibleInRayTracing;
+			WorldBody->bRenderCustomDepth = Body->bRenderCustomDepth;
+			WorldBody->CustomDepthStencilValue = Body->CustomDepthStencilValue;
+			WorldBody->LightingChannels = Body->LightingChannels;
+			WorldBody->BoundsScale = Body->BoundsScale;
+			WorldBody->SetHiddenInGame(true);   // SyncWorldBody shows it and hides the world body in the same frame
+			WorldBody->RegisterComponent();
+			for (int32 Slot = 0; Slot < Body->GetNumMaterials(); ++Slot) { WorldBody->SetMaterial(Slot, Body->GetMaterial(Slot)); }
+			bBodyCastShadow = Body->CastShadow;
+			// unseen, the world body must still animate and move its bones every frame
+			Body->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 		}
 		SetComponentTickEnabled(true);
 	}
@@ -241,17 +399,49 @@ void UFirstPersonBodyComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		CameraBoom->SetRelativeLocation(FMath::VInterpTo(CameraBoom->GetRelativeLocation(), Target, DeltaTime, FollowSpeed));
 	}
 
+	// Ground under each boot and the hips drop; the boots themselves are fitted below.
 	UpdateFootDrop(DeltaTime);
 
 	// After the camera has moved, so the fist sits at its spot in this frame's view.
 	PoseViewBody(DeltaTime);
 
-	if (FeetBody && Character)
+	if (Character)
 	{
-		FeetBody->CopyPoseFromSkeletalComponent(Character->GetMesh());
+		SyncWorldBody(Character->GetMesh());
 		PlaceFeet();
-		FeetBody->MarkRefreshTransformDirty();
 	}
+	LogFeet(DeltaTime);
+}
+
+void UFirstPersonBodyComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// the world body gets its own look back (the posed copy stood in for it)
+	if (bWorldBodyShown)
+	{
+		const ACharacter* Character = Cast<ACharacter>(GetOwner());
+		if (USkeletalMeshComponent* Body = Character ? Character->GetMesh() : nullptr)
+		{
+			Body->SetHiddenInGame(false);
+			Body->SetCastShadow(bBodyCastShadow);
+		}
+		bWorldBodyShown = false;
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
+bool UFirstPersonBodyComponent::IsClimbing() const
+{
+	// ExpeditionComponent::BeginPlay adds the climbing component, which may come after this BeginPlay: until it is found,
+	// look again (missing it, the drop moved the body every frame while climbing and undid ClimbingComponent::FitBodyToFace)
+	if (!ClimbingComponent.IsValid())
+	{
+		if (const AActor* Owner = GetOwner())
+		{
+			ClimbingComponent = Owner->FindComponentByClass<UClimbingComponent>();
+		}
+	}
+	const UClimbingComponent* Climbing = Cast<UClimbingComponent>(ClimbingComponent.Get());
+	return Climbing && Climbing->IsClimbing();
 }
 
 void UFirstPersonBodyComponent::ResolveLegBones(const USkinnedMeshComponent* Mesh)
@@ -275,63 +465,169 @@ void UFirstPersonBodyComponent::ResolveLegBones(const USkinnedMeshComponent* Mes
 
 void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
 {
-	// On a slope the capsule rests on its curve and the animation assumes flat ground, so the downhill boot hangs in the air.
-	// Lower the world body towards the ground; the uphill boot goes a little into the snow, which suits deep snow.
+	// Why the boots floated on steep slopes: the capsule rests on its round bottom, which meets a slope uphill of its centre,
+	// so the whole body stands R * (1/cos(slope) - 1) higher than on flat ground (radius 34: 8 cm at 35 deg, 14 at 45, 30 at
+	// 58 on a rope), and the downhill boot is lower again by the slope times its distance from the centre. The old drop
+	// left out a boot more than 20 cm over the other while walking (on a slope, that is the planted downhill boot), gave up
+	// when both were more than 30 cm up, and the world body had no knee to bend, so on steep ground it was hardly lowered.
+	// Now each boot's ground is found once here (PlaceFeet uses it too), the hips come down until the lower boot reaches
+	// its ground, and PlaceFeet lifts the other boot onto its own.
 	ACharacter* Character = Cast<ACharacter>(GetOwner());
-	USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
+	USkeletalMeshComponent* Body = Character ? Character->GetMesh() : nullptr;
 	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
-	const UClimbingComponent* Climbing = Character ? Character->FindComponentByClass<UClimbingComponent>() : nullptr;
-	if (!Mesh || !Movement || (Climbing && Climbing->IsClimbing()) || !(Movement->IsMovingOnGround() || Movement->IsFalling()))
+	for (FLegFit& Leg : Legs)
 	{
-		return;   // climbing places the body itself; standing on a too-steep slope counts as falling, and still needs its boots down
+		Leg.bHit = false;
+	}
+	if (!Body || !Movement || DeltaTime <= 0.f)
+	{
+		return;
+	}
+	if (IsClimbing())
+	{
+		// climbing places the body itself (ClimbingComponent::FitBodyToFace); the fit fades back in afterwards
+		FeetAlpha = 0.f;
+		return;
 	}
 	if (SoleHeightCm < 0.f)
 	{
 		SoleHeightCm = MeasureSoleHeight();
 		UE_LOG(LogTemp, Display, TEXT("FirstPersonBody: legs %s/%s, sole height %.1f cm"), *LeftLegBones[0].ToString(), *LeftLegBones[2].ToString(), SoleHeightCm);
 	}
-	constexpr float Share = 0.9f, MaxDrop = 120.f;
-	// Per foot: how far its sole is above where it should rest (SnowContactCm into snow, exactly on rock and props)
-	float Gaps[2] = { 0.f, 0.f };
-	int32 Count = 0;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(FootDrop), false, Character);
-	Params.bReturnPhysicalMaterial = true;
-	Params.bReturnFaceIndex = true;
-	for (const FName* Leg : { LeftLegBones, RightLegBones })
+	// movement switched off (dead, resting in a tent) still stands where it stopped: boots stay on the ground (easing the drop
+	// out there lifted the body, and now the eye, off a slope while the death screen came up)
+	const bool bOnGround = Movement->IsMovingOnGround() || Movement->MovementMode == MOVE_None;
+	FeetAlpha = FMath::FInterpTo(FeetAlpha, bOnGround ? 1.f : 0.f, DeltaTime, 10.f);
+	if (Movement->CurrentFloor.bBlockingHit)
 	{
-		if (Mesh->GetBoneIndex(Leg[2]) == INDEX_NONE) { continue; }
-		const FVector Foot = Mesh->GetSocketLocation(Leg[2]);
-		FHitResult Ground;
-		if (GetWorld()->LineTraceSingleByChannel(Ground, Foot + FVector(0.f, 0.f, 60.f), Foot - FVector(0.f, 0.f, 200.f), ECC_Visibility, Params))
+		FloorGapCm = Movement->CurrentFloor.FloorDist;
+	}
+	// The first-person body (the camera rides on its head) comes down with the hips, minus the drop flat ground already has
+	// (the floor gap), so on flat ground the eye stays where it was and on a slope the legs stay under the jacket.
+	auto FollowWithView = [this, DeltaTime]()
+	{
+		const float Target = TemplateArms && CVarFeetViewDrop.GetValueOnGameThread() != 0 ? FMath::Max(FootDrop - FloorGapCm, 0.f) : 0.f;
+		ViewDrop = FMath::FInterpTo(ViewDrop, Target, DeltaTime, 6.f);
+	};
+
+	const TArray<FTransform>& Pose = Body->GetComponentSpaceTransforms();
+	const FTransform BodyXf = Body->GetComponentTransform();
+	for (FLegFit& Leg : Legs)
+	{
+		if (Pose.IsValidIndex(Leg.Foot))
 		{
-			Gaps[Count++] = float(Foot.Z - Ground.ImpactPoint.Z) - SoleHeightCm + (USnowTrailComponent::IsSnow(Ground) ? SnowContactCm : 0.f);
+			// the animated sole over the animation's own flat floor: about 0 when planted, up in the swing
+			Leg.AnimHeight = float(BodyXf.TransformPosition(Pose[Leg.Foot].GetLocation()).Z - BodyXf.GetLocation().Z) - SoleHeightCm;
 		}
 	}
-	if (Count == 0)
+	if (!bOnGround)
 	{
+		// in the air (a jump, a fall, sliding off ground too steep to stand on): no new drop, ease back to the plain body
+		FootDropTarget = 0.f;
+		FootDrop = FMath::FInterpTo(FootDrop, 0.f, DeltaTime, 4.f);
+		for (FLegFit& Leg : Legs)
+		{
+			Leg.Alpha = FMath::FInterpTo(Leg.Alpha, 0.f, DeltaTime, 10.f);
+		}
+		FollowWithView();
+		ApplyWorldBodyOffset();
 		return;
 	}
-	// Standing, both feet decide (on a slope the downhill one must reach); walking, a foot clearly higher than the
-	// other is in its swing and is left out, or the body would sink with every step.
-	const float Low = Count == 2 ? FMath::Min(Gaps[0], Gaps[1]) : Gaps[0];
+
+	// The animation's flat floor without the slope drop (already sunk into powder by SinkDepth), from the capsule itself,
+	// so it is right whatever moved the body this frame.
+	const USceneComponent* Parent = Body->GetAttachParent();
+	const FTransform ParentXf = Parent ? Parent->GetComponentTransform() : FTransform::Identity;
+	const double FloorZ = ParentXf.TransformPosition(WorldBodyBaseLocation - FVector(0.f, 0.f, SinkDepth)).Z;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(FootDrop), false, Character);
+	Params.bReturnPhysicalMaterial = true;
+	Params.bReturnFaceIndex = true;   // rock faces of the detail tiles are known by their index (USnowTrailComponent::IsRock)
+	const float MinNormalZ = FMath::Cos(FMath::DegreesToRadians(65.f));
+	// standing, a boot resting a little off the animation's floor must still reach (as before); walking, only one barely
+	// off it, or every swing would pull the body down
 	const bool bWalking = Character->GetVelocity().Size2D() > 40.f;
-	float Gap = Low;
-	for (int32 i = 0; i < Count; ++i) { if (!bWalking || Gaps[i] < Low + 20.f) { Gap = FMath::Max(Gap, Gaps[i]); } }
-	// a boot well clear of the ground is in the air (a jump, a fall, a teleport): never lower the body after it
-	Gap = FMath::Min(Gap, 30.f);
-	if (Low > 30.f) { Gap = 0.f; }
-	if (CVarFeetLog.GetValueOnGameThread() != 0)
+	const float RestFrom = bWalking ? 2.f : PlantedBelowCm;
+	const float RestTo = bWalking ? 8.f : PlantedBelowCm + 12.f;
+	float MaxNeed = 0.f, MinNeed = 0.f;
+	int32 Count = 0;
+	for (FLegFit& Leg : Legs)
 	{
-		UE_LOG(LogTemp, Display, TEXT("FootDrop: gaps %.1f %.1f gap %.1f drop %.1f sink %.1f"), Gaps[0], Count > 1 ? Gaps[1] : 0.f, Gap, FootDrop, SinkDepth);
+		if (!Pose.IsValidIndex(Leg.Foot))
+		{
+			continue;
+		}
+		const FVector Foot = BodyXf.TransformPosition(Pose[Leg.Foot].GetLocation());
+		// straight down through the boot from about the capsule's bottom: free air even where the boot is sunk into a slope
+		FHitResult Ground;
+		const bool bGround = GetWorld()->LineTraceSingleByChannel(Ground, FVector(Foot.X, Foot.Y, FloorZ + 70.0),
+			FVector(Foot.X, Foot.Y, FloorZ - MaxPelvisDropCm - 80.0), ECC_Visibility, Params) && Ground.ImpactNormal.Z >= MinNormalZ;
+		// a boot over a drop or against a wall keeps the animation, eased out rather than cut
+		Leg.Alpha = FMath::FInterpTo(Leg.Alpha, bGround ? 1.f : 0.f, DeltaTime, 12.f);
+		if (!bGround)
+		{
+			continue;
+		}
+		const bool bSnow = USnowTrailComponent::IsSnow(Ground);
+		const float Contact = bSnow ? SnowContactCm + SinkDepth : 0.f;
+		// stepping from powder onto rock changes how deep the boot goes: ease it, don't pop
+		Leg.Contact = Leg.bHasGround ? FMath::FInterpTo(Leg.Contact, Contact, DeltaTime, 15.f) : Contact;
+		Leg.bHit = true;
+		Leg.bHasGround = true;
+		Leg.bSnow = bSnow;
+		Leg.Point = Ground.ImpactPoint;
+		Leg.Normal = Ground.ImpactNormal;
+		Leg.Offset = float(Ground.ImpactPoint.Z - Leg.Contact - FloorZ);
+		// how far the hips must come down for this boot to reach its ground (with its resting height); a boot in its swing
+		// counts only with the ground under it
+		const float Resting = Leg.AnimHeight * (1.f - FMath::SmoothStep(RestFrom, RestTo, Leg.AnimHeight));
+		const float Need = Resting - Leg.Offset;
+		MaxNeed = Count == 0 ? Need : FMath::Max(MaxNeed, Need);
+		MinNeed = Count == 0 ? Need : FMath::Min(MinNeed, Need);
+		++Count;
 	}
-	// The trace reads the body where it is now, so the gap is measured on top of the current drop.
-	const float Want = FMath::Clamp(FootDrop + Gap * Share, 0.f, MaxDrop);
-	FootDrop = FMath::FInterpTo(FootDrop, Gap > 0.f ? Want : FMath::Max(FootDrop + Gap, 0.f), DeltaTime, 6.f);
+	// The lower boot decides; the higher one is never lifted more than MaxFootLiftCm for it (at a ledge the lower one hangs).
+	// Never raised above the plain body: a boot on higher ground is lifted instead.
+	FootDropTarget = Count > 0 ? FMath::Clamp(FMath::Min(MaxNeed, MinNeed + MaxFootLiftCm), 0.f, MaxPelvisDropCm) : 0.f;
+	// down quickly so the lower boot doesn't hang, up gently (the knees take it) so a slope doesn't pump the body each step
+	FootDrop = FMath::FInterpTo(FootDrop, FootDropTarget, DeltaTime, FootDropTarget > FootDrop ? PelvisDropSpeed : PelvisRiseSpeed);
+	FollowWithView();
+	ApplyWorldBodyOffset();
+
+	// for the log: each boot's gap with the plain (lowered) animation; PlaceFeet replaces FinalGap with the fitted one
+	const FTransform LoweredXf = Body->GetComponentTransform();
+	for (FLegFit& Leg : Legs)
+	{
+		if (Leg.bHasGround && Pose.IsValidIndex(Leg.Foot))
+		{
+			Leg.AnimGap = float(LoweredXf.TransformPosition(Pose[Leg.Foot].GetLocation()).Z - SoleHeightCm - Leg.Point.Z);
+			Leg.FinalGap = Leg.AnimGap;
+		}
+	}
+}
+
+void UFirstPersonBodyComponent::ApplyWorldBodyOffset()
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* Body = Character ? Character->GetMesh() : nullptr;
+	if (!Body || IsClimbing())
+	{
+		return;   // climbing places the body itself (ClimbingComponent::FitBodyToFace)
+	}
 	const FVector Down(0.f, 0.f, SinkDepth + FootDrop);
-	Mesh->SetRelativeLocation(WorldBodyBaseLocation - Down);
+	Body->SetRelativeLocation(WorldBodyBaseLocation - Down);
 	if (ShadowMesh)
 	{
 		ShadowMesh->SetRelativeLocation(BodyBaseLocation - Down);
+	}
+	if (TemplateArms)
+	{
+		// the template's first-person body and the eye on its head, with the view body posed from it (ViewDrop)
+		const FVector Sunk = BodyBaseLocation - FVector(0.f, 0.f, SinkDepth + ViewDrop);
+		TemplateArms->SetRelativeLocation(Sunk);
+		if (ViewBody)
+		{
+			ViewBody->SetRelativeLocation(Sunk);
+		}
 	}
 }
 
@@ -342,24 +638,19 @@ void UFirstPersonBodyComponent::SetSinkDepth(float Centimetres)
 		return;
 	}
 	SinkDepth = Centimetres;
-	const FVector Sunk = BodyBaseLocation - FVector(0.f, 0.f, SinkDepth);
-	AnimatedBody->SetRelativeLocation(Sunk);
-	if (TemplateArms)
+	const FVector Sunk = BodyBaseLocation - FVector(0.f, 0.f, SinkDepth + ViewDrop);   // ViewDrop stays 0 outside the template layout
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (Character && AnimatedBody != Character->GetMesh())
 	{
-		// The world body (shadow, what others see) sinks too; with the template layout it is a separate mesh.
-		if (ACharacter* Character = Cast<ACharacter>(GetOwner()))
-		{
-			Character->GetMesh()->SetRelativeLocation(WorldBodyBaseLocation - FVector(0.f, 0.f, SinkDepth));
-		}
+		AnimatedBody->SetRelativeLocation(Sunk);   // the template's first-person mesh
 	}
 	if (ViewBody)
 	{
 		ViewBody->SetRelativeLocation(Sunk);
 	}
-	if (ShadowMesh)
-	{
-		ShadowMesh->SetRelativeLocation(Sunk);
-	}
+	// The world body (shadow, what others see) and its shadow copy sink too, keeping the slope drop (this used to put the
+	// world body back to the sink alone until the next drop update, whichever of the two ticked first).
+	ApplyWorldBodyOffset();
 }
 
 void UFirstPersonBodyComponent::PoseViewBody(float DeltaTime)
@@ -399,81 +690,226 @@ float UFirstPersonBodyComponent::MeasureSoleHeight() const
 	return FMath::Clamp(Sole, 3.f, 25.f);
 }
 
-void UFirstPersonBodyComponent::PlaceFeet()
+void UFirstPersonBodyComponent::CopyBodyPose(UPoseableMeshComponent* Copy, USkeletalMeshComponent* Source)
 {
-	// What you see looking down: a planted boot sits a little INTO snow (SnowContactCm, plus the body's sink in powder),
-	// so it clearly touches; on rock, ice rubble, tents and props it stands exactly on the surface. A boot in the air
-	// keeps the animation. Works on FeetBody (posable copy of the world body, which UpdateFootDrop has already lowered).
-	const ACharacter* Character = Cast<ACharacter>(GetOwner());
-	const USkeletalMeshComponent* Source = Character ? Character->GetMesh() : nullptr;
-	if (!Source || !FeetBody || SoleHeightCm < 0.f)
+	// CopyPoseFromSkeletalComponent builds a new bone array every call; the same mesh has the same bones, so copy in place
+	const TArrayView<const FTransform> Local = Source->GetBoneSpaceTransformsView();
+	if (Local.Num() == 0 || Local.Num() != Copy->BoneSpaceTransforms.Num() || Copy->GetSkinnedAsset() != Source->GetSkinnedAsset())
+	{
+		Copy->CopyPoseFromSkeletalComponent(Source);   // not set up yet, or another mesh: the engine's way
+		return;
+	}
+	for (int32 Bone = 0; Bone < Local.Num(); ++Bone)
+	{
+		Copy->BoneSpaceTransforms[Bone] = Local[Bone];
+	}
+}
+
+void UFirstPersonBodyComponent::SyncWorldBody(USkeletalMeshComponent* Body)
+{
+	if (!Body)
 	{
 		return;
 	}
-	const TArray<FTransform>& Pose = Source->GetComponentSpaceTransforms();
-	const FTransform BodyXf = FeetBody->GetComponentTransform();
-	const FVector UpCS = BodyXf.InverseTransformVectorNoScale(FVector::UpVector);
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(FootPlace), false, GetOwner());
-	Params.bReturnPhysicalMaterial = true;
-	Params.bReturnFaceIndex = true;   // rock faces of the detail tiles are known by their index (USnowTrailComponent::IsRock)
-	for (const FName* Leg : { LeftLegBones, RightLegBones })
+	const bool bShow = WorldBody && bWorldBodyFootIK && CVarFeetWorldIK.GetValueOnGameThread() != 0;
+	if (bShow != bWorldBodyShown)
 	{
-		const int32 Thigh = Source->GetBoneIndex(Leg[0]);
-		const int32 Knee = Source->GetBoneIndex(Leg[1]);
-		const int32 Foot = Source->GetBoneIndex(Leg[2]);
-		const int32 Hips = Thigh != INDEX_NONE ? Source->GetBoneIndex(Source->GetParentBone(Leg[0])) : INDEX_NONE;
-		if (!Pose.IsValidIndex(Thigh) || !Pose.IsValidIndex(Knee) || !Pose.IsValidIndex(Foot) || !Pose.IsValidIndex(Hips)
-			|| !FeetBody->BoneSpaceTransforms.IsValidIndex(Foot))
+		bWorldBodyShown = bShow;
+		// a hidden component that casts a hidden shadow still draws it: each one's shadow goes with it
+		if (WorldBody)
+		{
+			WorldBody->SetHiddenInGame(!bShow);
+			WorldBody->SetCastShadow(bShow && bBodyCastShadow);
+		}
+		Body->SetHiddenInGame(bShow);
+		Body->SetCastShadow(!bShow && bBodyCastShadow);
+	}
+	if (bShow)
+	{
+		// the climbing view hands the world body to the owner and back: the copy follows each change, and any new material
+		if (WorldBody->bOwnerNoSee != Body->bOwnerNoSee)
+		{
+			WorldBody->SetOwnerNoSee(Body->bOwnerNoSee);
+		}
+		if (WorldBody->bOnlyOwnerSee != Body->bOnlyOwnerSee)
+		{
+			WorldBody->SetOnlyOwnerSee(Body->bOnlyOwnerSee);
+		}
+		if (WorldBody->FirstPersonPrimitiveType != Body->FirstPersonPrimitiveType)
+		{
+			WorldBody->SetFirstPersonPrimitiveType(Body->FirstPersonPrimitiveType);
+		}
+		for (int32 Slot = 0; Slot < Body->GetNumMaterials(); ++Slot)
+		{
+			UMaterialInterface* Material = Body->GetMaterial(Slot);
+			if (WorldBody->GetMaterial(Slot) != Material)
+			{
+				WorldBody->SetMaterial(Slot, Material);
+			}
+		}
+	}
+	if (FeetBody)
+	{
+		// the owner's own legs step aside while the owner sees the whole body (the third-person climbing view), or the
+		// two pairs of legs would overlap
+		const bool bOwnerSeesBody = bBodyHiddenFromOwner && !Body->bOwnerNoSee
+			&& Body->FirstPersonPrimitiveType != EFirstPersonPrimitiveType::WorldSpaceRepresentation;
+		if (FeetBody->IsVisible() == bOwnerSeesBody)
+		{
+			FeetBody->SetVisibility(!bOwnerSeesBody);
+		}
+	}
+}
+
+void UFirstPersonBodyComponent::PlaceFeet()
+{
+	// The legs you can see, in both copies of the world body: FeetBody (your own legs, looking down) and WorldBody (third
+	// person, mirrors, the shadow). A planted boot sits SnowContactCm (plus the powder sink) into snow and exactly on rock,
+	// ice rubble, tents and props; a boot on ground higher than the lowered hips (the uphill one on a slope) is lifted onto
+	// it, bending the knee; a boot in its swing keeps its animated height over the ground under it. One solve, written to
+	// both copies, on the ground UpdateFootDrop found (no traces here).
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* Source = Character ? Character->GetMesh() : nullptr;
+	UPoseableMeshComponent* Copies[2] = { FeetBody.Get(), WorldBody.Get() };
+	// a hidden copy needs no pose: FeetBody in the climbing view, WorldBody with ygg.Feet.WorldIK 0
+	if (Copies[0] && !Copies[0]->IsVisible())
+	{
+		Copies[0] = nullptr;
+	}
+	if (!bWorldBodyShown)
+	{
+		Copies[1] = nullptr;
+	}
+	if (!Source || (!Copies[0] && !Copies[1]))
+	{
+		return;
+	}
+	for (UPoseableMeshComponent* Copy : Copies)
+	{
+		if (Copy)
+		{
+			CopyBodyPose(Copy, Source);
+		}
+	}
+
+	const TArray<FTransform>& Pose = Source->GetComponentSpaceTransforms();
+	const FTransform BodyXf = Source->GetComponentTransform();   // already lowered by UpdateFootDrop; both copies ride on it
+	const FVector UpCS = BodyXf.InverseTransformVectorNoScale(FVector::UpVector);
+	const FVector ForwardCS = BodyXf.InverseTransformVectorNoScale(Character->GetActorForwardVector());
+	const float MaxTilt = FMath::DegreesToRadians(MaxFootTiltDeg);
+	for (FLegFit& Leg : Legs)
+	{
+		Leg.Lift = 0.f;
+		Leg.Weight = 0.f;
+		Leg.TiltDeg = 0.f;
+		const float Fit = FeetAlpha * Leg.Alpha;
+		if (SoleHeightCm < 0.f || !Leg.bHasGround || Fit <= KINDA_SMALL_NUMBER
+			|| !Pose.IsValidIndex(Leg.Thigh) || !Pose.IsValidIndex(Leg.Knee) || !Pose.IsValidIndex(Leg.Foot) || !Pose.IsValidIndex(Leg.Hips))
 		{
 			continue;
 		}
-		const FTransform& FootCS = Pose[Foot];
-		const FVector FootWS = BodyXf.TransformPosition(FootCS.GetLocation());
-		FHitResult Ground;
-		if (!GetWorld()->LineTraceSingleByChannel(Ground, FootWS + FVector(0.f, 0.f, 70.f), FootWS - FVector(0.f, 0.f, 120.f), ECC_Visibility, Params))
-		{
-			continue;
-		}
-		const bool bSnow = USnowTrailComponent::IsSnow(Ground);
-		const float Sink = bSnow ? SnowContactCm + SinkDepth : 0.f;
-		const float Above = float(FootWS.Z - SoleHeightCm - Ground.ImpactPoint.Z);   // the animated sole over the ground
-		const float Weight = 1.f - FMath::SmoothStep(PlantedBelowCm, PlantedBelowCm + 12.f, Above);
-		if (CVarFeetLog.GetValueOnGameThread() != 0)
-		{
-			UE_LOG(LogTemp, Display, TEXT("Feet: %s above %.1f weight %.2f %s sink %.1f"), *Leg[2].ToString(), Above, Weight, bSnow ? TEXT("snow") : TEXT("hard"), Sink);
-		}
-		if (Weight <= 0.f)
-		{
-			continue;
-		}
-		const float DeltaZ = (-Above - Sink) * Weight;
-		const FVector TargetCS = FootCS.GetLocation() + BodyXf.InverseTransformVectorNoScale(FVector(0.f, 0.f, DeltaZ));
-		// the planted boot follows the slope, at most 25 degrees
-		const FVector NormalCS = BodyXf.InverseTransformVectorNoScale(Ground.ImpactNormal).GetSafeNormal();
+		const FTransform& FootCS = Pose[Leg.Foot];
+		const double SoleNow = BodyXf.TransformPosition(FootCS.GetLocation()).Z - SoleHeightCm;
+		// planted (low in the animation): onto its ground; higher, fading back to its animated height over that ground
+		const float Planted = 1.f - FMath::SmoothStep(PlantedBelowCm, PlantedBelowCm + 12.f, Leg.AnimHeight);
+		const double WantSole = Leg.Point.Z - Leg.Contact + Leg.AnimHeight * (1.f - Planted);
+		// the planted boot lies along the slope, at most MaxFootTiltDeg
+		const FVector NormalCS = BodyXf.InverseTransformVectorNoScale(Leg.Normal).GetSafeNormal();
 		const float Angle = FMath::Acos(FMath::Clamp(float(FVector::DotProduct(UpCS, NormalCS)), -1.f, 1.f));
-		const float Limit = Angle > KINDA_SMALL_NUMBER ? FMath::Min(1.f, FMath::DegreesToRadians(25.f) / Angle) : 1.f;
-		const FQuat Tilt = FQuat::Slerp(FQuat::Identity, FQuat::FindBetweenNormals(UpCS, NormalCS), Limit * Weight);
-		const FVector KneeLocation = Pose[Knee].GetLocation();
-		const FVector Bend = (KneeLocation - (Pose[Thigh].GetLocation() + FootCS.GetLocation()) * 0.5f).GetSafeNormal();
-		// two-bone solve (no stretch), then swing thigh and shin onto the new knee and foot
-		const FTransform& OldUpper = Pose[Thigh];
-		const FTransform& OldLower = Pose[Knee];
+		const float Tilt = FMath::Min(Angle, MaxTilt) * Planted * Fit;
+		const FQuat TiltRotation = Angle > KINDA_SMALL_NUMBER ? FQuat::Slerp(FQuat::Identity, FQuat::FindBetweenNormals(UpCS, NormalCS), Tilt / Angle) : FQuat::Identity;
+		// a tilted boot rests on its sole, not on the point straight under the ankle: the ankle sits Sole / cos(tilt) up
+		const float TiltLift = SoleHeightCm * (1.f / FMath::Cos(Tilt) - 1.f);
+		const float Lift = FMath::Clamp(float(WantSole - SoleNow), -25.f, MaxFootLiftCm) * Fit + TiltLift;
+		const FVector TargetCS = FootCS.GetLocation() + BodyXf.InverseTransformVectorNoScale(FVector(0.f, 0.f, Lift));
+
+		// two-bone solve (bone lengths kept, never stretched); the knee bends the way the animation bends it, and a
+		// straight leg bends forward, never sideways
+		const FTransform& OldUpper = Pose[Leg.Thigh];
+		const FTransform& OldLower = Pose[Leg.Knee];
+		const FVector ThighLocation = OldUpper.GetLocation();
+		const FVector KneeLocation = OldLower.GetLocation();
+		const FVector Bend = (KneeLocation - (ThighLocation + FootCS.GetLocation()) * 0.5f + ForwardCS * 3.f).GetSafeNormal();
 		FVector NewKnee, NewFoot;
-		AnimationCore::SolveTwoBoneIK(OldUpper.GetLocation(), OldLower.GetLocation(), FootCS.GetLocation(), KneeLocation + Bend * 30.f, TargetCS, NewKnee, NewFoot, false, 1.0, 1.0);
-		const FQuat SwingUpper = FQuat::FindBetweenVectors(OldLower.GetLocation() - OldUpper.GetLocation(), NewKnee - OldUpper.GetLocation());
+		AnimationCore::SolveTwoBoneIK(ThighLocation, KneeLocation, FootCS.GetLocation(), KneeLocation + Bend * 30.f, TargetCS, NewKnee, NewFoot, false, 1.0, 1.0);
+		// swing thigh and shin onto the new knee and ankle
+		const FQuat SwingUpper = FQuat::FindBetweenVectors(KneeLocation - ThighLocation, NewKnee - ThighLocation);
 		FTransform NewUpper = OldUpper;
 		NewUpper.SetRotation(SwingUpper * OldUpper.GetRotation());
-		const FQuat SwingLower = FQuat::FindBetweenVectors(SwingUpper.RotateVector(FootCS.GetLocation() - OldLower.GetLocation()), NewFoot - NewKnee);
+		const FQuat SwingLower = FQuat::FindBetweenVectors(SwingUpper.RotateVector(FootCS.GetLocation() - KneeLocation), NewFoot - NewKnee);
 		FTransform NewLower = OldLower;
 		NewLower.SetLocation(NewKnee);
 		NewLower.SetRotation(SwingLower * SwingUpper * OldLower.GetRotation());
 		FTransform NewFootXf = FootCS;
 		NewFootXf.SetLocation(NewFoot);
-		NewFootXf.SetRotation(Tilt * FootCS.GetRotation());
-		FeetBody->BoneSpaceTransforms[Thigh] = NewUpper.GetRelativeTransform(Pose[Hips]);
-		FeetBody->BoneSpaceTransforms[Knee] = NewLower.GetRelativeTransform(NewUpper);
-		FeetBody->BoneSpaceTransforms[Foot] = NewFootXf.GetRelativeTransform(NewLower);
+		NewFootXf.SetRotation(TiltRotation * FootCS.GetRotation());
+		const FTransform ThighLocal = NewUpper.GetRelativeTransform(Pose[Leg.Hips]);
+		const FTransform KneeLocal = NewLower.GetRelativeTransform(NewUpper);
+		const FTransform FootLocal = NewFootXf.GetRelativeTransform(NewLower);
+		for (UPoseableMeshComponent* Copy : Copies)
+		{
+			if (Copy && Copy->BoneSpaceTransforms.IsValidIndex(Leg.Thigh) && Copy->BoneSpaceTransforms.IsValidIndex(Leg.Knee) && Copy->BoneSpaceTransforms.IsValidIndex(Leg.Foot))
+			{
+				Copy->BoneSpaceTransforms[Leg.Thigh] = ThighLocal;
+				Copy->BoneSpaceTransforms[Leg.Knee] = KneeLocal;
+				Copy->BoneSpaceTransforms[Leg.Foot] = FootLocal;
+			}
+		}
+		Leg.Lift = Lift;
+		Leg.Weight = Planted * Fit;
+		Leg.TiltDeg = FMath::RadiansToDegrees(Tilt);
+		// what the log reports: the fitted sole over the surface (rock 0, snow -SnowContactCm - sink; positive = floating)
+		Leg.FinalGap = float(BodyXf.TransformPosition(NewFoot).Z - SoleHeightCm / FMath::Cos(Tilt) - Leg.Point.Z);
 	}
+
+	// Into component space now, not at the copies' own tick early next frame: this frame's pose for this frame's body
+	// position (a frame late, a planted boot slid by the distance walked in a frame).
+	for (UPoseableMeshComponent* Copy : Copies)
+	{
+		if (Copy && Copy->IsRegistered())
+		{
+			Copy->RefreshBoneTransforms();
+		}
+	}
+}
+
+void UFirstPersonBodyComponent::LogFeet(float DeltaTime)
+{
+	const int32 Mode = CVarFeetLog.GetValueOnGameThread();
+	if (Mode == 0)
+	{
+		FeetLogTimer = 0.f;
+		return;
+	}
+	FeetLogTimer -= DeltaTime;
+	if (Mode == 1 && FeetLogTimer > 0.f)
+	{
+		return;
+	}
+	FeetLogTimer = 0.25f;
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	const UCapsuleComponent* Capsule = Character ? Character->GetCapsuleComponent() : nullptr;
+	if (!Movement || !Capsule)
+	{
+		return;
+	}
+	// the floor under the capsule, and how much higher than on flat ground its round bottom holds the body there
+	const float FloorNormalZ = Movement->CurrentFloor.bBlockingHit ? float(Movement->CurrentFloor.HitResult.ImpactNormal.Z) : 1.f;
+	const float Slope = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FloorNormalZ, -1.f, 1.f)));
+	const float CapsuleLift = Capsule->GetScaledCapsuleRadius() * (1.f / FMath::Max(FloorNormalZ, 0.2f) - 1.f);
+	auto Describe = [](const FLegFit& Leg, const TCHAR* Name) -> FString
+	{
+		if (!Leg.bHasGround)
+		{
+			return FString::Printf(TEXT("%s no ground"), Name);
+		}
+		return FString::Printf(TEXT("%s %s gap %+.1f (anim %+.1f, lift %+.1f, target %+.1f from floor, height %.1f, planted %.2f, tilt %.0f)"), Name,
+			Leg.bHit ? (Leg.bSnow ? TEXT("snow") : TEXT("hard")) : TEXT("lost"), Leg.FinalGap, Leg.AnimGap, Leg.Lift, Leg.Offset, Leg.AnimHeight, Leg.Weight, Leg.TiltDeg);
+	};
+	UE_LOG(LogTemp, Display, TEXT("Feet: %s, slope %.0f deg (capsule lifted %.1f + floor gap %.1f) | hips drop %.1f (target %.1f) eye drop %.1f sink %.1f fit %.2f world-ik %d | %s | %s"),
+		IsClimbing() ? TEXT("climbing") : (Movement->IsMovingOnGround() ? TEXT("ground") : (Movement->MovementMode == MOVE_None ? TEXT("stopped") : TEXT("air"))),
+		Slope, CapsuleLift, Movement->CurrentFloor.FloorDist, FootDrop, FootDropTarget, ViewDrop, SinkDepth, FeetAlpha, bWorldBodyShown ? 1 : 0, *Describe(Legs[0], TEXT("L")), *Describe(Legs[1], TEXT("R")));
 }
 
 void UFirstPersonBodyComponent::MeasureHand(FViewArm& Arm)

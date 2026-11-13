@@ -55,6 +55,25 @@ namespace
 		TEXT("1 shows the survival debug numbers on the HUD, 0 hides them."),
 		ECVF_Default);
 
+	const FSlateBrush* Hud6Brush(const TCHAR* Name);   // the HUD's line icons (below)
+
+	/** The wheel's soft ticks (Wheel_Tick_01..08, cut from the user's wheel recording). */
+	void HudLoadWheelTicks(TArray<TObjectPtr<USoundBase>>& Into)
+	{
+		for (int32 i = 1; i <= 8; ++i)
+		{
+			const FString N = FString::Printf(TEXT("Wheel_Tick_%02d"), i);
+			if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(TEXT("/Game/Audio/UI/") + N + TEXT(".") + N), nullptr, LOAD_NoWarn | LOAD_Quiet)) { Into.Add(S); }
+		}
+	}
+
+	/** A realm's landing sound by name (ARealmSky::GetLandingSound), else the plain chime. */
+	USoundBase* HudLoadLanding(const FString& Name)
+	{
+		USoundBase* S = LoadObject<USoundBase>(nullptr, *FString::Printf(TEXT("/Game/Audio/UI/%s.%s"), *Name, *Name), nullptr, LOAD_NoWarn | LOAD_Quiet);
+		return S ? S : LoadObject<USoundBase>(nullptr, TEXT("/Game/Audio/UI/UI_Chime_01.UI_Chime_01"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	}
+
 	/** Moves a bar fill towards its target value and tints it and its icon. */
 	void UpdateBar(UProgressBar* Bar, UImage* Glyph, float& Displayed, float Target, float Speed, float DeltaTime, const FLinearColor& Colour)
 	{
@@ -106,6 +125,27 @@ void USurvivalHUDWidget::NativeConstruct()
 			Entry.Font = FFontData(Face);
 		}
 	}
+
+	// What the HUD shows or plays later is loaded now, with the level (2026-11-14: the icons at the first look at the
+	// watch, the wheel's ticks at its first spin and its landing sound when it stopped were each a LoadObject mid-play -
+	// the game thread waited for the disk, a freeze whenever the drive stalled). The pause menu's and the death page's
+	// assets are kept from here too (YggUI::KeepMenuAssets).
+	for (const TCHAR* Icon : { TEXT("Lungs"), TEXT("Thermo"), TEXT("Heart"), TEXT("Food"), TEXT("Drop"), TEXT("Tent") })
+	{
+		Hud6Brush(Icon);
+	}
+	if (!bWheelSoundsLoaded)
+	{
+		bWheelSoundsLoaded = true;
+		HudLoadWheelTicks(WheelTicks);
+	}
+	for (int32 i = 0; i < ARealmSky::NumWeathers(); ++i)
+	{
+		const FString& Name = ARealmSky::GetLandingSound(i);
+		TObjectPtr<USoundBase>& Landing = WheelLandings.FindOrAdd(Name);
+		if (!Landing) { Landing = HudLoadLanding(Name); }
+	}
+	YggUI::KeepMenuAssets();
 }
 
 void USurvivalHUDWidget::CreateAltitudeText()
@@ -785,14 +825,10 @@ void USurvivalHUDWidget::TickWheel(float DeltaTime)
 	}
 	if (bWheelOn)
 	{
-		if (!bWheelSoundsLoaded)
+		if (!bWheelSoundsLoaded)                                           // normally done in NativeConstruct
 		{
 			bWheelSoundsLoaded = true;
-			for (int32 i = 1; i <= 8; ++i)
-			{
-				const FString N = FString::Printf(TEXT("Wheel_Tick_%02d"), i);
-				if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(TEXT("/Game/Audio/UI/") + N + TEXT(".") + N), nullptr, LOAD_NoWarn | LOAD_Quiet)) { WheelTicks.Add(S); }
-			}
+			HudLoadWheelTicks(WheelTicks);
 		}
 		// a divider sits half a sector from each icon: one tick each time one passes the pointer (the settle is far smaller)
 		const float T = WheelTime + DeltaTime;
@@ -809,13 +845,9 @@ void USurvivalHUDWidget::TickWheel(float DeltaTime)
 			// fate decided: the realm's own landing sound, heavier the more dangerous the weather it brings
 			const FString& Name = ARealmSky::GetLandingSound(Paint.WheelIndex);
 			TObjectPtr<USoundBase>& Landing = WheelLandings.FindOrAdd(Name);
-			if (!Landing)
+			if (!Landing)                                                  // loaded in NativeConstruct unless the names changed since
 			{
-				Landing = LoadObject<USoundBase>(nullptr, *FString::Printf(TEXT("/Game/Audio/UI/%s.%s"), *Name, *Name), nullptr, LOAD_NoWarn | LOAD_Quiet);
-			}
-			if (!Landing)
-			{
-				Landing = LoadObject<USoundBase>(nullptr, TEXT("/Game/Audio/UI/UI_Chime_01.UI_Chime_01"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+				Landing = HudLoadLanding(Name);
 			}
 			if (Landing)
 			{

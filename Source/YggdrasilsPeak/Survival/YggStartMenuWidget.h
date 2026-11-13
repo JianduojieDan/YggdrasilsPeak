@@ -12,11 +12,14 @@ class UTexture2D;
 
 /**
  *  The start menu (2026-11-12 redesign, replacing the old WBP_StartMenu built before the HUD existed).
- *  Our own mountain fills the screen - views captured in the game (/Game/UI/StartMenu/Backdrops/T_Backdrop_NN),
+ *  Our own mountain fills the screen - views captured in the game (/Game/UI/Menu/Backdrops/T_Backdrop_NN),
  *  each drifting slowly and dissolving into the next - with snow falling across it. On the left, in the menus'
  *  language: the title, nine beads for the nine realms with a wandering gold light, the question of the story,
  *  then Continue (the last camp, time and falls) / New expedition / Settings / Credits / Quit.
  *  Starting fades to black, then the loading screen (UYggLoadingScreen) carries you to the mountain.
+ *  Once a session the title page comes first ("press any key"); the key sends its title gliding from the centre to the
+ *  top-left, and only then do the options come in, one by one (UYggMenuBase::GlideTitleIntoNextPage).
+ *  Console (testing): ygg.Menu.TitleGo plays that glide without a key, ygg.Menu.TitleFreeze <s> holds it.
  */
 UCLASS()
 class YGGDRASILSPEAK_API UYggStartMenuWidget : public UYggMenuBase
@@ -25,6 +28,8 @@ class YGGDRASILSPEAK_API UYggStartMenuWidget : public UYggMenuBase
 
 public:
 	static UYggStartMenuWidget* Show(APlayerController* PC);
+	/** Testing (ygg.Menu.TitleGo): the title page again, fully there, then the glide to the menu as if a key was pressed. */
+	void TitleGo();
 
 protected:
 	virtual void BuildBackground(UCanvasPanel* InCanvas) override;
@@ -35,6 +40,7 @@ protected:
 private:
 	void SplashPage();
 	void MainPage();
+	void GlideToMenu();
 	void Begin(bool bNew);
 	void PlaceBackdrop(UImage* Img, UTexture2D* Tex, float Zoom, const FVector2D& Pan, const FVector2D& View);
 

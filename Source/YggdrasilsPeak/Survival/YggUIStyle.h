@@ -25,6 +25,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Styling/CoreStyle.h"
 #include "UObject/StrongObjectPtr.h"
+#include "Survival/YggAssets.h"
 
 namespace YggUI
 {
@@ -158,7 +159,9 @@ namespace YggUI
 
 	inline UFont* MakeFace(UObject* Outer, const TCHAR* FacePath)
 	{
-		UFontFace* Face = LoadObject<UFontFace>(nullptr, FacePath);
+		// kept loaded: each menu is built again when it opens, and a face that garbage collection had dropped in between
+		// was read from the disk on the game thread (2026-11-14, YggAssets.h)
+		UFontFace* Face = YggAssets::Kept<UFontFace>(FacePath);
 		if (!Face) { return nullptr; }
 		UFont* F = NewObject<UFont>(Outer);
 		F->FontCacheType = EFontCacheType::Runtime;
@@ -266,7 +269,7 @@ namespace YggUI
 	inline UImage* CloudVeil(UWidgetTree* Tree, UCanvasPanel* Canvas, UObject* Outer, float Left, float Right, UMaterialInstanceDynamic*& OutMID)
 	{
 		OutMID = nullptr;
-		if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/UI/Materials/M_UI_CloudVeil.M_UI_CloudVeil"), nullptr, LOAD_NoWarn | LOAD_Quiet))
+		if (UMaterialInterface* M = YggAssets::Kept<UMaterialInterface>(TEXT("/Game/UI/Materials/M_UI_CloudVeil.M_UI_CloudVeil"), LOAD_NoWarn | LOAD_Quiet))
 		{
 			OutMID = UMaterialInstanceDynamic::Create(M, Outer);
 			OutMID->SetScalarParameterValue(TEXT("Left"), Left);
@@ -284,6 +287,18 @@ namespace YggUI
 		if (!MID) { return; }
 		MID->SetScalarParameterValue(TEXT("T"), Time);
 		MID->SetScalarParameterValue(TEXT("Aspect"), View.Y > 1.f ? float(View.X / View.Y) : 1.7778f);
+	}
+
+	/** Loads now, and keeps, what the screens opened during play read later: both faces, the cloud veil and the death
+	 *  page's fate material (YggMenuBase::UpdateFateWorld loads it by path: kept here, its LoadObject finds it in memory).
+	 *  Called when the HUD is built, with the level (2026-11-14: each pause menu and death page read them from the disk on
+	 *  the game thread - a freeze whenever the drive stalled). */
+	inline void KeepMenuAssets()
+	{
+		SerifFont();
+		YggAssets::Kept<UFontFace>(TEXT("/Game/UI/Fonts/FF_Caveat.FF_Caveat"));
+		YggAssets::Kept<UMaterialInterface>(TEXT("/Game/UI/Materials/M_UI_CloudVeil.M_UI_CloudVeil"), LOAD_NoWarn | LOAD_Quiet);
+		YggAssets::Kept<UMaterialInterface>(TEXT("/Game/UI/Materials/M_PP_Fate.M_PP_Fate"), LOAD_NoWarn | LOAD_Quiet);
 	}
 
 	/** A hairline track with a bead for a thumb. */

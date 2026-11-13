@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Environment/LightningBolt.h"
+#include "Survival/YggAssets.h"
 #include "ProceduralMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
@@ -71,7 +72,9 @@ void ALightningBolt::Fire(FVector From, FVector To, float Branchiness, float InL
 
 	if (!Mat)
 	{
-		if (UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Environment/Realms/M_LightningBolt.M_LightningBolt")))
+		// kept loaded from the warm-up bolt at RealmSky's BeginPlay on: each strike is a new bolt actor, and once garbage
+		// collection had dropped the material a strike read it from the disk on the game thread (2026-11-14)
+		if (UMaterialInterface* Base = YggAssets::Kept<UMaterialInterface>(TEXT("/Game/Environment/Realms/M_LightningBolt.M_LightningBolt")))
 		{
 			Mat = UMaterialInstanceDynamic::Create(Base, this);
 		}

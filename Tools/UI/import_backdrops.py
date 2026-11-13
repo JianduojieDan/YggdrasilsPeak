@@ -1,8 +1,8 @@
-# Runs INSIDE the editor (uepy.py): Saved/Backdrops/T_Backdrop_NN.png (from capture_backdrops.py) -> /Game/UI/StartMenu/Backdrops
+# Runs INSIDE the editor (uepy.py): Saved/Backdrops/T_Backdrop_NN.png (from capture_backdrops.py) -> /Game/UI/Menu/Backdrops
 import unreal, os
 at = unreal.AssetToolsHelpers.get_asset_tools()
 SRC = "F:/UE_project/YggdrasilsPeak/Saved/Backdrops"
-D = "/Game/UI/StartMenu/Backdrops"
+D = "/Game/UI/Menu/Backdrops"
 for i in range(1, 9):
     n = "T_Backdrop_%02d" % i
     f = f"{SRC}/{n}.png"

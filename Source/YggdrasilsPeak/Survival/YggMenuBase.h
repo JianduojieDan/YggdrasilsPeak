@@ -26,6 +26,9 @@ class UYggUIProxy;
  *    Options are words; the chosen one is lit (warm snow-white, a soft sun glow behind it), the others stand in shadow.
  *  - Optional: a side panel on the right (pause: the route of camps), a centred question, a centred title ("press any
  *    key"), rolling credits.
+ *  - The start menu (2026-11-14): its title stands on its own at the top-left (FPage::bTitleTop), and after "press any
+ *    key" the title glides there from the centre before the options come in one by one (GlideTitleIntoNextPage; any
+ *    key or click jumps to the end; ygg.Menu.TitleFreeze holds it for pictures).
  *  - A death page (Fate) turns the live world behind it into what took you: an unbound post-process volume with
  *    M_PP_Fate (frost on the lens, the crevasse closing, the snow rising...), while the title's letters act it out.
  *  Mouse, keyboard (arrows / W S, Enter / Space, Esc) and gamepad (d-pad / stick, A, B) all work.
@@ -66,6 +69,7 @@ public:
 		bool bSplash = false;                       // centred, no options: "press any key"
 		bool bRoll = false;                         // the Body rolls up on the right (credits)
 		bool bNumbered = false;                     // (v2; unused)
+		bool bTitleTop = false;                     // the title on its own at the top-left, the options lower (start menu)
 		FLinearColor AccentOverride = FLinearColor::Transparent;   // alpha 0: the tone decides
 		uint8 Fate = 0;                             // YggFate: how the world and the title act out a death
 	};
@@ -87,13 +91,18 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual void NativeDestruct() override;
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+	virtual FReply NativeOnKeyUp(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 	/** Extra layers under the column (the start menu's views); the canvas fills the screen. */
 	virtual void BuildBackground(UCanvasPanel* InCanvas) {}
 	/** Called when the menu is about to be removed. */
 	virtual void OnClosed() {}
+	/** The next SetPage - a bTitleTop page replacing the title page - glides the title from where it stands to its place
+	 *  at the top-left, then brings the options in one by one. Only that one page change; going back to it later is plain. */
+	void GlideTitleIntoNextPage() { bGlideNext = true; }
 
 	float VeilAlpha = 0.8f;                         // how dark the cloud shadow is where the words stand
 	float ColumnX = 0.085f;                         // where the column stands, share of the width
@@ -123,6 +132,9 @@ private:
 	void UpdateFateWorld();
 	void RemoveFateWorld();
 	FLinearColor Accent() const;
+	void TickTitleGlide(const FVector2D& View, float W);
+	void FinishTitleGlide();
+	bool CanvasTopLeft(const UWidget* W, FVector2D& Out) const;
 
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> Column;
 	UPROPERTY(Transient) TObjectPtr<UCanvasPanelSlot> ColumnSlot;
@@ -156,4 +168,22 @@ private:
 	bool bBuilt = false;
 	bool bClosing = false;
 	float CloseT = 0.f;
+
+	// the start menu's title at the top-left, and its glide there from the title page
+	UPROPERTY(Transient) TObjectPtr<UVerticalBox> TopBlock;           // a bTitleTop page's title and quiet line
+	UPROPERTY(Transient) TObjectPtr<UCanvasPanelSlot> TopBlockSlot;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> TitleText;            // the page's title (none for a death's letters)
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> LineText;             // the quiet line under it
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> GlideTitle;           // the title page's title on its way to the corner
+	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> GlideGhosts;     // the title page's other words, fading where they stood
+	TArray<float> GlideGhostAlpha;
+	FVector2D GlideFrom = FVector2D::ZeroVector;    // where the gliding title began (canvas units, its top-left)
+	float GlideT = -1.f;                            // seconds since the key that started the glide; < 0: no glide
+	float GlideFromSize = 0.f;
+	float GlideFromAlpha = 1.f;
+	float GlideVeilFrom = 0.f;
+	float TopColumnY = 0.f;                         // the options' top on a bTitleTop page (canvas units)
+	bool bGlideNext = false;
+	FKey GlideKey;                                  // the key that started or skipped the glide, while it is held
+	float ActivateAfter = 0.f;                      // Age before which no option acts (just after the glide was skipped)
 };

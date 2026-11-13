@@ -14,6 +14,7 @@
 #include "Survival/MountainAudioComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalConfig.h"
+#include "Survival/YggAssets.h"
 #include "Survival/YggSaveGame.h"
 #include "Survival/YggTime.h"
 #include "Environment/FixedRope.h"
@@ -51,6 +52,8 @@ static TAutoConsoleVariable<float> CVarBodyFrost(TEXT("ygg.Body.Frost"), -1.f, T
 static TAutoConsoleVariable<float> CVarBodyExhaust(TEXT("ygg.Body.Exhaust"), -1.f, TEXT("Hold the spent swim and sway at 0..1 (-1 = live)."));
 static TAutoConsoleVariable<float> CVarBodyFaint(TEXT("ygg.Body.Faint"), -1.f, TEXT("Hold the near-collapse grey waves at 0..1 (-1 = live)."));
 static TAutoConsoleVariable<float> CVarBodyShiver(TEXT("ygg.Body.Shiver"), -1.f, TEXT("Hold the shiver at 0..1 (-1 = live)."));
+// the body's screen material, loaded at BeginPlay (2026-11-14: it was loaded at the first tick, a wait for the disk)
+static const TCHAR* const ExpeditionBodyMaterialPath = TEXT("/Game/UI/Materials/M_PP_Body.M_PP_Body");
 
 static FAutoConsoleCommand CmdNewGame(TEXT("ygg.NewGame"), TEXT("Deletes the expedition save; the next start is a new game."),
 	FConsoleCommandDelegate::CreateLambda([]()
@@ -68,6 +71,7 @@ UExpeditionComponent::UExpeditionComponent()
 void UExpeditionComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	YggAssets::Kept<UMaterialInterface>(ExpeditionBodyMaterialPath, LOAD_NoWarn | LOAD_Quiet);   // used from the first tick (UpdateScreenEffect)
 
 	for (TActorIterator<ARouteLandmark> It(GetWorld()); It; ++It)
 	{
@@ -493,6 +497,7 @@ void UExpeditionComponent::WriteSave()
 	Save->Stats = CheckpointStats;
 	Save->Items = CheckpointItems;
 	Save->CarriedBottles = CheckpointBottles;
+	Save->AdaptedAltitude = Survival.IsValid() ? Survival->GetAdaptedAltitude() : -1.f;
 	Save->bSummitReached = bSummitReached;
 	Save->Deaths = Deaths;
 	Save->PlaySeconds = SavedPlaySeconds + GetWorld()->GetTimeSeconds() - StartTime;
@@ -564,6 +569,8 @@ void UExpeditionComponent::LoadSavedExpedition()
 			Survival->SetStat(ESurvivalStat(i), Save->Stats[i]);
 		}
 		Survival->SetCarriedBottles(Save->CarriedBottles);
+		// saves from before 2026-11-14 have no adaptation: someone who reached this camp is adapted to it
+		Survival->SetAdaptedAltitude(Save->AdaptedAltitude > 0.f ? Save->AdaptedAltitude : FMath::Min(Survival->GetElevationMeters(), GetDefault<USurvivalConfig>()->AdaptMaxMeters));
 	}
 	if (UInventoryComponent* Pack = GetOwner()->FindComponentByClass<UInventoryComponent>())
 	{
@@ -620,6 +627,12 @@ void UExpeditionComponent::ToggleReading()
 void UExpeditionComponent::TeleportToCamp(ARouteLandmark* Camp)
 {
 	TeleportNear(Camp);
+	// a camp jump stands for the climb up to it: the body is adapted to that camp (nobody adapts above AdaptMaxMeters), or
+	// a jump to the South Col would arrive as unacclimatised as a helicopter drop (2026-11-14)
+	if (Survival.IsValid())
+	{
+		Survival->SetAdaptedAltitude(FMath::Max(Survival->GetAdaptedAltitude(), FMath::Min(Survival->GetElevationMeters(), GetDefault<USurvivalConfig>()->AdaptMaxMeters)));
+	}
 }
 
 void UExpeditionComponent::TeleportNear(AActor* Where)
@@ -649,7 +662,7 @@ void UExpeditionComponent::UpdateScreenEffect(float DeltaTime)
 
 	const USurvivalConfig* C = GetDefault<USurvivalConfig>();
 	const float Oxygen = Survival->GetStatValue(ESurvivalStat::Oxygen);
-	const float Target = HypoxiaScreenEffect * FMath::Clamp((C->OxygenFatigueBelow - Oxygen) / FMath::Max(C->OxygenFatigueBelow - C->OxygenDamageBelow, 1.f), 0.f, 1.f);
+	const float Target = HypoxiaScreenEffect * FMath::Clamp((Survival->GetOxygenFatigueBelow() - Oxygen) / FMath::Max(Survival->GetOxygenFatigueBelow() - Survival->GetOxygenDamageBelow(), 1.f), 0.f, 1.f);
 	DisplayedHypoxia = FMath::FInterpTo(DisplayedHypoxia, Target, DeltaTime, 1.5f);
 
 	FPostProcessSettings& PP = Camera->PostProcessSettings;
@@ -686,7 +699,7 @@ void UExpeditionComponent::UpdateScreenEffect(float DeltaTime)
 	const float Stam = Survival->GetStatNormalized(ESurvivalStat::Stamina);
 	const float ExTarget = Snap.bExhausted ? 1.f : FMath::Clamp((0.18f - Stam) / 0.18f, 0.f, 0.5f);
 	DisplayedExhaust = FMath::FInterpTo(DisplayedExhaust, ExTarget, DeltaTime, 1.5f);
-	DisplayedFaint = FMath::FInterpTo(DisplayedFaint, FMath::Clamp((C->OxygenDamageBelow - Oxygen) / 10.f, 0.f, 1.f), DeltaTime, 0.8f);
+	DisplayedFaint = FMath::FInterpTo(DisplayedFaint, FMath::Clamp((Survival->GetOxygenDamageBelow() - Oxygen) / 10.f, 0.f, 1.f), DeltaTime, 0.8f);
 
 	// test switches (ygg.Body.*, -1 = off) hold a state for screenshots
 	const auto Held = [](const TCHAR* Name, float Live) { const IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(Name); return V && V->GetFloat() >= 0.f ? V->GetFloat() : Live; };
@@ -703,7 +716,8 @@ void UExpeditionComponent::UpdateScreenEffect(float DeltaTime)
 
 	if (!BodyMID)
 	{
-		if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/UI/Materials/M_PP_Body.M_PP_Body"), nullptr, LOAD_NoWarn | LOAD_Quiet))
+		// loaded at BeginPlay and kept (a missing material is not searched for again every frame)
+		if (UMaterialInterface* M = YggAssets::Kept<UMaterialInterface>(ExpeditionBodyMaterialPath, LOAD_NoWarn | LOAD_Quiet))
 		{
 			BodyMID = UMaterialInstanceDynamic::Create(M, this);
 		}

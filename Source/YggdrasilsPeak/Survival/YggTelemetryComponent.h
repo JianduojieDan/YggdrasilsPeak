@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Tasks/Task.h"
 #include "YggTelemetryComponent.generated.h"
 
 /**
@@ -12,7 +13,8 @@
  *  position, altitude, speed, what the climber is doing, SpO2, heart rate, core temperature, stamina, food, water,
  *  health, sanity, bottled oxygen, shelter, realm, air temperature, the body effects on the view, and events (every
  *  expedition message, deaths). Rows are buffered and appended every few seconds; nothing is written while off.
- *  Added to the local player by UExpeditionComponent.
+ *  The file is written by background tasks, one after another (2026-11-14: appending on the game thread froze the game
+ *  for as long as the drive stalled). Added to the local player by UExpeditionComponent.
  */
 UCLASS(ClassGroup=(Survival))
 class YGGDRASILSPEAK_API UYggTelemetryComponent : public UActorComponent
@@ -36,9 +38,13 @@ private:
 	void HandleMessage(const FText& Message, float Seconds);
 	void WriteRow();
 	void Flush();
+	/** Hands Text to a background task that writes it to FilePath (bReplace: the file starts over, else it is appended),
+	 *  after the write handed over before it, so the lines keep their order. */
+	void Write(FString Text, bool bReplace);
 
 	FString FilePath;
 	FString Buffer;
+	UE::Tasks::FTask LastWrite;         // the newest write; the next one waits for it, EndPlay waits for the last
 	TArray<FString> Pending;
 	float SinceRow = 0.f;
 	float SinceFlush = 0.f;

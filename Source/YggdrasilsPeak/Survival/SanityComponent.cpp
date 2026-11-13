@@ -23,6 +23,7 @@ USanityComponent::USanityComponent()
 void USanityComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	AParentsGhosts::Preload();          // the ghosts this mind may see later appear without a wait for the disk (2026-11-14)
 	for (int32 i = 1; Whispers.Num() < 6 && i <= 6; ++i)
 	{
 		const FString N = FString::Printf(TEXT("Whisper_%02d"), i);
@@ -151,7 +152,7 @@ void USanityComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	float Rate = 0.f;
 	const float Elevation = Survival->GetElevationMeters();
 	Rate -= FMath::Max(0.f, Elevation - StartAltitude) / 1000.f * AltitudeDrain;
-	if (Survival->GetStatValue(ESurvivalStat::Oxygen) < 75.f) Rate -= HypoxiaDrain;
+	if (Survival->GetStatValue(ESurvivalStat::Oxygen) < (Survival->UsesPhysiology() ? 66.f : 75.f)) Rate -= HypoxiaDrain;   // the physiology scale is lower (2026-11-14)
 	const float Tod = TimeOfDay();
 	if (Tod < 600.f || Tod > 1900.f) Rate -= NightDrain;
 	if (Expedition && Expedition->GetWindIntensity() > 0.6f) Rate -= StormDrain;

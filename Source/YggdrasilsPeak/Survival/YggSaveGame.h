@@ -38,6 +38,10 @@ public:
 	UPROPERTY()
 	int32 CarriedBottles = 0;
 
+	/** Altitude the climber is adapted to (m, physiology model, 2026-11-14); below 0 = not saved yet. */
+	UPROPERTY()
+	float AdaptedAltitude = -1.f;
+
 	UPROPERTY()
 	bool bSummitReached = false;
 

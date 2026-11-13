@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Survival/MountainAudioComponent.h"
+#include "Misc/PackageName.h"
 
 #include "Survival/ExpeditionComponent.h"
 #include "Environment/RealmSky.h"
@@ -32,6 +33,8 @@ namespace
 {
 	USoundBase* LoadSound(const TCHAR* Dir, const FString& Name)
 	{
+		// sets are numbered up to a maximum: a missing one would log a loader warning in the packaged game (2026-11-14)
+		if (!FPackageName::DoesPackageExist(FString(Dir) / Name)) { return nullptr; }
 		return LoadObject<USoundBase>(nullptr, *(FString(Dir) / Name + TEXT(".") + Name), nullptr, LOAD_NoWarn | LOAD_Quiet);
 	}
 	void LoadSet(TArray<TObjectPtr<USoundBase>>& Into, const TCHAR* Dir, const TCHAR* Prefix, int32 Max)
@@ -240,7 +243,9 @@ void UMountainAudioComponent::UpdateBreath(float DeltaTime)
 	const FVector V = GetOwner()->GetVelocity();
 	const float Speed = float(V.Size2D());
 	const float Climb = FMath::Max(0.f, float(V.Z));
-	const float Thin = SS(4500.f, 8500.f, Survival->GetElevationMeters());
+	// 2026-11-14: driven by the blood's oxygen, not the altitude: the body breathes harder as saturation falls (so a
+	// bottle calms it, and working hard high up shows), 0 at 88 % and above, 1 at 52 %
+	const float Thin = 1.f - SS(52.f, 88.f, Survival->GetStatValue(ESurvivalStat::Oxygen));
 	float Target = 0.45f * (1.f - Stamina) + 0.25f * SS(50.f, 450.f, Speed) + 0.2f * SS(10.f, 80.f, Climb)
 		+ 0.35f * Thin * SS(30.f, 300.f, Speed) + 0.15f * Thin + (Survival->IsSprinting() ? 0.25f : 0.f);
 	Target = TourEffort >= 0.f ? TourEffort : FMath::Clamp(Target, 0.f, 1.f);

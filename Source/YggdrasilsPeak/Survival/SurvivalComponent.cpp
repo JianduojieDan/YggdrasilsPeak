@@ -27,6 +27,29 @@ namespace
 	{
 		return 1u << static_cast<uint32>(Warning);
 	}
+
+	TAutoConsoleVariable<int32> CVarPhysio(
+		TEXT("ygg.Physio"),
+		-1,
+		TEXT("Oxygen model: -1 = the config's choice (physiology on), 1 = physiology (air pressure, acclimatisation), 0 = the old linear rule."),
+		ECVF_Default);
+
+	/** Alveolar CO2 (Torr) by altitude (km): acclimatised (Grocott 2009 at 8.4 km; points between are estimates) and
+	 *  just arrived (estimates). Same tables as Tools/Thesis/physio_model.py. */
+	const float PhysioAcclKm[] = { 0.f, 3.f, 4.5f, 5.3f, 6.4f, 7.2f, 8.f, 8.4f, 8.85f };
+	const float PhysioAcclCO2[] = { 40.f, 33.f, 27.5f, 24.f, 20.f, 17.f, 14.5f, 13.3f, 12.2f };
+	const float PhysioAcuteKm[] = { 0.f, 3.f, 4.5f, 5.3f, 6.4f, 7.2f, 8.f, 8.85f };
+	const float PhysioAcuteCO2[] = { 40.f, 36.f, 32.5f, 30.f, 27.f, 25.f, 23.f, 21.f };
+
+	float PhysioTable(const float* X, const float* Y, int32 N, float V)
+	{
+		if (V <= X[0]) { return Y[0]; }
+		for (int32 i = 1; i < N; ++i)
+		{
+			if (V <= X[i]) { return FMath::Lerp(Y[i - 1], Y[i], (V - X[i - 1]) / (X[i] - X[i - 1])); }
+		}
+		return Y[N - 1];
+	}
 }
 
 USurvivalComponent::USurvivalComponent()
@@ -38,6 +61,39 @@ USurvivalComponent::USurvivalComponent()
 const USurvivalConfig* USurvivalComponent::GetCfg() const
 {
 	return ActiveConfig ? ActiveConfig.Get() : GetDefault<USurvivalConfig>();
+}
+
+bool USurvivalComponent::UsesPhysiology() const
+{
+	const int32 Override = CVarPhysio.GetValueOnGameThread();
+	return Override >= 0 ? Override > 0 : GetCfg()->bPhysiologyModel;
+}
+
+float USurvivalComponent::GetOxygenFatigueBelow() const
+{
+	return UsesPhysiology() ? GetCfg()->PhysioFatigueBelow : GetCfg()->OxygenFatigueBelow;
+}
+
+float USurvivalComponent::GetOxygenDamageBelow() const
+{
+	return UsesPhysiology() ? GetCfg()->PhysioDamageBelow : GetCfg()->OxygenDamageBelow;
+}
+
+float USurvivalComponent::PhysioSpO2(float AltitudeMeters, float Acclimatised, float GapTorr)
+{
+	// barometric pressure (West 1996) -> inspired O2 -> alveolar gas equation (R 0.8) -> arterial O2 -> blood pH from CO2
+	// -> Severinghaus 1979 virtual PO2 and saturation curve (core at 37 C)
+	const float H = FMath::Max(AltitudeMeters, 0.f) / 1000.f;
+	const float A = FMath::Clamp(Acclimatised, 0.f, 1.f);
+	const float PB = FMath::Exp(6.63268f - 0.1112f * H - 0.00149f * H * H);
+	const float PIO2 = 0.2093f * (PB - 47.f);
+	const float PaCO2 = FMath::Lerp(PhysioTable(PhysioAcuteKm, PhysioAcuteCO2, UE_ARRAY_COUNT(PhysioAcuteKm), H),
+		PhysioTable(PhysioAcclKm, PhysioAcclCO2, UE_ARRAY_COUNT(PhysioAcclKm), H), A);
+	const float PAO2 = FMath::Max(PIO2 - PaCO2 / 0.8f, 1.f);
+	const float PaO2 = FMath::Max(PAO2 - GapTorr, 1.f);
+	const float PH = 7.40f + FMath::Lerp(0.008f, 0.0049f, A) * (40.f - PaCO2);
+	const float PV = PaO2 * FMath::Pow(10.f, 0.40f * (PH - 7.40f) + 0.06f * FMath::LogX(10.f, 40.f / PaCO2));
+	return 100.f / (23400.f / (PV * PV * PV + 150.f * PV) + 1.f);
 }
 
 void USurvivalComponent::BeginPlay()
@@ -120,27 +176,53 @@ void USurvivalComponent::StepSimulation(float Dt)
 	// Oxygen drifts towards what the altitude and the current effort allow.
 	OxygenBottleRemaining = FMath::Max(0.f, OxygenBottleRemaining - Dt);
 	// A spare bottle goes on by itself when the air gets too thin; the player only has to carry them.
-	if (OxygenBottleRemaining <= 0.f && CarriedBottles > 0 && Oxygen < C->AutoBottleBelowOxygen)
+	const bool bPhysio = UsesPhysiology();
+	if (OxygenBottleRemaining <= 0.f && CarriedBottles > 0 && Oxygen < (bPhysio ? C->PhysioAutoBottleBelow : C->AutoBottleBelowOxygen))
 	{
 		--CarriedBottles;
 		OxygenBottleRemaining = C->OxygenBottleSeconds;
 		UE_LOG(LogSurvival, Log, TEXT("Put on a spare oxygen bottle (%d left)."), CarriedBottles);
 	}
-	const float Effort = bSprinting ? C->SprintOxygenCost : (bMoving ? C->WalkOxygenCost : 0.f);
-	float OxygenTarget = 100.f - ThinAir * ((100.f - C->RestingOxygenAtSummit) + Effort + C->UphillOxygenCostPerGrade * Grade);
-	if (OxygenBottleRemaining > 0.f)
+	float OxygenTarget = 100.f;
+	if (bPhysio)
 	{
-		OxygenTarget += C->BottleOxygenBonus;
+		// acclimatisation: the adapted altitude creeps up while you are higher (fast resting in a camp's shelter), never
+		// into the death zone, and slowly falls when you stay well below it
+		if (AdaptedAltitude < 0.f) { AdaptedAltitude = C->StartAdaptedMeters; }
+		const float Reach = FMath::Min(Elevation, C->AdaptMaxMeters);
+		if (AdaptedAltitude < Reach)
+		{
+			const float Rate = (bSheltered && !bMoving) ? C->AdaptRestMetersPerSecond : C->AdaptMovingMetersPerSecond;
+			AdaptedAltitude = FMath::Min(Reach, AdaptedAltitude + Rate * Dt);
+		}
+		else if (Elevation < AdaptedAltitude - 300.f)
+		{
+			AdaptedAltitude = FMath::Max(Elevation, AdaptedAltitude - C->AdaptLossMetersPerSecond * Dt);
+		}
+		// bottled oxygen = a lower felt altitude; effort widens the alveolar-arterial gap
+		const float Breathed = OxygenBottleRemaining > 0.f ? FMath::Max(0.f, Elevation - C->BottleAltitudeDropMeters) : Elevation;
+		const float Acclim = FMath::Clamp(1.f - (Breathed - AdaptedAltitude) / FMath::Max(C->AdaptSpanMeters, 1.f), C->PhysioMinAcclimatised, 1.f);
+		const float Gap = C->GapRestTorr + (bSprinting ? C->GapSprintTorr : (bMoving ? C->GapWalkTorr : 0.f)) + C->GapPerGradeTorr * Grade;
+		OxygenTarget = PhysioSpO2(Breathed, Acclim, Gap) + (bSheltered ? C->PhysioShelterBonus : 0.f);
 	}
-	if (bSheltered)
+	else
 	{
-		OxygenTarget += C->ShelterOxygenBonus;
+		const float Effort = bSprinting ? C->SprintOxygenCost : (bMoving ? C->WalkOxygenCost : 0.f);
+		OxygenTarget = 100.f - ThinAir * ((100.f - C->RestingOxygenAtSummit) + Effort + C->UphillOxygenCostPerGrade * Grade);
+		if (OxygenBottleRemaining > 0.f)
+		{
+			OxygenTarget += C->BottleOxygenBonus;
+		}
+		if (bSheltered)
+		{
+			OxygenTarget += C->ShelterOxygenBonus;
+		}
 	}
 	OxygenTarget = FMath::Clamp(OxygenTarget, 0.f, 100.f);
 	Oxygen = FMath::FInterpConstantTo(Oxygen, OxygenTarget, Dt, C->OxygenChangePerSecond);
 
 	// 0 while oxygen is fine, 1 at the hypoxia damage threshold.
-	const float OxygenFatigue = FMath::Clamp((C->OxygenFatigueBelow - Oxygen) / FMath::Max(C->OxygenFatigueBelow - C->OxygenDamageBelow, 1.f), 0.f, 1.f);
+	const float OxygenFatigue = FMath::Clamp((GetOxygenFatigueBelow() - Oxygen) / FMath::Max(GetOxygenFatigueBelow() - GetOxygenDamageBelow(), 1.f), 0.f, 1.f);
 
 	// 2. Update stats from activity and environment.
 	const float NeedsMultiplier = bSprinting ? C->SprintNeedsMultiplier : (bMoving ? C->WalkNeedsMultiplier : 1.f);
@@ -219,7 +301,7 @@ void USurvivalComponent::StepSimulation(float Dt)
 	const bool bStarving = Satiety <= 0.f;
 	const bool bDehydrated = Hydration <= 0.f;
 	const bool bHypothermic = BodyTemperature <= C->HypothermiaDamageBelow;
-	const bool bHypoxic = Oxygen <= C->OxygenDamageBelow;
+	const bool bHypoxic = Oxygen <= GetOxygenDamageBelow();
 
 	const float StarveDamage = ConditionDamage(StarvationTimer, bStarving, C->StarvationDamagePerSecond);
 	const float ThirstDamage = ConditionDamage(DehydrationTimer, bDehydrated, C->DehydrationDamagePerSecond);
@@ -291,7 +373,7 @@ void USurvivalComponent::UpdateWarnings()
 	WithHysteresis(ESurvivalWarning::Thirsty, Hydration / C->MaxHydration * 100.f, Enter, Exit);
 	WithHysteresis(ESurvivalWarning::LowHealth, Health / C->MaxHealth * 100.f, Enter, Exit);
 	WithHysteresis(ESurvivalWarning::Cold, BodyTemperature, C->ColdWarningEnter, C->ColdWarningExit);
-	WithHysteresis(ESurvivalWarning::LowOxygen, Oxygen, C->OxygenWarningEnter, C->OxygenWarningExit);
+	WithHysteresis(ESurvivalWarning::LowOxygen, Oxygen, UsesPhysiology() ? C->PhysioWarningEnter : C->OxygenWarningEnter, UsesPhysiology() ? C->PhysioWarningExit : C->OxygenWarningExit);
 }
 
 void USurvivalComponent::SetWarning(ESurvivalWarning Warning, bool bActive)
@@ -455,7 +537,7 @@ float USurvivalComponent::GetTerrainSpeedMultiplier() const
 	const USurvivalConfig* C = GetCfg();
 	const float Grade = GetUphillGrade() * (bOnRope ? C->RopeGradeMultiplier : 1.f);
 	const float Uphill = 1.f / (1.f + C->UphillSlowdownPerGrade * Grade);
-	const float OxygenFatigue = FMath::Clamp((C->OxygenFatigueBelow - Oxygen) / FMath::Max(C->OxygenFatigueBelow - C->OxygenDamageBelow, 1.f), 0.f, 1.f);
+	const float OxygenFatigue = FMath::Clamp((GetOxygenFatigueBelow() - Oxygen) / FMath::Max(GetOxygenFatigueBelow() - GetOxygenDamageBelow(), 1.f), 0.f, 1.f);
 	const float Weather = bOnRope ? FMath::Lerp(WeatherSpeedMultiplier, 1.f, C->RopeWeatherRelief) : WeatherSpeedMultiplier;
 	const float Snow = FMath::Lerp(1.f, C->DeepSnowSpeedMultiplier, SnowDepth);
 	return Uphill * FMath::Lerp(1.f, C->LowOxygenSpeedMultiplier, OxygenFatigue) * Weather * Snow * LoadSpeedMultiplier * FootingSpeedMultiplier;
@@ -762,6 +844,48 @@ namespace
 
 			Survival->SetColdExposure(FCString::Atof(*Args[0]));
 			Survival->DebugDump();
+		}));
+
+	// 2026-11-14: the physiology model's saturation at every camp (rest / walk / climb, with a bottle, just arrived), and
+	// the local climber's adapted altitude. ygg.Physio.Adapt <m> sets the adaptation for testing.
+	FAutoConsoleCommandWithWorldAndArgs GPhysioSweepCommand(
+		TEXT("ygg.Physio.Sweep"),
+		TEXT("ygg.Physio.Sweep - print the physiology model's SpO2 at every camp altitude."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>&, UWorld* World)
+		{
+			const USurvivalConfig* C = GetDefault<USurvivalConfig>();
+			struct FCamp { const TCHAR* Name; float M; };
+			const FCamp Camps[] = { { TEXT("Dingboche"), 4410.f }, { TEXT("Base Camp"), 5364.f }, { TEXT("Camp 1"), 6065.f }, { TEXT("Camp 2"), 6400.f },
+				{ TEXT("Camp 3"), 7160.f }, { TEXT("South Col"), 7906.f }, { TEXT("8,400 m"), 8400.f }, { TEXT("Summit"), 8849.f } };
+			UE_LOG(LogSurvival, Display, TEXT("Physio sweep (acclimatised; thresholds fatigue %.0f, warning %.0f, damage %.0f):  rest  walk  climb | bottle walk climb | arrived rest"),
+				C->PhysioFatigueBelow, C->PhysioWarningEnter, C->PhysioDamageBelow);
+			for (const FCamp& K : Camps)
+			{
+				const float Rest = USurvivalComponent::PhysioSpO2(K.M, 1.f, C->GapRestTorr);
+				const float Walk = USurvivalComponent::PhysioSpO2(K.M, 1.f, C->GapRestTorr + C->GapWalkTorr);
+				const float Climb = USurvivalComponent::PhysioSpO2(K.M, 1.f, C->GapRestTorr + C->GapSprintTorr + C->GapPerGradeTorr);
+				const float B = FMath::Max(0.f, K.M - C->BottleAltitudeDropMeters);
+				UE_LOG(LogSurvival, Display, TEXT("  %-10s %5.0f m   %5.1f %5.1f %5.1f |  %5.1f %5.1f |  %5.1f"), K.Name, K.M, Rest, Walk, Climb,
+					USurvivalComponent::PhysioSpO2(B, 1.f, C->GapRestTorr + C->GapWalkTorr), USurvivalComponent::PhysioSpO2(B, 1.f, C->GapRestTorr + C->GapSprintTorr + C->GapPerGradeTorr),
+					USurvivalComponent::PhysioSpO2(K.M, 0.f, C->GapRestTorr));
+			}
+			if (USurvivalComponent* Survival = FindLocalSurvival(World))
+			{
+				UE_LOG(LogSurvival, Display, TEXT("  you: %.0f m, adapted to %.0f m, SpO2 %.1f, model %s"), Survival->GetElevationMeters(),
+					Survival->GetAdaptedAltitude(), Survival->GetStatValue(ESurvivalStat::Oxygen), Survival->UsesPhysiology() ? TEXT("physiology") : TEXT("linear"));
+			}
+		}));
+
+	FAutoConsoleCommandWithWorldAndArgs GPhysioAdaptCommand(
+		TEXT("ygg.Physio.Adapt"),
+		TEXT("ygg.Physio.Adapt <metres> - set the altitude the local climber is adapted to."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			if (USurvivalComponent* Survival = FindLocalSurvival(World))
+			{
+				if (Args.Num() >= 1) { Survival->SetAdaptedAltitude(FCString::Atof(*Args[0])); }
+				UE_LOG(LogSurvival, Display, TEXT("Adapted to %.0f m"), Survival->GetAdaptedAltitude());
+			}
 		}));
 
 	FAutoConsoleCommandWithWorldAndArgs GSurvivalBottleCommand(

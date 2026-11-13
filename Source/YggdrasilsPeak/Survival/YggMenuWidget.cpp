@@ -304,7 +304,7 @@ void UYggMenuWidget::OnClosed()
 void UYggMenuWidget::ToStartMenu()
 {
 	if (APlayerController* PC = GetOwningPlayer()) { UGameplayStatics::SetGamePaused(PC, false); }
-	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/UI/StartMenu/L_StartMenu")));
+	UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/UI/Menu/L_MainMenu")));
 }
 
 void UYggMenuWidget::Quit()

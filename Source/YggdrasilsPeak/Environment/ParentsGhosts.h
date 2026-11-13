@@ -45,6 +45,10 @@ public:
 	/** Puts a pair ahead of the player, along their view. */
 	static AParentsGhosts* SpawnAhead(UWorld* World, float Distance = 3500.f);
 
+	/** Loads (and keeps) the ghosts' mesh, walk and material now, so a pair spawned mid-play never waits for the disk.
+	 *  Called by USanityComponent at BeginPlay. */
+	static void Preload();
+
 protected:
 
 	virtual void BeginPlay() override;

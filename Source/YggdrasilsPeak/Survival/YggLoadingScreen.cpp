@@ -132,7 +132,7 @@ void UYggLoadingScreen::OnPreLoadMap(const FString& MapName)
 	}
 	if (!Still)
 	{
-		Still = LoadObject<UTexture2D>(nullptr, TEXT("/Game/UI/StartMenu/Backdrops/T_Backdrop_01.T_Backdrop_01"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+		Still = LoadObject<UTexture2D>(nullptr, TEXT("/Game/UI/Menu/Backdrops/T_Backdrop_01.T_Backdrop_01"), nullptr, LOAD_NoWarn | LOAD_Quiet);
 	}
 	if (!Serif) { Serif = YggUI::SerifFont(); }
 	FString Place = TEXT("Dingboche");

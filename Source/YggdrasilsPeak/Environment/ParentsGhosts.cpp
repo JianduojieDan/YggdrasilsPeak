@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Environment/ParentsGhosts.h"
+#include "Survival/YggAssets.h"
 
 #include "Animation/AnimSequence.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -33,12 +34,28 @@ AParentsGhosts::AParentsGhosts()
 	Mother = Make(TEXT("Mother"), FVector(-110.f, 75.f, 0.f), 0.94f);
 }
 
+namespace
+{
+	const TCHAR* const GhostsMeshPath = TEXT("/Game/Characters/Climber_Rigged/SKM_Climber_Rigged.SKM_Climber_Rigged");
+	const TCHAR* const GhostsWalkPath = TEXT("/Game/Characters/Climber_Rigged/Anims/MF_Unarmed_Walk_Fwd_Climber.MF_Unarmed_Walk_Fwd_Climber");
+	const TCHAR* const GhostsMaterialPath = TEXT("/Game/Environment/Story/M_Ghost.M_Ghost");
+}
+
+void AParentsGhosts::Preload()
+{
+	// 2026-11-14: the ghosts appear mid-play (a frayed mind); loading these at their BeginPlay was a wait for the disk on
+	// the game thread at that very moment
+	YggAssets::Kept<USkeletalMesh>(GhostsMeshPath);
+	YggAssets::Kept<UAnimSequence>(GhostsWalkPath);
+	YggAssets::Kept<UMaterialInterface>(GhostsMaterialPath);
+}
+
 void AParentsGhosts::BeginPlay()
 {
 	Super::BeginPlay();
-	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Characters/Climber_Rigged/SKM_Climber_Rigged.SKM_Climber_Rigged"));
-	UAnimSequence* Walk = LoadObject<UAnimSequence>(nullptr, TEXT("/Game/Characters/Climber_Rigged/Anims/MF_Unarmed_Walk_Fwd_Climber.MF_Unarmed_Walk_Fwd_Climber"));
-	UMaterialInterface* Ghost = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Environment/Story/M_Ghost.M_Ghost"));
+	USkeletalMesh* Mesh = YggAssets::Kept<USkeletalMesh>(GhostsMeshPath);           // kept since Preload
+	UAnimSequence* Walk = YggAssets::Kept<UAnimSequence>(GhostsWalkPath);
+	UMaterialInterface* Ghost = YggAssets::Kept<UMaterialInterface>(GhostsMaterialPath);
 	float Offset = 0.f;
 	for (USkeletalMeshComponent* M : { Father.Get(), Mother.Get() })
 	{

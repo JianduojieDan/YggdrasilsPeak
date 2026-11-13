@@ -82,6 +82,18 @@ public:
 	/** Seconds of bottled oxygen left in the bottle being breathed (0 = not on a bottle). */
 	float GetBottleSecondsLeft() const { return OxygenBottleRemaining; }
 
+	/** Physiology model on (config, overridden by ygg.Physio 0/1). */
+	bool UsesPhysiology() const;
+	/** Oxygen thresholds of whichever model is on (the physiology model's scale is lower). */
+	float GetOxygenFatigueBelow() const;
+	float GetOxygenDamageBelow() const;
+	/** Altitude (m) the body is adapted to; saved with the game. */
+	float GetAdaptedAltitude() const { return AdaptedAltitude; }
+	void SetAdaptedAltitude(float Meters) { AdaptedAltitude = Meters; }
+	/** Arterial saturation (%) at an altitude for a breathing adaptation 0 (just arrived) .. 1 (acclimatised) and an
+	 *  alveolar-arterial gap in Torr (5 at rest, more with effort). */
+	static float PhysioSpO2(float AltitudeMeters, float Acclimatised, float GapTorr);
+
 	/** Restores the spare bottle count (checkpoint / save game). */
 	void SetCarriedBottles(int32 Count);
 
@@ -223,6 +235,8 @@ private:
 	float LastNotified[6] = { -1.f, -1.f, -1.f, -1.f, -1.f, -1.f };
 
 	float OxygenBottleRemaining = 0.f;
+	/** Altitude the body is adapted to (m); below 0 = not set yet (BeginPlay/first step uses StartAdaptedMeters). */
+	float AdaptedAltitude = -1.f;
 	/** Spare bottles in the pack; kept through death and revive. */
 	int32 CarriedBottles = 0;
 	float WeatherSpeedMultiplier = 1.f;

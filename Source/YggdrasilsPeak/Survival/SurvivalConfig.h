@@ -217,6 +217,81 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Oxygen", meta=(ClampMin="0", ClampMax="100"))
 	float AutoBottleBelowOxygen = 80.f;
 
+	// ---- Physiology (2026-11-14): saturation from the real air pressure, with acclimatisation ----
+	// barometric pressure (West 1996) -> inspired O2 -> alveolar gas equation -> arterial O2 -> Severinghaus curve
+	// (Tools/Thesis/physio_model.py, Docs/Thesis/Physiology_Model.md). Acclimatised resting values: Dingboche 84 %,
+	// Base Camp 79, Camp 2 73, South Col 61, 8,400 m 57 (Grocott 2009 measured 54), summit 52. The old linear rule read
+	// 100 % up to 4,500 m. New property names, so values edited into a config asset for the old rule do not carry over.
+
+	/** On: saturation follows the physiology model and the thresholds below. Off: the linear rule above. ygg.Physio 0/1. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	bool bPhysiologyModel = true;
+
+	/** Thresholds on the model's lower scale (fatigue from about Camp 2 walking, warning around the South Col without a
+	 *  bottle, damage only when working hard high in the death zone without one). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float PhysioFatigueBelow = 72.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float PhysioWarningEnter = 58.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float PhysioWarningExit = 63.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float PhysioDamageBelow = 45.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float PhysioAutoBottleBelow = 62.f;
+
+	/** Resting in a camp's shelter (warmth, calm breathing). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float PhysioShelterBonus = 4.f;
+
+	/** Bottled oxygen as a lower "felt" altitude (about 2-3 l/min on a mask). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float BottleAltitudeDropMeters = 2500.f;
+
+	/** Alveolar-arterial O2 gap in Torr: at rest, and added by walking / sprinting / per unit of uphill grade (effort
+	 *  widens the gap; at altitude that is what makes saturation fall when you work). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float GapRestTorr = 5.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float GapWalkTorr = 2.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float GapSprintTorr = 5.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float GapPerGradeTorr = 3.f;
+
+	/** Acclimatisation as the altitude the body is adapted to. It starts where the trek did, rises while you are higher
+	 *  (fastest resting in a camp), never above AdaptMaxMeters (nobody adapts to the death zone) and slowly falls when you
+	 *  stay well below it. AdaptSpanMeters above it you breathe like someone just arrived. Saved with the game. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float StartAdaptedMeters = 4400.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float AdaptRestMetersPerSecond = 5.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float AdaptMovingMetersPerSecond = 0.4f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float AdaptMaxMeters = 7000.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float AdaptLossMetersPerSecond = 0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology")
+	float AdaptSpanMeters = 3000.f;
+
+	/** A trekker's breathing is never as bad as someone flown in: the breathing adaptation never falls below this
+	 *  (0 = just arrived, 1 = acclimatised to where you are). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Physiology", meta=(ClampMin="0", ClampMax="1"))
+	float PhysioMinAcclimatised = 0.5f;
+
 	// ---- Deep snow ----
 
 	/** Walk/sprint speed multiplier in the deepest powder (scales from 1 on hard crust, rock and packed camp snow). */

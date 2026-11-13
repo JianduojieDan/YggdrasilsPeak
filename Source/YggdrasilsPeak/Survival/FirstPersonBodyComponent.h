@@ -25,6 +25,10 @@ class UStaticMeshComponent;
  *  rests low on the right of the view (two-bone IK, bone lengths kept, never stretched), the hand stays in line with
  *  the forearm, the fingers close around the handle and the tool sits in that fist. The left arm is raised the same way,
  *  mirrored and empty-handed, so both hands are always on screen.
+ *
+ *  Feet: the capsule stands higher on a slope than on flat ground (its round bottom meets the slope uphill of its centre),
+ *  so the world body is lowered until the lower boot reaches its ground and each boot is fitted to the ground under it
+ *  (the uphill knee bends), in the owner's own legs (FeetBody) and in what others, mirrors and the shadow see (WorldBody).
  */
 UCLASS(ClassGroup=(Survival), meta=(BlueprintSpawnableComponent))
 class YGGDRASILSPEAK_API UFirstPersonBodyComponent : public UActorComponent
@@ -225,13 +229,41 @@ public:
 	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0", ClampMax="10"))
 	float SnowContactCm = 1.5f;
 
-	/** An animated sole lower than this over the ground (cm) counts as planted; higher, it fades back to the animation. */
+	/** An animated sole lower than this over the animation's own flat floor (cm) counts as planted; higher, it fades back
+	 *  to the animation's height over the ground under it. */
 	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0"))
 	float PlantedBelowCm = 10.f;
+
+	/** A planted boot turns to lie along a slope, at most this far from level (degrees). */
+	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0", ClampMax="60"))
+	float MaxFootTiltDeg = 35.f;
+
+	/** How far the hips may come down so the lower boot reaches sloping ground (cm). */
+	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0", ClampMax="150"))
+	float MaxPelvisDropCm = 70.f;
+
+	/** How far a boot may be lifted above where the animation put it, onto higher ground (cm); past it, the lower boot hangs. */
+	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0", ClampMax="90"))
+	float MaxFootLiftCm = 50.f;
+
+	/** How quickly the hips come down when the lower boot needs to reach further, and go back up (higher = quicker).
+	 *  Down fast so no boot hangs, up gently so walking on a slope doesn't pump the body with every step. */
+	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0.5"))
+	float PelvisDropSpeed = 12.f;
+
+	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0.5"))
+	float PelvisRiseSpeed = 5.f;
+
+	/** The body others, mirrors and the shadow see becomes a posed copy whose legs are fitted to the ground like the owner's
+	 *  own (the animated world body can't bend its legs: its foot rig never ran on these bone names). Test: ygg.Feet.WorldIK. */
+	UPROPERTY(EditAnywhere, Category="First Person|Feet")
+	bool bWorldBodyFootIK = true;
 
 protected:
 
 	virtual void BeginPlay() override;
+
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 
@@ -362,12 +394,88 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UPoseableMeshComponent> FeetBody;
 
-	/** Places each planted boot of FeetBody on the ground under it (into snow, on rock). */
+	/** What others, mirrors and the shadow see in place of the world body (which keeps animating, hidden): a posed copy with
+	 *  the same fitted legs as FeetBody. Only with the template layout, where the world body itself casts the shadow. */
+	UPROPERTY(Transient)
+	TObjectPtr<UPoseableMeshComponent> WorldBody;
+
+	/** WorldBody is on screen and the world body hidden (ygg.Feet.WorldIK can switch back). */
+	bool bWorldBodyShown = false;
+	/** The world body's own shadow setting, given back when it is shown again. */
+	bool bBodyCastShadow = true;
+	/** The owner normally doesn't see the world body (first-person setup); only then does FeetBody step aside when they do. */
+	bool bBodyHiddenFromOwner = false;
+
+	/** One leg: its bones on the world body and this frame's ground under its boot (found once, used by the drop and the fit). */
+	struct FLegFit
+	{
+		int32 Thigh = INDEX_NONE;
+		int32 Knee = INDEX_NONE;
+		int32 Foot = INDEX_NONE;
+		int32 Hips = INDEX_NONE;
+
+		/** Ground found under the boot this frame / ever (the last ground is kept while the fit eases out). */
+		bool bHit = false;
+		bool bHasGround = false;
+		bool bSnow = false;
+		FVector Point = FVector::ZeroVector;
+		FVector Normal = FVector::UpVector;
+		/** How far the sole rests below the surface (cm): SnowContactCm plus the powder sink in snow, 0 on rock and props. */
+		float Contact = 0.f;
+		/** The sole's target relative to the animation's floor without the slope drop (cm, negative = lower). */
+		float Offset = 0.f;
+		/** The animated sole over the animation's own flat floor (cm): about 0 when planted, up in the swing. */
+		float AnimHeight = 0.f;
+		/** 0..1: this boot is fitted to its ground (eases out over a drop or a wall). */
+		float Alpha = 0.f;
+
+		/** For ygg.Feet.Log: the sole's gap to the surface after the fit / with the plain (lowered) animation, the lift,
+		 *  the plant weight and the tilt. */
+		float FinalGap = 0.f;
+		float AnimGap = 0.f;
+		float Lift = 0.f;
+		float Weight = 0.f;
+		float TiltDeg = 0.f;
+	};
+
+	/** [0] = left leg, [1] = right leg. */
+	FLegFit Legs[2];
+
+	/** Fits the boots of FeetBody and WorldBody to the ground found by UpdateFootDrop: one solve, written to both. */
 	void PlaceFeet();
 	float MeasureSoleHeight() const;
 	float SoleHeightCm = -1.f;
 
-	/** How far the world body is lowered so its boots meet sloping ground (cm). */
+	/** How far the world body is lowered so its lower boot meets sloping ground (cm), and where that is heading. */
 	float FootDrop = 0.f;
+	float FootDropTarget = 0.f;
+	/** 0..1: how much the feet are fitted to the ground (fades out in the air and while climbing). */
+	float FeetAlpha = 0.f;
 	void UpdateFootDrop(float DeltaTime);
+
+	/** How far the first-person body, and with it the eye on its head, comes down with the hips (cm): the drop beyond what
+	 *  flat ground gives, eased. Without it the owner's legs (FeetBody) hung below the first-person jacket on a slope.
+	 *  Template layout only. Test: ygg.Feet.ViewDrop. */
+	float ViewDrop = 0.f;
+	/** CharacterMovement's floor gap, kept from the last frame it was walking (the flat-ground part of the drop). */
+	float FloorGapCm = 0.f;
+
+	/** The world body at its base spot, minus the powder sink and the slope drop (unless climbing, which places it itself). */
+	void ApplyWorldBodyOffset();
+
+	/** Shows WorldBody or the world body (ygg.Feet.WorldIK), keeps the copy looking like it, and hides FeetBody while the
+	 *  owner sees the whole body (the third-person climbing view). */
+	void SyncWorldBody(USkeletalMeshComponent* Body);
+
+	/** Copies the animated pose onto a posable copy of the same mesh, in place (no allocation each frame). */
+	static void CopyBodyPose(UPoseableMeshComponent* Copy, USkeletalMeshComponent* Source);
+
+	/** The ClimbingComponent, if the owner has one (kept as its base class so this header needs no climbing include).
+	 *  ExpeditionComponent adds it at run time, possibly after this BeginPlay, so IsClimbing looks it up until found. */
+	mutable TWeakObjectPtr<UActorComponent> ClimbingComponent;
+	bool IsClimbing() const;
+
+	/** ygg.Feet.Log: slope, drop and each boot's gap. */
+	void LogFeet(float DeltaTime);
+	float FeetLogTimer = 0.f;
 };

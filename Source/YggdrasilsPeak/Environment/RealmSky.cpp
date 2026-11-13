@@ -2,6 +2,7 @@
 
 #include "Environment/RealmSky.h"
 #include "Environment/LightningBolt.h"
+#include "Survival/YggAssets.h"
 #include "Survival/YggSettings.h"
 
 #include "Components/AudioComponent.h"
@@ -48,6 +49,10 @@ namespace
 	constexpr int32 AlfheimBow = 11;
 	constexpr int32 NumSlots = 12;
 	constexpr double BowDistance = 100000.0;   // Tools/Realms/place_prism_bow.py: the spot is this far along the disc's +Z
+	// loaded at BeginPlay, used later (a load at first use was a wait for the disk mid-play, 2026-11-14)
+	const TCHAR* const RealmSkyCloudFlashPath = TEXT("/Game/UltraDynamicSky/Particles/Obscured_Lightning.Obscured_Lightning");
+	const TCHAR* const RealmSkyDeckMaterialPath = TEXT("/Game/Environment/Realms/M_RealmClouds.M_RealmClouds");
+	const TCHAR* const RealmSkyPlanePath = TEXT("/Engine/BasicShapes/Plane.Plane");
 	constexpr double BowSpotRadius = 12000.0;  // the bow only shows from within 120 m of the spot
 }
 
@@ -218,6 +223,13 @@ void ARealmSky::BeginPlay()
 		}
 	}
 	MakeAsgardRings();
+	// What storms and the sky use later is loaded now, with the level (2026-11-14: the first thunder, the first glow in
+	// the clouds and the cloud deck at the first tick each loaded mid-play - the game thread waited for the disk). The
+	// realms' air systems are loaded by ShowRealm(None) below (SetParticles), the bolt's material by the warm-up bolt.
+	LoadThunders();
+	if (!CloudFlashSystem) { CloudFlashSystem = LoadObject<UNiagaraSystem>(nullptr, RealmSkyCloudFlashPath); }
+	YggAssets::Kept<UMaterialInterface>(RealmSkyDeckMaterialPath);
+	YggAssets::Kept<UStaticMesh>(RealmSkyPlanePath);
 	FParse::Value(FCommandLine::Get(), TEXT("YggForecastIn="), AnnounceIn);   // captures: spin the wheel at a known moment
 	ShowRealm(ERealm::None);   // the world starts in ordinary clear weather
 	// warm the bolt's shaders: a primitive is only drawn once its pipeline is compiled (r.PSOPrecache.ProxyCreationStrategy),
@@ -545,10 +557,10 @@ void ARealmSky::ApplyLook(float DeltaSeconds, const FVector& Around)
 	// The cloud deck: the sky plugin's own clouds do not answer in this setup, so each realm's sky moves here
 	if (!Deck)
 	{
-		if (UMaterialInterface* Mat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Environment/Realms/M_RealmClouds.M_RealmClouds")))
+		if (UMaterialInterface* Mat = YggAssets::Kept<UMaterialInterface>(RealmSkyDeckMaterialPath))   // loaded at BeginPlay
 		{
 			Deck = NewObject<UStaticMeshComponent>(this);
-			Deck->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane")));
+			Deck->SetStaticMesh(YggAssets::Kept<UStaticMesh>(RealmSkyPlanePath));
 			Deck->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			Deck->SetCastShadow(false);
 			Deck->SetMobility(EComponentMobility::Movable);
@@ -782,7 +794,7 @@ void ARealmSky::DoFlash(const FStrike& S)
 	{
 		FlashLeft = FMath::Max(FlashLeft, 0.35f);
 		if (Power >= FlashPower) { FlashPower = Power; FlashDir = S.Dir; }
-		if (!CloudFlashSystem) { CloudFlashSystem = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/UltraDynamicSky/Particles/Obscured_Lightning.Obscured_Lightning")); }
+		if (!CloudFlashSystem) { CloudFlashSystem = LoadObject<UNiagaraSystem>(nullptr, RealmSkyCloudFlashPath); }   // normally loaded at BeginPlay
 		if (UNiagaraComponent* Glow = CloudFlashSystem ? UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, CloudFlashSystem, From, FRotator::ZeroRotator, FVector::OneVector, true, false) : nullptr)
 		{
 			Glow->SetVariableVec3(TEXT("Target Offset"), FVector(FMath::FRandRange(-15000.f, 15000.f), FMath::FRandRange(-15000.f, 15000.f), -(CloudBase + 40000.f)));
@@ -1105,8 +1117,12 @@ void ARealmSky::SetParticles(TObjectPtr<UNiagaraComponent>& Comp, const TCHAR* P
 		if (bOn) { Comp->Activate(true); } else { Comp->Deactivate(); }   // Deactivate lets the falling ones finish
 		return;
 	}
+	// every realm's system is loaded (and kept) the first time it passes here, shown or not: ShowRealm(None) at BeginPlay
+	// passes each one, so the load happens with the level, not when its realm first shows (2026-11-14: that was a wait
+	// for the disk on the game thread mid-play)
+	UNiagaraSystem* Loaded = YggAssets::Kept<UNiagaraSystem>(Path);
 	APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
-	UNiagaraSystem* System = bOn && Pawn ? LoadObject<UNiagaraSystem>(nullptr, Path) : nullptr;
+	UNiagaraSystem* System = bOn && Pawn ? Loaded : nullptr;
 	if (System)
 	{
 		Comp = UNiagaraFunctionLibrary::SpawnSystemAttached(System, Pawn->GetRootComponent(), NAME_None, FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::KeepRelativeOffset, false);

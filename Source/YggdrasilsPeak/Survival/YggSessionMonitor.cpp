@@ -8,6 +8,11 @@
 #include "Environment/RealmSky.h"
 #include "Async/Async.h"
 #include "Containers/Queue.h"
+#include "HAL/PlatformFileManager.h"
+#include "HAL/PlatformProcess.h"
+#include "HAL/PlatformStackWalk.h"
+#include "HAL/Runnable.h"
+#include "HAL/RunnableThread.h"
 #include "Blueprint/UserWidget.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
@@ -37,6 +42,7 @@
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "UObject/UObjectGlobals.h"
+#include <atomic>
 
 static TAutoConsoleVariable<int32> CVarMonitor(TEXT("ygg.Monitor"),
 #if UE_BUILD_SHIPPING
@@ -47,11 +53,14 @@ static TAutoConsoleVariable<int32> CVarMonitor(TEXT("ygg.Monitor"),
 	TEXT("1 = record the play session to Saved/Monitor (frames, hitches, input, log, body, screenshots), 0 = off. Read at start."));
 static TAutoConsoleVariable<float> CVarMonitorShotEvery(TEXT("ygg.Monitor.ShotEvery"), 120.f,
 	TEXT("Seconds between monitor screenshots, the first 20 s in (0 = only at big hitches). Each costs one short pause (the frame is read back)."));
+static TAutoConsoleVariable<int32> CVarMonitorStallStacks(TEXT("ygg.Monitor.StallStacks"), 1,
+	TEXT("1 = when the game thread is stuck for 0.4 s the monitor's watchdog takes its call stack (stalls.txt; the game thread is paused for a moment), 0 = only the time. Read at start."));
 
 namespace
 {
-	FString Csv(FString S) { S.ReplaceInline(TEXT("\""), TEXT("'")); S.ReplaceInline(TEXT("\n"), TEXT(" ")); S.ReplaceInline(TEXT("\r"), TEXT("")); return TEXT("\"") + S + TEXT("\""); }
-	float Ms(uint32 Cycles) { return float(FPlatformTime::ToMilliseconds(Cycles)); }
+	// prefixed: this file and YggTelemetryComponent.cpp both had a Csv(), and a unity build puts both in one translation unit
+	FString MonitorCsv(FString S) { S.ReplaceInline(TEXT("\""), TEXT("'")); S.ReplaceInline(TEXT("\n"), TEXT(" ")); S.ReplaceInline(TEXT("\r"), TEXT("")); return TEXT("\"") + S + TEXT("\""); }
+	float MonitorMs(uint32 Cycles) { return float(FPlatformTime::ToMilliseconds(Cycles)); }
 }
 
 /** Every key and mouse move, game and menus alike, before Slate routes them. */
@@ -93,6 +102,189 @@ public:
 	}
 };
 
+/** One moment the game thread was stuck: when its last frame started, how long it had been stuck so far, and its call
+ *  stack as raw addresses (the watchdog never reads symbols - that reads files - the worker names them later). */
+struct FYggMonitorStall
+{
+	static constexpr uint32 MaxDepth = 48;
+	double Beat = 0.0;
+	float StuckFor = 0.f;
+	uint32 Depth = 0;
+	uint64 Pcs[MaxDepth] = {};
+};
+
+/** The monitor's file thread (2026-11-14, after the second monitored session froze for 2-5 s at a time with the game's
+ *  CPU and the GPU idle while the separate system monitor stalled at the same moments - a storage stall):
+ *   - writes every file, so the game thread never waits on the disk (the monitor itself used to append its CSVs on the
+ *     game thread every 2 s - a disk stall became a game freeze);
+ *   - names the watchdog's stacks into stalls.txt (and a "stall" event) once the game thread runs again: symbols are
+ *     read from files and under the engine's stack-walk lock, so not while the stall (maybe a disk stall) is on;
+ *   - disk probe: once a second a 4 KB write flushed to the drive, on the project drive and on C:, timed (seconds.csv;
+ *     the slow ones also in stalls.txt and a "disk" event). */
+class FYggMonitorWorker : public FRunnable
+{
+public:
+	FYggMonitorWorker(const FString& InDir, double InStart)
+		: Dir(InDir), TempProbe(FPaths::Combine(FPlatformProcess::UserTempDir(), TEXT("ygg_disk_probe.bin"))), StartReal(InStart) {}
+
+	TQueue<TPair<FString, FString>, EQueueMode::Mpsc> Writes;   // game thread -> here: file ("!name" = start it over), text
+	TQueue<TPair<FString, FString>, EQueueMode::Spsc> Notes;    // here -> game thread: event type, detail
+	TQueue<FYggMonitorStall, EQueueMode::Spsc> Stalls;          // watchdog -> here
+	std::atomic<double> Beat{0.0};                              // when the game thread last started a frame (0 = not yet)
+	std::atomic<bool> bStop{false};
+	std::atomic<float> ProbeProjectMs{0.f}, ProbeTempMs{0.f};
+
+	virtual uint32 Run() override
+	{
+		double LastProbe = 0.0;
+		while (!bStop.load())
+		{
+			WriteQueued();
+			const double B = Beat.load();
+			if (B > 0.0 && FPlatformTime::Seconds() - B < 0.4) { NameStalls(); }
+			if (FPlatformTime::Seconds() - LastProbe >= 1.0) { LastProbe = FPlatformTime::Seconds(); Probe(); }
+			FPlatformProcess::Sleep(0.05f);
+		}
+		WriteQueued();
+		NameStalls();
+		IFileManager::Get().Delete(*(Dir / TEXT("probe.bin")), false, false, true);
+		IFileManager::Get().Delete(*TempProbe, false, false, true);
+		return 0;
+	}
+	virtual void Stop() override { bStop.store(true); }
+
+	/** Writes everything queued, in order. On this thread - on the game thread only if the thread could not be made. */
+	void WriteQueued()
+	{
+		TPair<FString, FString> W;
+		while (Writes.Dequeue(W))
+		{
+			const bool bReplace = W.Key.StartsWith(TEXT("!"));
+			Append(bReplace ? W.Key.Mid(1) : W.Key, W.Value, bReplace);
+		}
+	}
+
+private:
+	void NameStalls()
+	{
+		FYggMonitorStall S;
+		while (Stalls.Dequeue(S))
+		{
+			const double T0 = FPlatformTime::Seconds();
+			FString Text = FString::Printf(TEXT("--- t=%.3f  game thread stuck for %.2f s so far%s"), S.Beat - StartReal, S.StuckFor, LINE_TERMINATOR);
+			FString Top;
+			for (uint32 i = 0; i < S.Depth; ++i)
+			{
+				FProgramCounterSymbolInfo Info;
+				FPlatformStackWalk::ProgramCounterToSymbolInfo(S.Pcs[i], Info);
+				const FString Module = FPaths::GetCleanFilename(FString(ANSI_TO_TCHAR(Info.ModuleName)));
+				const FString Fn = Info.FunctionName[0] ? FString(ANSI_TO_TCHAR(Info.FunctionName)) : FString(TEXT("?"));
+				// module + offset stays exact without symbols (an engine without its PDBs only gives the nearest exported name)
+				Text += Info.OffsetInModule ? FString::Printf(TEXT("  %2u  %s+0x%llx  %s"), i, *Module, Info.OffsetInModule, *Fn)
+					: FString::Printf(TEXT("  %2u  0x%016llx %s  %s"), i, S.Pcs[i], *Module, *Fn);
+				if (Info.Filename[0]) { Text += FString::Printf(TEXT("  [%s:%d]"), *FPaths::GetCleanFilename(FString(ANSI_TO_TCHAR(Info.Filename))), Info.LineNumber); }
+				Text += LINE_TERMINATOR;
+				// the first frames outside the system's own waiting say what the game thread waits on
+				const bool bSystem = Module.StartsWith(TEXT("ntdll")) || Module.StartsWith(TEXT("KERNELBASE")) || Module.StartsWith(TEXT("kernel32"));
+				if (!bSystem && Top.Len() < 300) { Top += (Top.IsEmpty() ? TEXT("") : TEXT(" < ")) + Fn; }
+			}
+			if (S.Depth > 0) { Text += FString::Printf(TEXT("  (named in %.0f ms)%s"), (FPlatformTime::Seconds() - T0) * 1000.0, LINE_TERMINATOR); }
+			Append(TEXT("stalls.txt"), Text, false);
+			Notes.Enqueue(TPair<FString, FString>(TEXT("stall"), FString::Printf(TEXT("t=%.3f stuck %.2f s: %s"), S.Beat - StartReal, S.StuckFor, *Top)));
+		}
+	}
+
+	void Probe()
+	{
+		static uint8 Bytes[4096] = {};
+		for (int32 k = 0; k < 2; ++k)
+		{
+			const FString Path = k == 0 ? Dir / TEXT("probe.bin") : TempProbe;
+			const double T0 = FPlatformTime::Seconds();
+			if (IFileHandle* H = FPlatformFileManager::Get().GetPlatformFile().OpenWrite(*Path))
+			{
+				H->Write(Bytes, sizeof(Bytes));
+				H->Flush(true);
+				delete H;
+			}
+			const float Ms = float((FPlatformTime::Seconds() - T0) * 1000.0);
+			(k == 0 ? ProbeProjectMs : ProbeTempMs).store(Ms);
+			if (Ms > 150.f)
+			{
+				const FString D = FString::Printf(TEXT("t=%.3f %s write took %.0f ms"), T0 - StartReal, k == 0 ? TEXT("project drive") : TEXT("C: temp"), Ms);
+				Notes.Enqueue(TPair<FString, FString>(TEXT("disk"), D));
+				Append(TEXT("stalls.txt"), FString::Printf(TEXT("--- %s%s"), *D, LINE_TERMINATOR), false);
+			}
+		}
+	}
+
+	void Append(const FString& Name, const FString& Text, bool bReplace)
+	{
+		const double T0 = FPlatformTime::Seconds();
+		FFileHelper::SaveStringToFile(Text, *(Dir / Name), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), bReplace ? 0 : FILEWRITE_Append);
+		const double Ms = (FPlatformTime::Seconds() - T0) * 1000.0;
+		if (Ms > 200.0 && Name != TEXT("stalls.txt"))
+		{
+			Notes.Enqueue(TPair<FString, FString>(TEXT("disk"), FString::Printf(TEXT("t=%.3f writing %s took %.0f ms"), T0 - StartReal, *Name, Ms)));
+		}
+	}
+
+	FString Dir, TempProbe;
+	double StartReal;
+};
+
+/** The watchdog: its own thread, which never touches the disk (a stalled drive must not silence it, as it did when this
+ *  ran on the file thread). When the game thread has not started a frame for 0.4 s it takes the game thread's call stack
+ *  (the thread is suspended for a moment and its stack walked from memory; addresses only) and hands it to the worker,
+ *  again every 1.5 s while the stall lasts: at most 3 a stall, stacks for the first 60 of a session, the times of all.
+ *  The engine's own hitch detector is compiled out of editor builds (USE_HITCH_DETECTION needs !WITH_EDITORONLY_DATA). */
+class FYggMonitorWatchdog : public FRunnable
+{
+public:
+	FYggMonitorWatchdog(FYggMonitorWorker& InWorker, bool bInStacks) : Worker(InWorker), bStacks(bInStacks) {}
+	std::atomic<bool> bStop{false};
+
+	virtual uint32 Run() override
+	{
+		double StuckBeat = -1.0, NextTake = 0.0;
+		int32 Taken = 0, WithStack = 0;
+		while (!bStop.load())
+		{
+			const double Now = FPlatformTime::Seconds();
+			const double B = Worker.Beat.load();
+			// closing the game is one long frame of its own, not a stall
+			if (B > 0.0 && Now - B > 0.4 && !IsEngineExitRequested())
+			{
+				if (StuckBeat != B) { StuckBeat = B; Taken = 0; NextTake = Now; }
+				if (Taken < 3 && Now >= NextTake)
+				{
+					FYggMonitorStall S;
+					S.Beat = B;
+					S.StuckFor = float(Now - B);
+					if (bStacks && WithStack < 60)
+					{
+						S.Depth = FPlatformStackWalk::CaptureThreadStackBackTrace(GGameThreadId, S.Pcs, FYggMonitorStall::MaxDepth);
+						// the capture waits for the engine's stack-walk lock, which the worker holds while it names an earlier
+						// stall (seconds the first time): a stack taken after the game thread moved on is not this stall's
+						if (Worker.Beat.load() != B) { S.Depth = 0; }
+						++WithStack;
+					}
+					Worker.Stalls.Enqueue(S);
+					++Taken;
+					NextTake = Now + 1.5;
+				}
+			}
+			FPlatformProcess::Sleep(0.05f);
+		}
+		return 0;
+	}
+	virtual void Stop() override { bStop.store(true); }
+
+private:
+	FYggMonitorWorker& Worker;
+	bool bStacks;
+};
+
 void UYggSessionMonitor::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
@@ -109,17 +301,23 @@ void UYggSessionMonitor::Initialize(FSubsystemCollectionBase& Collection)
 void UYggSessionMonitor::Start()
 {
 	Dir = FPaths::ProjectSavedDir() / TEXT("Monitor") / FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
-	IFileManager::Get().MakeDirectory(*(Dir / TEXT("shots")), true);
 	StartReal = FPlatformTime::Seconds();
 	StartEpoch = (FDateTime::UtcNow() - FDateTime(1970, 1, 1)).GetTotalSeconds();      // lines the system monitor up with the frames
 	LastFlush = LastSecond = StartReal;
 	bOn = true;
-	FFileHelper::SaveStringToFile(TEXT("t,dt_ms,game_ms,render_ms,rhi_ms,gpu_ms,fps_presented,draws,prims_k,x_m,y_m,z_m,yaw,pitch,turn_dps,mouse_dx,mouse_dy,speed_ms,loading,streaming,paused,cursor,hitch\n"),
-		*(Dir / TEXT("frames.csv")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
-	FFileHelper::SaveStringToFile(TEXT("t,fps,fps_min,fps_low1,max_ms,fps_presented,mem_mb,map,alt_m,state,spo2,hr_bpm,core_c,stamina,satiety,hydration,health,sanity,exhausted,sheltered,on_rope,o2_bottle_s,bottles,storm,wind,realm,uds_time,air_c,keys,paused,cursor,focus,x_m,y_m\n"),
-		*(Dir / TEXT("seconds.csv")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
-	FFileHelper::SaveStringToFile(TEXT("t,type,detail\n"), *(Dir / TEXT("events.csv")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 	Recent.Init(16.7f, 240);
+	// every file is written by the worker (folders are made by the first write into them); the headers go first
+	Worker = MakeShared<FYggMonitorWorker>(Dir, StartReal);
+	Worker->Writes.Enqueue(TPair<FString, FString>(TEXT("!frames.csv"), TEXT("t,dt_ms,game_ms,render_ms,rhi_ms,gpu_ms,fps_presented,draws,prims_k,x_m,y_m,z_m,yaw,pitch,turn_dps,mouse_dx,mouse_dy,speed_ms,loading,streaming,paused,cursor,hitch\n")));
+	Worker->Writes.Enqueue(TPair<FString, FString>(TEXT("!seconds.csv"), TEXT("t,fps,fps_min,fps_low1,max_ms,fps_presented,mem_mb,map,alt_m,state,spo2,hr_bpm,core_c,stamina,satiety,hydration,health,sanity,exhausted,sheltered,on_rope,o2_bottle_s,bottles,storm,wind,realm,uds_time,air_c,keys,paused,cursor,focus,x_m,y_m,disk_project_ms,disk_c_ms\n")));
+	Worker->Writes.Enqueue(TPair<FString, FString>(TEXT("!events.csv"), TEXT("t,type,detail\n")));
+	WorkerThread = FRunnableThread::Create(Worker.Get(), TEXT("YggMonitorWorker"), 0, TPri_BelowNormal);
+	if (WorkerThread)
+	{
+		// normal priority: it sleeps nearly always, and must wake on time while every core is busy
+		Watchdog = MakeShared<FYggMonitorWatchdog>(*Worker, CVarMonitorStallStacks.GetValueOnGameThread() != 0);
+		WatchdogThread = FRunnableThread::Create(Watchdog.Get(), TEXT("YggMonitorWatchdog"), 0, TPri_Normal);
+	}
 	if (FSlateApplication::IsInitialized())
 	{
 		Input = MakeShared<FYggMonitorInput>(this);
@@ -137,8 +335,18 @@ void UYggSessionMonitor::Deinitialize()
 {
 	if (bOn)
 	{
+		// the watchdog first: from here on the game thread is busy closing the game, which is not a stall of the game
+		if (WatchdogThread)
+		{
+			Watchdog->Stop();
+			WatchdogThread->WaitForCompletion();
+			delete WatchdogThread;
+			WatchdogThread = nullptr;
+		}
+		Watchdog.Reset();
 		Event(TEXT("session_end"), FString::Printf(TEXT("%d frames, %d hitches, %d screenshots"), Frames, Hitches, Shots));
-		if (LogDevice.IsValid()) { GLog->RemoveOutputDevice(LogDevice.Get()); }
+		if (LogDevice.IsValid()) { GLog->RemoveOutputDevice(LogDevice.Get()); }   // the device itself lives on with this object
+		DrainWorker();                                                         // a stall named a moment ago
 		DrainLog();
 		LogCounts.ValueSort([](int32 A, int32 B) { return A > B; });
 		for (const TPair<FString, int32>& KV : LogCounts)
@@ -146,8 +354,16 @@ void UYggSessionMonitor::Deinitialize()
 			if (KV.Value > 20) { LogBuf += FString::Printf(TEXT("total %d x  %s%s"), KV.Value, *KV.Key, LINE_TERMINATOR); }
 		}
 		Flush();
+		// the worker writes what is still queued, then ends: the one time the game thread waits for the monitor's disk
+		if (WorkerThread)
+		{
+			Worker->Stop();
+			WorkerThread->WaitForCompletion();
+			delete WorkerThread;
+			WorkerThread = nullptr;
+		}
+		Worker.Reset();
 		if (Input.IsValid() && FSlateApplication::IsInitialized()) { FSlateApplication::Get().UnregisterInputPreProcessor(Input); }
-		if (LogDevice.IsValid()) { GLog->RemoveOutputDevice(LogDevice.Get()); }
 		if (ShotHandle.IsValid()) { UGameViewportClient::OnScreenshotCaptured().Remove(ShotHandle); ShotHandle.Reset(); }
 		bOn = false;
 	}
@@ -187,13 +403,13 @@ void UYggSessionMonitor::WriteSessionInfo()
 	{
 		for (const TPair<FString, FString>& KV : YggSettings::EngineState(GI->GetWorld())) { S += FString::Printf(TEXT("setting   %s = %s\n"), *KV.Key, *KV.Value); }
 	}
-	FFileHelper::SaveStringToFile(S, *(Dir / TEXT("session.txt")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	if (Worker.IsValid()) { Worker->Writes.Enqueue(TPair<FString, FString>(TEXT("!session.txt"), S)); }
 }
 
 void UYggSessionMonitor::Event(const TCHAR* Type, const FString& Detail)
 {
 	if (!bOn) { return; }
-	EventsBuf += FString::Printf(TEXT("%.3f,%s,%s\n"), FPlatformTime::Seconds() - StartReal, Type, *Csv(Detail));
+	EventsBuf += FString::Printf(TEXT("%.3f,%s,%s\n"), FPlatformTime::Seconds() - StartReal, Type, *MonitorCsv(Detail));
 }
 
 void UYggSessionMonitor::OnKey(const FString& Key, bool bDown)
@@ -227,7 +443,9 @@ void UYggSessionMonitor::Tick(float DeltaTime)
 {
 	if (!bOn) { return; }
 	const float Dt = float(FApp::GetDeltaTime());
+	if (Worker.IsValid()) { Worker->Beat.store(FPlatformTime::Seconds()); }    // the watchdog's heartbeat
 	++Frames;
+	DrainWorker();
 	DrainLog();                                                            // before the frame row: a hitch sees its log lines
 	FrameRow(Dt);
 	const double Now = FPlatformTime::Seconds();
@@ -240,7 +458,7 @@ void UYggSessionMonitor::Tick(float DeltaTime)
 void UYggSessionMonitor::FrameRow(float Dt)
 {
 	const float DtMs = Dt * 1000.f;
-	const float GameMs = Ms(GGameThreadTime), RenderMs = Ms(GRenderThreadTime), RhiMs = Ms(GRHIThreadTime), GpuMs = Ms(RHIGetGPUFrameCycles(0));
+	const float GameMs = MonitorMs(GGameThreadTime), RenderMs = MonitorMs(GRenderThreadTime), RhiMs = MonitorMs(GRHIThreadTime), GpuMs = MonitorMs(RHIGetGPUFrameCycles(0));
 	// the presented rate with DLSS frame generation, from the Streamline plugin when it is there (twice a second)
 	const double Now = FPlatformTime::Seconds();
 	if (Now - LastFg > 0.5)
@@ -391,9 +609,10 @@ void UYggSessionMonitor::SecondRow()
 		Realm = Sky->GetShownRealm() == ERealm::None ? FString(TEXT("none")) : FString(ARealmSky::GetWeatherInfo(Sky->GetShownIndex()).Name);
 		Air = Sky->GetAirTemperature(Alt);
 	}
-	SecondsBuf += FString::Printf(TEXT("%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.0f,%s,%.0f,%s,%.1f,%.0f,%.2f,%.0f,%.0f,%.0f,%.0f,%.0f,%d,%d,%d,%.0f,%d,%.2f,%.2f,%s,%.2f,%.0f,%d,%d,%d,%d,%.0f,%.0f\n"),
+	SecondsBuf += FString::Printf(TEXT("%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.0f,%s,%.0f,%s,%.1f,%.0f,%.2f,%.0f,%.0f,%.0f,%.0f,%.0f,%d,%d,%d,%.0f,%d,%.2f,%.2f,%s,%.2f,%.0f,%d,%d,%d,%d,%.0f,%.0f,%.0f,%.0f\n"),
 		T, Fps, SecMaxMs > 0.f ? 1000.f / SecMaxMs : 0.f, Low1, SecMaxMs, PresentedFps, Mem.UsedPhysical / 1048576.0, *Map, Alt, *State, Spo2, Hr, Core, Stam, Sat, Hyd, Health, Sanity,
-		Exhausted, Shelter, Rope, Bottle, Bottles, Storm, Wind, *Csv(Realm), World ? YggTime::Get(World) : 0.f, Air, SecKeys, bPaused ? 1 : 0, bCursor ? 1 : 0, FApp::HasFocus() ? 1 : 0, X, Y);
+		Exhausted, Shelter, Rope, Bottle, Bottles, Storm, Wind, *MonitorCsv(Realm), World ? YggTime::Get(World) : 0.f, Air, SecKeys, bPaused ? 1 : 0, bCursor ? 1 : 0, FApp::HasFocus() ? 1 : 0, X, Y,
+		Worker.IsValid() ? Worker->ProbeProjectMs.load() : 0.f, Worker.IsValid() ? Worker->ProbeTempMs.load() : 0.f);
 	SecFrames = 0; SecSumMs = 0.f; SecMaxMs = 0.f; SecKeys = 0; SecFrameMs.Reset();
 }
 
@@ -439,14 +658,27 @@ void UYggSessionMonitor::PollChanges()
 
 void UYggSessionMonitor::Flush()
 {
-	const auto Append = [this](FString& Buf, const TCHAR* Name)
+	// the worker writes them (the game thread never waits on the disk)
+	const auto Hand = [this](FString& Buf, const TCHAR* Name)
 	{
-		if (Buf.IsEmpty()) { return; }
-		FFileHelper::SaveStringToFile(Buf, *(Dir / Name), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append);
-		Buf.Reset();
+		if (Buf.IsEmpty() || !Worker.IsValid()) { return; }
+		const int32 Len = Buf.Len();
+		Worker->Writes.Enqueue(TPair<FString, FString>(Name, MoveTemp(Buf)));
+		Buf.Reset(Len + Len / 4);                                          // the next 2 s fit without growing frame by frame
 	};
-	Append(FramesBuf, TEXT("frames.csv"));
-	Append(SecondsBuf, TEXT("seconds.csv"));
-	Append(EventsBuf, TEXT("events.csv"));
-	Append(LogBuf, TEXT("log.txt"));
+	Hand(FramesBuf, TEXT("frames.csv"));
+	Hand(SecondsBuf, TEXT("seconds.csv"));
+	Hand(EventsBuf, TEXT("events.csv"));
+	Hand(LogBuf, TEXT("log.txt"));
+	if (!WorkerThread && Worker.IsValid())
+	{
+		Worker->WriteQueued();                                             // no thread could be made: write here, as before
+	}
+}
+
+void UYggSessionMonitor::DrainWorker()
+{
+	if (!Worker.IsValid()) { return; }
+	TPair<FString, FString> N;
+	while (Worker->Notes.Dequeue(N)) { Event(*N.Key, N.Value); }
 }

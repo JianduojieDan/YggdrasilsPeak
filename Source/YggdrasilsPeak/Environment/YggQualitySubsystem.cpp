@@ -127,6 +127,11 @@ namespace
 	void ApplyTierExtras(int32 Tier)
 	{
 		SetCVar(TEXT("r.Nanite.MaxPixelsPerEdge"), Tier <= 1 ? 2.f : 1.f);
+		// 2026-11-14: displacement tessellation (terrain and route tiles, dicing every triangle to a few pixels) was 17 of
+		// 23 GPU ms at the Icefall start (1080p High, DLSS): 39 fps there, 119 with tessellation off. Micro-triangle size
+		// by tier: Epic 4 px (as before), High 8 (65 fps there), Medium 12, Low 16 (85 fps). The relief stays, coarser.
+		static const float DicingByTier[4] = { 16.f, 12.f, 8.f, 4.f };
+		SetCVar(TEXT("r.Nanite.DicingRate"), DicingByTier[FMath::Clamp(Tier, 0, 3)]);
 	}
 }
 

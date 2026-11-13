@@ -33,6 +33,8 @@
 
 namespace
 {
+	void SnowTrailWarmGlacierMask();   // reads T_GlacierMask now instead of at the first footstep check (below)
+
 	TAutoConsoleVariable<int32> CVarSnowTrails(
 		TEXT("ygg.Snow.Trails"),
 		0,
@@ -149,6 +151,13 @@ void USnowTrailComponent::BeginPlay()
 	{
 		StepPuff = LoadObject<UNiagaraSystem>(nullptr, TEXT("/Game/Environment/Snow/NS_SnowPuff.NS_SnowPuff"));
 	}
+	// the first step's snow clumps and the glacier outlines are loaded now, with the level (2026-11-14: loading them at
+	// the first step - KickClumps, IsGlacierHard - made the game thread wait for the disk)
+	if (!ClumpMesh)
+	{
+		ClumpMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/Environment/Snow/SM_SnowClump.SM_SnowClump"));
+	}
+	SnowTrailWarmGlacierMask();
 	// Characters on other skeletons (e.g. a Mixamo-style rig retargeted from the mannequin) name their feet differently.
 	auto FindFoot = [this](FName& Bone, std::initializer_list<const TCHAR*> Alternatives)
 	{
@@ -641,6 +650,14 @@ namespace
 		}
 	};
 	FGlacierMask GlacierMask;
+
+	void SnowTrailWarmGlacierMask()
+	{
+		if (!GlacierMask.bLoaded)
+		{
+			GlacierMask.Load();
+		}
+	}
 }
 
 bool USnowTrailComponent::IsGlacierHard(const FVector& Location)
@@ -764,6 +781,76 @@ bool USnowTrailComponent::IsTerrain(const FHitResult& Hit)
 	return Asset && Asset->GetPackage()->GetFName().ToString().StartsWith(TEXT("/Game/Environment/DetailTiles/"));
 }
 
+namespace
+{
+	/** A route tile's collision sections as IsRock reads them: X = the first face after the section, Y = its material slot
+	 *  (0 snow, 1 rock). Only collision-enabled sections count, as in the face index of a trace. */
+	void SnowTrailReadSections(const UStaticMesh* Col, TArray<FIntPoint>& Out)
+	{
+		Out.Reset();
+		if (!Col || !Col->GetRenderData() || Col->GetRenderData()->LODResources.Num() == 0)
+		{
+			return;
+		}
+		int32 Faces = 0;
+		for (const FStaticMeshSection& Section : Col->GetRenderData()->LODResources[0].Sections)
+		{
+			if (!Section.bEnableCollision) { continue; }
+			Faces += Section.NumTriangles;
+			Out.Emplace(Faces, Section.MaterialIndex);
+		}
+	}
+
+	bool SnowTrailRockFace(const TArray<FIntPoint>& Sections, int32 FaceIndex)
+	{
+		for (const FIntPoint& S : Sections)
+		{
+			if (FaceIndex < S.X) { return S.Y == 1; }
+		}
+		return false;
+	}
+
+	/** Packaged game: the section table of Tile's <name>_col mesh, or null while it is still loading. The first call for a
+	 *  tile starts a background load (LoadPackageAsync: the game thread never waits for it); when it is in, the sections
+	 *  are read and the mesh itself is let go (garbage collection may drop it, the table stays). A missing _col gives an
+	 *  empty table: no rock on that tile, as before. */
+	const TArray<FIntPoint>* SnowTrailColSections(const UStaticMesh* Tile)
+	{
+		struct FEntry
+		{
+			TArray<FIntPoint> Sections;
+			bool bReady = false;
+		};
+		static TMap<TWeakObjectPtr<const UStaticMesh>, FEntry> Known;
+		const TWeakObjectPtr<const UStaticMesh> Key(Tile);
+		if (const FEntry* Entry = Known.Find(Key))
+		{
+			return Entry->bReady ? &Entry->Sections : nullptr;
+		}
+		FEntry& Added = Known.Add(Key);
+		// only route tiles have a _col beside them: any other mesh (tents, props, the editor binary's every non-tile mesh -
+		// IsRock is asked about all of them by the feet, the climb and the body probes) is never rock here, as before,
+		// without asking the loader for a package that does not exist
+		if (!Tile->GetPackage()->GetFName().ToString().StartsWith(TEXT("/Game/Environment/DetailTiles/")))
+		{
+			Added.bReady = true;
+			return &Added.Sections;
+		}
+		const FString ColName = Tile->GetName() + TEXT("_col");
+		LoadPackageAsync(Tile->GetOutermost()->GetName() + TEXT("_col"), FLoadPackageAsyncDelegate::CreateLambda(
+			[Key, ColName](const FName& PackageName, UPackage* Package, EAsyncLoadingResult::Type Result)
+			{
+				if (FEntry* Entry = Known.Find(Key))
+				{
+					const UStaticMesh* Col = (Result == EAsyncLoadingResult::Succeeded && Package) ? FindObject<UStaticMesh>(Package, *ColName) : nullptr;
+					SnowTrailReadSections(Col, Entry->Sections);
+					Entry->bReady = true;
+				}
+			}));
+		return nullptr;
+	}
+}
+
 bool USnowTrailComponent::IsRock(const FHitResult& Hit)
 {
 	const UPhysicalMaterial* Surface = Hit.PhysMaterial.Get();
@@ -783,16 +870,13 @@ bool USnowTrailComponent::IsRock(const FHitResult& Hit)
 #endif
 	if (!Col && Asset)
 	{
-		// a packaged game has no editor link to the collision mesh: it sits next to the tile as <name>_col
-		static TMap<TWeakObjectPtr<const UStaticMesh>, TWeakObjectPtr<const UStaticMesh>> ColOf;
-		if (const TWeakObjectPtr<const UStaticMesh>* Known = ColOf.Find(Asset)) { Col = Known->Get(); }
-		else
-		{
-			const FString Pkg = Asset->GetOutermost()->GetName() + TEXT("_col");
-			const FString Name = Asset->GetName() + TEXT("_col");
-			Col = LoadObject<UStaticMesh>(nullptr, *(Pkg + TEXT(".") + Name), nullptr, LOAD_NoWarn | LOAD_Quiet);
-			ColOf.Add(Asset, Col);
-		}
+		// A packaged game has no editor link to the collision mesh: it sits next to the tile as <name>_col. It is loaded in
+		// the background the first time the tile is stepped on and only its section sizes are kept (2026-11-14: the
+		// LoadObject here waited for the disk on the game thread at the first step on every tile, and the weakly held mesh
+		// was dropped by the next garbage collection - from then on that tile's rock read as snow). Until it is in, steps
+		// on that tile count as snow.
+		const TArray<FIntPoint>* Sections = SnowTrailColSections(Asset);
+		return Sections && Hit.FaceIndex >= 0 && SnowTrailRockFace(*Sections, Hit.FaceIndex);
 	}
 	if (!Col || Hit.FaceIndex < 0 || !Col->GetRenderData() || Col->GetRenderData()->LODResources.Num() == 0)
 	{

@@ -7,17 +7,35 @@
 #include "Survival/YggSaveGame.h"
 #include "Survival/YggSettings.h"
 #include "Survival/YggUIStyle.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
+#include "Containers/Ticker.h"
 #include "Engine/Texture2D.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Rendering/DrawElements.h"
+
+// (pictures of the glide: ygg.Menu.TitleFreeze 0.8, then ygg.Menu.TitleGo, then a screenshot once it has reached 0.8 s)
+static FAutoConsoleCommandWithWorld CmdMenuTitleGo(TEXT("ygg.Menu.TitleGo"),
+	TEXT("Testing: the start menu's title glides from the title page to the menu without a key (from the title page again if it has gone). ygg.Menu.TitleFreeze <s> holds it."),
+	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+	{
+		APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+		if (!PC) { return; }
+		TArray<UUserWidget*> Found;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(PC, Found, UYggStartMenuWidget::StaticClass(), true);
+		for (UUserWidget* W : Found)
+		{
+			if (UYggStartMenuWidget* M = Cast<UYggStartMenuWidget>(W); M && !M->IsClosing()) { M->TitleGo(); return; }
+		}
+	}));
 
 namespace
 {
@@ -48,15 +66,14 @@ UYggStartMenuWidget* UYggStartMenuWidget::Show(APlayerController* PC)
 
 void UYggStartMenuWidget::BuildBackground(UCanvasPanel* InCanvas)
 {
-	// our own mountain, captured in the game (Tools/UI/capture_backdrops.py); the old photo if none are there yet
+	// our own mountain, captured in the game (Tools/UI/capture_backdrops.py). 2026-11-14: moved with the start map to
+	// /Game/UI/Menu; the old StartMenu folder and its fallback photo are gone.
 	for (int32 i = 1; i <= 8; ++i)
 	{
 		const FString N = FString::Printf(TEXT("T_Backdrop_%02d"), i);
-		if (UTexture2D* T = LoadObject<UTexture2D>(nullptr, *FString::Printf(TEXT("/Game/UI/StartMenu/Backdrops/%s.%s"), *N, *N), nullptr, LOAD_NoWarn | LOAD_Quiet)) { Backdrops.Add(T); }
-	}
-	if (Backdrops.Num() == 0)
-	{
-		if (UTexture2D* T = LoadObject<UTexture2D>(nullptr, TEXT("/Game/UI/StartMenu/weichao-deng-eyn0LjpNWV4-unsplash.weichao-deng-eyn0LjpNWV4-unsplash"), nullptr, LOAD_NoWarn | LOAD_Quiet)) { Backdrops.Add(T); }
+		UTexture2D* T = LoadObject<UTexture2D>(nullptr, *FString::Printf(TEXT("/Game/UI/Menu/Backdrops/%s.%s"), *N, *N), nullptr, LOAD_NoWarn | LOAD_Quiet);
+		if (!T) { break; }          // numbered without gaps: the packaged game logged a warning for each missing 05..08
+		Backdrops.Add(T);
 	}
 	auto MakeBack = [this, InCanvas](const TCHAR* Name)
 	{
@@ -95,8 +112,35 @@ void UYggStartMenuWidget::SplashPage()
 	Pg.TitleSize = 132.f;
 	Pg.Line = TEXT("A climb beneath the World Tree");
 	Pg.bSplash = true;
-	Pg.AnyKey = [this]() { MainPage(); };
+	Pg.AnyKey = [this]() { GlideToMenu(); };
 	SetPage(Pg);
+}
+
+void UYggStartMenuWidget::GlideToMenu()
+{
+	// the title travels from the centre to its corner, then the options come in (only this once: coming back to the
+	// menu from the settings, the credits or a question, or a later visit this session, it is simply there)
+	GlideTitleIntoNextPage();
+	MainPage();
+}
+
+void UYggStartMenuWidget::TitleGo()
+{
+	if (Leaving >= 0.f) { return; }
+	// the title page fully there, as after a few seconds of waiting; the glide once it has been laid out (a few frames:
+	// it starts from where the title was last drawn)
+	if (!Page.bSplash) { SplashPage(); }
+	PageAge = FMath::Max(PageAge, 3.f);
+	TWeakObjectPtr<UYggStartMenuWidget> Self(this);
+	TSharedRef<int32> Frames = MakeShared<int32>(3);
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Self, Frames](float) -> bool
+	{
+		UYggStartMenuWidget* M = Self.Get();
+		if (!M || M->IsClosing() || M->Leaving >= 0.f || !M->Page.bSplash) { return false; }   // gone, or a key was quicker
+		if (--(*Frames) > 0) { return true; }
+		M->GlideToMenu();
+		return false;
+	}));
 }
 
 void UYggStartMenuWidget::MainPage()
@@ -104,6 +148,7 @@ void UYggStartMenuWidget::MainPage()
 	FPage Pg;
 	Pg.Title = TEXT("Yggdrasil's Peak");
 	Pg.TitleSize = 104.f;
+	Pg.bTitleTop = true;   // the title on its own at the top-left, the options lower in the column
 	Pg.Line = TEXT("“Was it worth it?”");
 	const UYggSaveGame* Save = UGameplayStatics::DoesSaveGameExist(UYggSaveGame::SlotName, 0)
 		? Cast<UYggSaveGame>(UGameplayStatics::LoadGameFromSlot(UYggSaveGame::SlotName, 0)) : nullptr;

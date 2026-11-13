@@ -11,6 +11,7 @@
 #include "Engine/StaticMeshActor.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/PackageName.h"
 #include "Sound/SoundBase.h"
 
 ASeracCollapseZone::ASeracCollapseZone()
@@ -31,6 +32,8 @@ void ASeracCollapseZone::BeginPlay()
 		for (int32 i = 1; Into.Num() < Count && i <= Count; ++i)
 		{
 			const FString N = FString::Printf(TEXT("%s_%02d"), Name, i);
+			// the sets are numbered up to a maximum; asking the loader for a missing one logs a warning in the packaged game
+			if (!FPackageName::DoesPackageExist(FString(TEXT("/Game/Audio/Ice/")) + N)) { continue; }
 			if (USoundBase* S = LoadObject<USoundBase>(nullptr, *(FString(TEXT("/Game/Audio/Ice/")) + N + TEXT(".") + N), nullptr, LOAD_NoWarn | LOAD_Quiet))
 			{
 				Into.Add(S);
