@@ -22,6 +22,8 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Environment/RealmSky.h"
 #include "Survival/YggBodyCameraModifier.h"
+#include "Survival/YggTelemetryComponent.h"
+#include "Survival/YggSettings.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
@@ -117,6 +119,12 @@ void UExpeditionComponent::BeginPlay()
 	{
 		USpindriftComponent* Spindrift = NewObject<USpindriftComponent>(GetOwner(), TEXT("Spindrift"));
 		Spindrift->RegisterComponent();
+	}
+	// The thesis data log (Development_Plan.md A3): one CSV row per second while ygg.Log is 1.
+	if (Pawn && Pawn->IsLocallyControlled() && !GetOwner()->FindComponentByClass<UYggTelemetryComponent>())
+	{
+		UYggTelemetryComponent* DataLog = NewObject<UYggTelemetryComponent>(GetOwner(), TEXT("Telemetry"));
+		DataLog->RegisterComponent();
 	}
 	// The mountain's sound around the local player: wind beds, breathing, rope clicks, distant avalanches.
 	if (Pawn && Pawn->IsLocallyControlled() && !GetOwner()->FindComponentByClass<UMountainAudioComponent>())
@@ -670,9 +678,15 @@ void UExpeditionComponent::UpdateScreenEffect(float DeltaTime)
 
 	// test switches (ygg.Body.*, -1 = off) hold a state for screenshots
 	const auto Held = [](const TCHAR* Name, float Live) { const IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(Name); return V && V->GetFloat() >= 0.f ? V->GetFloat() : Live; };
-	const float Hyp = Held(TEXT("ygg.Body.Hypoxia"), DisplayedHypoxia), Frost = Held(TEXT("ygg.Body.Frost"), DisplayedFrost);
-	const float Ex = Held(TEXT("ygg.Body.Exhaust"), DisplayedExhaust), Faint = Held(TEXT("ygg.Body.Faint"), DisplayedFaint);
-	const float Shiver = Held(TEXT("ygg.Body.Shiver"), FMath::Clamp((C->NormalTemperature - 1.2f - Core) / 2.2f, 0.f, 1.f));
+	float Hyp = Held(TEXT("ygg.Body.Hypoxia"), DisplayedHypoxia), Frost = Held(TEXT("ygg.Body.Frost"), DisplayedFrost);
+	float Ex = Held(TEXT("ygg.Body.Exhaust"), DisplayedExhaust), Faint = Held(TEXT("ygg.Body.Faint"), DisplayedFaint);
+	float Shiver = Held(TEXT("ygg.Body.Shiver"), FMath::Clamp((C->NormalTemperature - 1.2f - Core) / 2.2f, 0.f, 1.f));
+	// Settings > Game > Body effects: Full, Reduced (half strength, no shaking or swaying), Off (the HUD still warns)
+	const int32 BodyFx = YggSettings::GetInt(TEXT("BodyFx"), 0);
+	const float FxScale = BodyFx == 2 ? 0.f : BodyFx == 1 ? 0.5f : 1.f;
+	Hyp *= FxScale; Frost *= FxScale; Ex *= FxScale; Faint *= FxScale;
+	if (BodyFx != 0) { Shiver = 0.f; }
+	ShownHypoxia = Hyp; ShownFrost = Frost; ShownExhaust = Ex; ShownFaint = Faint;
 	const float HeartShown = FMath::Max(Hyp, Ex * 0.7f);
 
 	if (!BodyMID)
@@ -710,7 +724,7 @@ void UExpeditionComponent::UpdateScreenEffect(float DeltaTime)
 	if (BodyCam.IsValid())
 	{
 		BodyCam->Shiver = Shiver;
-		BodyCam->Sway = Ex * 0.8f;
+		BodyCam->Sway = BodyFx == 0 ? Ex * 0.8f : 0.f;
 		BodyCam->Pulse = Beat * HeartShown;
 	}
 

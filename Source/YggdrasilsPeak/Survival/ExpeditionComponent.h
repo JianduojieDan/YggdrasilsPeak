@@ -33,6 +33,11 @@ public:
 
 	/** Beats per minute: rest ~64, up with thin air, effort, exhaustion and cold (drives the heartbeat on the view). */
 	float GetHeartRate() const { return HeartRate; }
+	/** The body effects on the view as shown now, 0..1 (after the Body effects setting): thin air, frost, spent, faint. */
+	void GetBodyEffects(float& OutHypoxia, float& OutFrost, float& OutExhaust, float& OutFaint) const
+	{
+		OutHypoxia = ShownHypoxia; OutFrost = ShownFrost; OutExhaust = ShownExhaust; OutFaint = ShownFaint;
+	}
 
 	/** Inside this distance (cm, horizontal) of a camp's centre you are sheltered and it becomes your checkpoint. */
 	UPROPERTY(EditAnywhere, Category="Expedition", meta=(ClampMin="100"))
@@ -208,6 +213,7 @@ private:
 	float DisplayedFrost = 0.f;
 	float DisplayedExhaust = 0.f;
 	float DisplayedFaint = 0.f;
+	float ShownHypoxia = 0.f, ShownFrost = 0.f, ShownExhaust = 0.f, ShownFaint = 0.f;
 	bool bDeathZoneSaid = false;
 	float StartTime = 0.f;
 	int32 Deaths = 0;

@@ -17,11 +17,16 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Components/PointLightComponent.h"
+#include "HAL/IConsoleManager.h"
 
 namespace
 {
 	const FName CompassEvent(TEXT("CompassTwitch"));
 }
+
+static TAutoConsoleVariable<float> CVarCompassFill(TEXT("ygg.Compass.Fill"), 5.f, TEXT("Lumens of the soft light on the held compass (lights only the compass)."));
+static TAutoConsoleVariable<int32> CVarCompassShow(TEXT("ygg.Compass.Show"), 0, TEXT("1 = hold the compass up (screenshots)."));
 
 UCompassComponent::UCompassComponent()
 {
@@ -77,6 +82,26 @@ void UCompassComponent::Build()
 		C->SetVisibility(false);
 		C->RegisterComponent();
 	}
+	// its own soft light (backlog #66: in a storm, lit only by a dark sky, the dial went black): lights the compass and
+	// nothing else (lighting channel 1 only, so no pool of light on the snow), on only while it is held up
+	Case->SetLightingChannels(true, true, false);
+	Needle->SetLightingChannels(true, true, false);
+	// from the eyes, not above the lid (a light above it mirrored in the gold as a hot glare: "too shiny"), the cool
+	// colour of the storm's own light, no reflection on metal, and only a few lumens: it lifts the compass to the
+	// atmosphere around it instead of lighting it like a lamp ("let the compass fit the atmospheric light", 2026-11-13)
+	Fill = NewObject<UPointLightComponent>(Character, TEXT("HeldCompassFill"));
+	Fill->SetupAttachment(Camera);
+	Fill->SetRelativeLocation(FVector(4.f, 0.f, 4.f));
+	Fill->SetSpecularScale(0.f);
+	Fill->SetIntensityUnits(ELightUnits::Lumens);
+	Fill->SetIntensity(CVarCompassFill.GetValueOnGameThread());
+	Fill->SetAttenuationRadius(60.f);
+	Fill->SetSourceRadius(12.f);
+	Fill->SetLightColor(FLinearColor(0.72f, 0.82f, 1.f));
+	Fill->SetCastShadows(false);
+	Fill->SetLightingChannels(false, true, false);
+	Fill->SetVisibility(false);
+	Fill->RegisterComponent();
 	// the runes glow on the dial (M_CompassDial), the World Tree inside the lid with them (M_CompassLidIn)
 	const int32 RuneSlot = CaseMesh->GetMaterialIndex(TEXT("dial"));
 	if (RuneSlot != INDEX_NONE)
@@ -163,11 +188,16 @@ void UCompassComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 
 	// raise / lower
 	ShowFor = FMath::Max(0.f, ShowFor - DeltaTime);
-	const bool bShow = bRaised || ShowFor > 0.f;
+	const bool bShow = bRaised || ShowFor > 0.f || CVarCompassShow.GetValueOnGameThread() > 0;
 	RaiseAlpha = FMath::FInterpTo(RaiseAlpha, bShow ? 1.f : 0.f, DeltaTime, bShow ? 7.f : 9.f);
 	const bool bVisible = RaiseAlpha > 0.01f;
 	Case->SetVisibility(bVisible);
 	Needle->SetVisibility(bVisible);
+	if (Fill)
+	{
+		Fill->SetVisibility(bVisible);
+		Fill->SetIntensity(CVarCompassFill.GetValueOnGameThread() * RaiseAlpha);
+	}
 	if (!bVisible)
 	{
 		return;

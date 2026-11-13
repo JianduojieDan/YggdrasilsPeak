@@ -80,6 +80,9 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> RuneGlow;
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> LidGlow;
+	/** A soft light that lights only the held compass (lighting channel 1), so it reads in a dark storm (#66). */
+	UPROPERTY(Transient)
+	TObjectPtr<class UPointLightComponent> Fill;
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> ToggleAction;
 	UPROPERTY(Transient)

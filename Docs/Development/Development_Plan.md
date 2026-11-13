@@ -75,14 +75,14 @@ Honest limits, outside the 5%:
 
 | ID | Block | Phase | Days | Depends on | Status |
 |---|---|---|---|---|---|
-| A0 | Cloud backup of the whole project | A | 0.5 | — | Ready (needs your cloud space) |
-| A1 | Thesis scope page and supervisor questions | A | 0.5 | — | Ready |
-| A2 | Physiology model v1: write-up, calibration, acclimatisation | A | 4 | A1 | Waiting |
-| A3 | Physiology data logger and charts | A | 1.5 | — | Ready |
+| A0 | Cloud backup of the whole project | A | 0.5 | — | Not needed (the user handles backups) |
+| A1 | Thesis scope page and supervisor questions | A | 0.5 | — | Waiting (supervisor meeting, week of 2026-11-16) |
+| A2 | Physiology model v1: write-up, calibration, acclimatisation | A | 4 | A1 | In progress (write-up and model comparison done; calibration and game integration next) |
+| A3 | Physiology data logger and charts | A | 1.5 | — | Done |
 | A4 | Demo route 1: Dingboche → Camp 1 | A | 6 | — | Ready |
 | A5 | Demo route 2: South Col → Summit | A | 2 | — | Ready |
-| A6 | Demo blockers: floating on slopes, compass in storms, backpack | A | 3 | — | Ready |
-| A7 | Body feedback finish: heartbeat sound, breathing, comfort setting | A | 1 | — | Ready |
+| A6 | Demo blockers: floating on slopes, compass in storms, backpack | A | 3 | — | In progress (compass done; backpack waiting for the user's pick; floating next) |
+| A7 | Body feedback finish: heartbeat sound, breathing, comfort setting | A | 1 | — | In progress (Body effects setting done; heartbeat sound needs a download OK) |
 | A8 | Interim package: build, video, figures, report drafts | A | 3 | A2–A7 | Waiting |
 | A9 | Buffer and fixes | A | 2 | — | — |
 | B1 | Virtual climber (the AI approach) | B | 9 | A2, A3 | Waiting |
@@ -154,7 +154,8 @@ stretches play cleanly, and there is a build, a video and figures for the report
 - **Done when**: the write-up has references for every number; the sweep matches the calibration targets within the
   tolerance stated in the write-up; normal play still works (no instant deaths, the climb is possible).
 - **Evidence**: sweep CSV and chart; a short play log; the commit.
-- **You**: nothing required (reading the write-up is optional).
+- **You**: nothing required (reading the write-up is optional). Later: send your own published papers, to check
+  whether they can be cited here or in B2.
 - **Days**: 4 · **Depends on**: A1 (scope confirmed; can start before the supervisor answers)
 
 ### A3 · Physiology data logger and charts
@@ -404,6 +405,11 @@ commercial PC release):
 One line per finished block: date · ID · what was delivered · evidence path · commit.
 
 - 2026-11-13 · plan · Development plan v2.0 written; old plan deleted.
+- 2026-11-13 · A0 · Not needed: the user handles backups. A1 waits for the supervisor meeting next week.
+- 2026-11-13 · A3 · Data logger (UYggTelemetryComponent, ygg.Log) + Tools/Thesis/plot_session.py + telemetry_test.ps1; first session Saved/Review/telemetry_20261113_211541_*.
+- 2026-11-13 · A2 (part) · Docs/Thesis/Physiology_Model.md draft 0.1; Tools/Thesis/physio_model.py; finding: the game's linear SpO2 rule reads 100 % at Base Camp; physiology model matches Grocott 2009 at 8,400 m (PaO2 24.8 vs 24.6 Torr).
+- 2026-11-13 · A6 (part) · Compass readable in storms: compass-only fill light at the eyes, cool, no specular, 5 lm (user accepted). Backpack proposals Saved/Review/pack_proposal_1/2.png.
+- 2026-11-13 · A7 (part) · Settings > Game > Body effects Full / Reduced / Off (checked: Off shows nothing). Play_Game.bat / Play_Game_Windowed.bat added.
 
 ---
 
@@ -412,12 +418,13 @@ One line per finished block: date · ID · what was delivered · evidence path �
 | # | Date | Item | Block |
 |---|---|---|---|
 | 7, 24 | 2026-11-03 / 11-06 | Character floats on steep snow slopes | A6 |
-| 66 | 2026-11-13 | Compass unreadable in storms | A6 |
+| 66 | 2026-11-13 | Compass unreadable in storms — fixed 2026-11-13 | A6 |
 | — | 2026-11-13 | "Bad backpack": pack screen needs a new arrangement | A6 |
 | — | 2026-11-13 | No heartbeat sound | A7 |
 | 12, 32, 33 | 2026-11-03 / 11-07 | Glacier and icefall look | A4, B7 |
 | 5, 13, 18, 25 | 2026-10/11 | Hard, stepped shadows on ridges and the summit | B7 |
 | 26–31 | 2026-11-07 | Camp props and tents part buried or floating; tent collision | A4 (route 1), A5 (route 2) |
+| — | 2026-11-13 | The user has published academic work that may be citable (physiology / geodata) | A2, B2 |
 | — | 2026-11-13 | 21 icon textures in /Game/UI/HUD/Icons6 unused (halos, tree, mountain, snow, wind, summit) | Delete with the user's OK |
 
 ---
