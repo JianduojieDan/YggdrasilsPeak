@@ -36,10 +36,8 @@ UYggStartMenuWidget* UYggStartMenuWidget::Show(APlayerController* PC)
 	if (!PC) { return nullptr; }
 	UYggStartMenuWidget* W = CreateWidget<UYggStartMenuWidget>(PC, UYggStartMenuWidget::StaticClass());
 	if (!W) { return nullptr; }
-	W->VeilAlpha = 0.82f;
+	W->VeilAlpha = 0.78f;
 	W->ColumnX = 0.08f;
-	W->bHeader = false;
-	W->FooterLeft = TEXT("Everest  ·  8,849 m  ·  the South Col route");
 	// the title on its own first (once a session), then the menu
 	static bool bSplashShown = false;
 	if (!bSplashShown) { bSplashShown = true; W->SplashPage(); }
@@ -93,11 +91,9 @@ void UYggStartMenuWidget::BuildBackground(UCanvasPanel* InCanvas)
 void UYggStartMenuWidget::SplashPage()
 {
 	FPage Pg;
-	Pg.Eyebrow = TEXT("A CLIMB BENEATH THE WORLD TREE");
 	Pg.Title = TEXT("Yggdrasil's Peak");
-	Pg.TitleSize = 104.f;
-	Pg.bNineBeads = true;
-	Pg.bEmblem = true;
+	Pg.TitleSize = 132.f;
+	Pg.Line = TEXT("A climb beneath the World Tree");
 	Pg.bSplash = true;
 	Pg.AnyKey = [this]() { MainPage(); };
 	SetPage(Pg);
@@ -106,11 +102,8 @@ void UYggStartMenuWidget::SplashPage()
 void UYggStartMenuWidget::MainPage()
 {
 	FPage Pg;
-	Pg.Eyebrow = TEXT("A CLIMB BENEATH THE WORLD TREE");
 	Pg.Title = TEXT("Yggdrasil's Peak");
-	Pg.TitleSize = 82.f;
-	Pg.bNineBeads = true;
-	Pg.bEmblem = true;
+	Pg.TitleSize = 104.f;
 	Pg.Line = TEXT("“Was it worth it?”");
 	const UYggSaveGame* Save = UGameplayStatics::DoesSaveGameExist(UYggSaveGame::SlotName, 0)
 		? Cast<UYggSaveGame>(UGameplayStatics::LoadGameFromSlot(UYggSaveGame::SlotName, 0)) : nullptr;

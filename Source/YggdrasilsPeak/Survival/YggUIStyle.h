@@ -2,12 +2,11 @@
 
 #pragma once
 
-// The HUD's visual language for the menus (2026-11-11 user: the boxed menu did not belong with the HUD):
-// no cards or boxes, a soft veil over the world, ivory text with a soft halo, Alegreya serif for names, letter-spaced
-// small capitals for labels, light numerals with small units, hairlines that end in a bead.
-// 2026-11-13 (v2, "industrial level"): a frame of hairlines (header with the game's name and where you are, footer
-// with key caps), a film grain and a vignette over every menu, a selection band of soft light with a gold accent
-// bar for the chosen row, numbered options, the World Tree emblem (YggEmblem.h).
+// The UI's visual language, v3 (2026-11-13, Docs/Development/UI_Redesign_2026-11-13.md). The user found v2 "AI generated"
+// (hairline frames, tracked capitals, eyebrows, beads, numbered options, grain). v3 takes everything from the game's
+// light: selection is a word lit by sun through a cloud gap (cold blue-grey words in shadow, the chosen one warm snow-white
+// with a soft apricot glow), backgrounds are drifting cloud shadow (M_UI_CloudVeil), one voice (Alegreya, sentence case,
+// old-style figures), few words. Roboto only inside key caps.
 
 #include "CoreMinimal.h"
 #include "Blueprint/WidgetTree.h"
@@ -23,18 +22,33 @@
 #include "Engine/Font.h"
 #include "Engine/Texture2D.h"
 #include "Engine/FontFace.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Styling/CoreStyle.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace YggUI
 {
-	inline const FLinearColor Ivory(0.93f, 0.91f, 0.84f, 0.96f);
-	inline const FLinearColor Dim(0.93f, 0.91f, 0.84f, 0.66f);
-	inline const FLinearColor Faint(0.93f, 0.91f, 0.84f, 0.5f);
-	inline const FLinearColor Hair(0.93f, 0.91f, 0.84f, 0.32f);
-	inline const FLinearColor Rule(0.93f, 0.91f, 0.84f, 0.12f);     // the quiet lines between rows
-	inline const FLinearColor Gold(0.96f, 0.84f, 0.58f, 0.98f);    // the chosen one: the bead, an active tab
-	inline const FLinearColor Ember(0.88f, 0.46f, 0.34f, 0.96f);   // the death screen's accent
-	inline const FLinearColor Ink(0.004f, 0.006f, 0.012f, 1.f);      // the veil
+	inline FLinearColor Hex(uint8 R, uint8 G, uint8 B, float A = 1.f) { FLinearColor C = FLinearColor::FromSRGBColor(FColor(R, G, B)); C.A = A; return C; }
+	inline FLinearColor WithA(const FLinearColor& C, float A) { return FLinearColor(C.R, C.G, C.B, A); }
+
+	// ---- palette (sRGB hex in the comments)
+	inline const FLinearColor Snow = Hex(238, 232, 220);      // #EEE8DC lit words, titles
+	inline const FLinearColor Mist = Hex(169, 180, 194);      // #A9B4C2 words in shadow, quiet lines
+	inline const FLinearColor Shade = Hex(111, 123, 140);     // #6F7B8C hints, the far camps
+	inline const FLinearColor InkC = Hex(10, 16, 25);         // #0A1019 veils: deep night blue, never black
+	inline const FLinearColor Sun = Hex(244, 184, 132);       // #F4B884 the lit word's glow, the one number that matters
+	inline const FLinearColor EmberC = Hex(224, 122, 102);    // #E07A66 danger, sparingly
+	inline const FLinearColor Ice = Hex(156, 199, 232);       // #9CC7E8 cold
+
+	// v2 names, still used by older screens: they now speak v3's palette
+	inline const FLinearColor Ivory = Snow;
+	inline const FLinearColor Dim = Mist;
+	inline const FLinearColor Faint = Shade;
+	inline const FLinearColor Hair = WithA(Mist, 0.34f);
+	inline const FLinearColor Rule = WithA(Mist, 0.13f);
+	inline const FLinearColor Gold = Sun;
+	inline const FLinearColor Ember = EmberC;
+	inline const FLinearColor Ink = InkC;
 
 	/** A transient white texture whose alpha is A(u, v), u and v 0..1 (made once, kept for the session). */
 	inline UTexture2D* MakeAlphaTexture(int32 W, int32 H, TFunctionRef<float(float, float)> A, bool bWrap = false)
@@ -60,7 +74,7 @@ namespace YggUI
 		return T;
 	}
 
-	/** The menus' veil: dark on the left where the words are, thinning to the right so the world stays seen. */
+	/** Dark on the left where the words are, thinning to the right (the fallback when M_UI_CloudVeil is missing). */
 	inline UTexture2D* VeilTexture()
 	{
 		static TWeakObjectPtr<UTexture2D> Tex;
@@ -76,7 +90,7 @@ namespace YggUI
 		return Tex.Get();
 	}
 
-	/** A soft round glow (also the snow flakes of the start menu). */
+	/** A soft round glow; stretched, the light behind a chosen word. */
 	inline UTexture2D* GlowTexture()
 	{
 		static TWeakObjectPtr<UTexture2D> Tex;
@@ -91,7 +105,7 @@ namespace YggUI
 		return Tex.Get();
 	}
 
-	/** The selection band: soft light, strongest at the left, gone by the right end, soft at top and bottom. */
+	/** Soft light, strongest at the left, gone by the right end, soft at top and bottom (settings rows). */
 	inline UTexture2D* BandTexture()
 	{
 		static TWeakObjectPtr<UTexture2D> Tex;
@@ -121,24 +135,6 @@ namespace YggUI
 		return Tex.Get();
 	}
 
-	/** Film grain, tiles (white specks; drawn at a few percent). */
-	inline UTexture2D* GrainTexture()
-	{
-		static TWeakObjectPtr<UTexture2D> Tex;
-		if (!Tex.IsValid())
-		{
-			FRandomStream R(1913);
-			TArray<float> V;
-			V.SetNumUninitialized(128 * 128);
-			for (float& X : V) { X = FMath::Pow(R.FRand(), 2.4f); }
-			Tex = MakeAlphaTexture(128, 128, [&V](float u, float v)
-			{
-				return V[FMath::Clamp(int32(v * 128.f), 0, 127) * 128 + FMath::Clamp(int32(u * 128.f), 0, 127)];
-			}, true);
-		}
-		return Tex.Get();
-	}
-
 	/** Opaque at the top, clear at the bottom (masks for the rolling credits). */
 	inline UTexture2D* FadeTexture()
 	{
@@ -150,7 +146,7 @@ namespace YggUI
 		return Tex.Get();
 	}
 
-	inline FSlateBrush TextureBrush(UTexture2D* T, const FVector2D& Size)
+	inline FSlateBrush TextureBrush(UObject* T, const FVector2D& Size)
 	{
 		FSlateBrush B;
 		B.SetResourceObject(T);
@@ -160,33 +156,9 @@ namespace YggUI
 		return B;
 	}
 
-	/** A hairline track with a bead for a thumb. */
-	inline USlider* Slider(UWidgetTree* Tree, float W)
+	inline UFont* MakeFace(UObject* Outer, const TCHAR* FacePath)
 	{
-		USlider* S = Tree->ConstructWidget<USlider>(USlider::StaticClass());
-		FSliderStyle St = S->GetWidgetStyle();
-		FSlateBrush Bar;
-		Bar.DrawAs = ESlateBrushDrawType::Box;
-		Bar.TintColor = FSlateColor(FLinearColor::White);
-		Bar.ImageSize = FVector2D(W, 1.f);
-		St.NormalBarImage = St.HoveredBarImage = St.DisabledBarImage = Bar;
-		St.BarThickness = 1.f;
-		FSlateBrush Thumb;
-		Thumb.DrawAs = ESlateBrushDrawType::RoundedBox;
-		Thumb.OutlineSettings.RoundingType = ESlateBrushRoundingType::HalfHeightRadius;
-		Thumb.TintColor = FSlateColor(FLinearColor::White);
-		Thumb.ImageSize = FVector2D(11.f, 11.f);
-		St.NormalThumbImage = St.HoveredThumbImage = St.DisabledThumbImage = Thumb;
-		S->SetWidgetStyle(St);
-		S->SetSliderBarColor(Hair);
-		S->SetSliderHandleColor(Ivory);
-		S->SetIndentHandle(false);
-		return S;
-	}
-
-	inline UFont* MakeSerif(UObject* Outer)
-	{
-		UFontFace* Face = LoadObject<UFontFace>(nullptr, TEXT("/Game/UI/Fonts/FF_Alegreya.FF_Alegreya"));
+		UFontFace* Face = LoadObject<UFontFace>(nullptr, FacePath);
 		if (!Face) { return nullptr; }
 		UFont* F = NewObject<UFont>(Outer);
 		F->FontCacheType = EFontCacheType::Runtime;
@@ -195,21 +167,25 @@ namespace YggUI
 		Entry.Font = FFontData(Face);
 		return F;
 	}
+	inline UFont* MakeSerif(UObject* Outer) { return MakeFace(Outer, TEXT("/Game/UI/Fonts/FF_Alegreya.FF_Alegreya")); }
+	/** The hand-written face (Caveat): only the Lost death screen writes with it now. */
+	inline UFont* MakeHand(UObject* Outer) { return MakeFace(Outer, TEXT("/Game/UI/Fonts/FF_Caveat.FF_Caveat")); }
 
-	/** The hand-written face (Caveat), the journal's writing. */
-	inline UFont* MakeHand(UObject* Outer)
+	/** The one serif for the whole UI, made once and kept (HUD, menus, pack and settings share it). */
+	inline UFont* SerifFont()
 	{
-		UFontFace* Face = LoadObject<UFontFace>(nullptr, TEXT("/Game/UI/Fonts/FF_Caveat.FF_Caveat"));
-		if (!Face) { return nullptr; }
-		UFont* F = NewObject<UFont>(Outer);
-		F->FontCacheType = EFontCacheType::Runtime;
-		FTypefaceEntry& Entry = F->GetMutableInternalCompositeFont().DefaultTypeface.Fonts.AddDefaulted_GetRef();
-		Entry.Name = TEXT("Regular");
-		Entry.Font = FFontData(Face);
-		return F;
+		static TStrongObjectPtr<UFont> F;
+		if (!F.IsValid()) { if (UFont* N = MakeSerif(GetTransientPackage())) { F.Reset(N); } }
+		return F.Get();
+	}
+	inline FSlateFontInfo SerifInfo(int32 Size)
+	{
+		UFont* F = SerifFont();
+		return F ? FSlateFontInfo(F, Size, TEXT("Regular")) : FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), Size);
 	}
 
-	/** Text with the HUD's soft halo. Style: "Light" / "Regular" (Roboto), or a serif font. Track in 1/1000 em. */
+	/** Text with a soft shadow under it (readable on bright snow). Style: "Light" / "Regular" (Roboto), or a serif font.
+	 *  Track in 1/1000 em (v3 keeps it at 0 for words; only key caps are tracked). */
 	inline UTextBlock* Text(UWidgetTree* Tree, const FString& S, int32 Size, const FLinearColor& C, int32 Track = 0, const TCHAR* Style = TEXT("Light"), UFont* Serif = nullptr)
 	{
 		UTextBlock* T = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
@@ -219,8 +195,14 @@ namespace YggUI
 		T->SetText(FText::FromString(S));
 		T->SetColorAndOpacity(FSlateColor(C));
 		T->SetShadowOffset(FVector2D(0.f, 1.f));
-		T->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.02f, 0.55f));
+		T->SetShadowColorAndOpacity(FLinearColor(0.f, 0.005f, 0.02f, 0.5f));
 		return T;
+	}
+
+	/** v3's words: the serif, sentence case, no tracking. */
+	inline UTextBlock* Words(UWidgetTree* Tree, const FString& S, int32 Size, const FLinearColor& C)
+	{
+		return Text(Tree, S, Size, C, 0, TEXT("Regular"), SerifFont());
 	}
 
 	inline UImage* Line(UWidgetTree* Tree, float W, const FLinearColor& C = Hair, float H = 1.2f)
@@ -238,7 +220,7 @@ namespace YggUI
 		return I;
 	}
 
-	inline UImage* Bead(UWidgetTree* Tree, float D, const FLinearColor& C = Ivory)
+	inline UImage* Bead(UWidgetTree* Tree, float D, const FLinearColor& C = Snow)
 	{
 		UImage* I = Tree->ConstructWidget<UImage>(UImage::StaticClass());
 		FSlateBrush B;
@@ -252,8 +234,22 @@ namespace YggUI
 		return I;
 	}
 
-	/** A full-screen layer of a texture (veil, vignette, glow). */
-	inline UImage* Layer(UWidgetTree* Tree, UCanvasPanel* Canvas, UTexture2D* Tex, const FLinearColor& C, const FMargin& Offsets = FMargin(0.f))
+	/** The soft light behind a chosen word: a stretched glow. It takes no room in the layout (an 8 px box drawn scaled
+	 *  up to Size around its centre), so rows and tabs keep their own spacing; move it with SetRenderTranslation. */
+	inline UImage* Glow(UWidgetTree* Tree, const FLinearColor& C, const FVector2D& Size)
+	{
+		UImage* I = Tree->ConstructWidget<UImage>(UImage::StaticClass());
+		I->SetBrush(TextureBrush(GlowTexture(), FVector2D(8.f, 8.f)));
+		I->SetColorAndOpacity(C);
+		I->SetDesiredSizeOverride(FVector2D(8.f, 8.f));
+		I->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		I->SetRenderScale(Size / 8.f);
+		I->SetVisibility(ESlateVisibility::HitTestInvisible);
+		return I;
+	}
+
+	/** A full-screen layer of a texture or material (veil, vignette, glow). */
+	inline UImage* Layer(UWidgetTree* Tree, UCanvasPanel* Canvas, UObject* Tex, const FLinearColor& C, const FMargin& Offsets = FMargin(0.f))
 	{
 		UImage* I = Tree->ConstructWidget<UImage>(UImage::StaticClass());
 		I->SetBrush(TextureBrush(Tex, FVector2D(64.f, 64.f)));
@@ -265,50 +261,75 @@ namespace YggUI
 		return I;
 	}
 
-	/** The film grain over everything: a tiled layer a little larger than the screen, jittered each frame (Jitter). */
-	inline UImage* Grain(UWidgetTree* Tree, UCanvasPanel* Canvas, float Alpha = 0.045f)
+	/** Drifting cloud shadow over the whole screen (M_UI_CloudVeil): Left = how dark where the words stand, Right = the
+	 *  far side. Call TickVeil every frame. Falls back to the plain veil texture when the material is missing. */
+	inline UImage* CloudVeil(UWidgetTree* Tree, UCanvasPanel* Canvas, UObject* Outer, float Left, float Right, UMaterialInstanceDynamic*& OutMID)
 	{
-		UImage* I = Tree->ConstructWidget<UImage>(UImage::StaticClass());
-		FSlateBrush B = TextureBrush(GrainTexture(), FVector2D(128.f, 128.f));
-		B.Tiling = ESlateBrushTileType::Both;
-		I->SetBrush(B);
-		I->SetColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, Alpha));
-		I->SetVisibility(ESlateVisibility::HitTestInvisible);
-		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(I);
-		S->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
-		S->SetOffsets(FMargin(-128.f, -128.f, -128.f, -128.f));
-		return I;
-	}
-	inline void JitterGrain(UImage* G, float& Clock, float Dt)
-	{
-		Clock += Dt;
-		if (G && Clock > 1.f / 24.f)
+		OutMID = nullptr;
+		if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/UI/Materials/M_UI_CloudVeil.M_UI_CloudVeil"), nullptr, LOAD_NoWarn | LOAD_Quiet))
 		{
-			Clock = 0.f;
-			G->SetRenderTranslation(FVector2D(FMath::FRandRange(-64.f, 64.f), FMath::FRandRange(-64.f, 64.f)));
+			OutMID = UMaterialInstanceDynamic::Create(M, Outer);
+			OutMID->SetScalarParameterValue(TEXT("Left"), Left);
+			OutMID->SetScalarParameterValue(TEXT("Right"), Right);
+			// shadow, not fog: the thin parts of the cloud carry only a breath of cold light
+			OutMID->SetVectorParameterValue(TEXT("Ink"), InkC);
+			OutMID->SetVectorParameterValue(TEXT("Light"), Hex(34, 44, 60));
+			OutMID->SetScalarParameterValue(TEXT("Drift"), 0.14f);
+			return Layer(Tree, Canvas, OutMID, FLinearColor::White);
 		}
+		return Layer(Tree, Canvas, VeilTexture(), WithA(InkC, Left));
+	}
+	inline void TickVeil(UMaterialInstanceDynamic* MID, float Time, const FVector2D& View)
+	{
+		if (!MID) { return; }
+		MID->SetScalarParameterValue(TEXT("T"), Time);
+		MID->SetScalarParameterValue(TEXT("Aspect"), View.Y > 1.f ? float(View.X / View.Y) : 1.7778f);
 	}
 
-	/** A key cap: the key's name in a thin rounded outline. */
+	/** A hairline track with a bead for a thumb. */
+	inline USlider* Slider(UWidgetTree* Tree, float W)
+	{
+		USlider* S = Tree->ConstructWidget<USlider>(USlider::StaticClass());
+		FSliderStyle St = S->GetWidgetStyle();
+		FSlateBrush Bar;
+		Bar.DrawAs = ESlateBrushDrawType::Box;
+		Bar.TintColor = FSlateColor(FLinearColor::White);
+		Bar.ImageSize = FVector2D(W, 2.f);
+		St.NormalBarImage = St.HoveredBarImage = St.DisabledBarImage = Bar;
+		St.BarThickness = 2.f;
+		FSlateBrush Thumb;
+		Thumb.DrawAs = ESlateBrushDrawType::RoundedBox;
+		Thumb.OutlineSettings.RoundingType = ESlateBrushRoundingType::HalfHeightRadius;
+		Thumb.TintColor = FSlateColor(FLinearColor::White);
+		Thumb.ImageSize = FVector2D(12.f, 12.f);
+		St.NormalThumbImage = St.HoveredThumbImage = St.DisabledThumbImage = Thumb;
+		S->SetWidgetStyle(St);
+		S->SetSliderBarColor(WithA(Mist, 0.28f));
+		S->SetSliderHandleColor(Snow);
+		S->SetIndentHandle(false);
+		return S;
+	}
+
+	/** A key cap: the key's name, small, in a soft rounded outline. */
 	inline UBorder* KeyCap(UWidgetTree* Tree, const FString& Key, int32 Size = 9)
 	{
 		UBorder* B = Tree->ConstructWidget<UBorder>(UBorder::StaticClass());
 		FSlateBrush Br;
 		Br.DrawAs = ESlateBrushDrawType::RoundedBox;
-		Br.TintColor = FSlateColor(FLinearColor(1.f, 1.f, 1.f, 0.04f));
+		Br.TintColor = FSlateColor(WithA(Mist, 0.06f));
 		Br.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
-		Br.OutlineSettings.CornerRadii = FVector4(3.f, 3.f, 3.f, 3.f);
-		Br.OutlineSettings.Color = FSlateColor(FLinearColor(0.93f, 0.91f, 0.84f, 0.42f));
+		Br.OutlineSettings.CornerRadii = FVector4(4.f, 4.f, 4.f, 4.f);
+		Br.OutlineSettings.Color = FSlateColor(WithA(Mist, 0.45f));
 		Br.OutlineSettings.Width = 1.f;
 		B->SetBrush(Br);
 		B->SetPadding(FMargin(7.f, 3.f, 7.f, 3.f));
 		B->SetHorizontalAlignment(HAlign_Center);
 		B->SetVerticalAlignment(VAlign_Center);
-		B->SetContent(Text(Tree, Key.ToUpper(), Size, Ivory, 120, TEXT("Regular")));
+		B->SetContent(Text(Tree, Key.ToUpper(), Size, Snow, 60, TEXT("Medium")));
 		return B;
 	}
 
-	/** Key caps with what they do: { {"Esc", "Back"}, ... } */
+	/** Key caps with what they do, the words in the serif: { {"Esc", "Back"}, ... } */
 	inline UHorizontalBox* Prompts(UWidgetTree* Tree, const TArray<TPair<FString, FString>>& Items)
 	{
 		UHorizontalBox* Row = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
@@ -320,98 +341,13 @@ namespace YggUI
 			{
 				UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(KeyCap(Tree, Keys[k]));
 				S->SetVerticalAlignment(VAlign_Center);
-				S->SetPadding(FMargin(i == 0 && k == 0 ? 0.f : (k == 0 ? 26.f : 4.f), 0.f, 0.f, 0.f));
+				S->SetPadding(FMargin(i == 0 && k == 0 ? 0.f : (k == 0 ? 30.f : 4.f), 0.f, 0.f, 0.f));
 			}
-			UHorizontalBoxSlot* L = Row->AddChildToHorizontalBox(Text(Tree, Items[i].Value.ToUpper(), 9, Dim, 280, TEXT("Regular")));
+			UHorizontalBoxSlot* L = Row->AddChildToHorizontalBox(Words(Tree, Items[i].Value, 15, Mist));
 			L->SetVerticalAlignment(VAlign_Center);
-			L->SetPadding(FMargin(9.f, 1.f, 0.f, 0.f));
+			L->SetPadding(FMargin(9.f, 0.f, 0.f, 1.f));
 		}
 		return Row;
-	}
-
-	/** The menus' frame: a header hairline with the game's name and a place on the right, a footer hairline with a
-	 *  quiet line on the left; the key caps go into OutPrompts (bottom right, filled by the caller). */
-	struct FChrome
-	{
-		UTextBlock* Crumb = nullptr;
-		UTextBlock* Right = nullptr;
-		UTextBlock* Foot = nullptr;
-		UCanvasPanelSlot* PromptSlot = nullptr;
-		TArray<UWidget*> All;
-	};
-	inline FChrome Chrome(UWidgetTree* Tree, UCanvasPanel* Canvas, float X, bool bHeader)
-	{
-		FChrome C;
-		auto Place = [Canvas](UWidget* W, const FAnchors& A, const FVector2D& Align, const FVector2D& Pos)
-		{
-			UCanvasPanelSlot* S = Canvas->AddChildToCanvas(W);
-			S->SetAnchors(A);
-			S->SetAlignment(Align);
-			S->SetPosition(Pos);
-			S->SetAutoSize(true);
-			return S;
-		};
-		auto HairRule = [Tree, Canvas, X](float Top, bool bFromBottom)
-		{
-			UImage* L = Line(Tree, 8.f, FLinearColor(0.93f, 0.91f, 0.84f, 0.16f));
-			L->SetVisibility(ESlateVisibility::HitTestInvisible);
-			UCanvasPanelSlot* S = Canvas->AddChildToCanvas(L);
-			S->SetAnchors(bFromBottom ? FAnchors(X, 1.f, 1.f - X, 1.f) : FAnchors(X, 0.f, 1.f - X, 0.f));
-			S->SetOffsets(FMargin(0.f, Top, 0.f, 1.f));
-			return L;
-		};
-		if (bHeader)
-		{
-			C.Crumb = Text(Tree, TEXT("YGGDRASIL'S PEAK"), 9, Dim, 420, TEXT("Regular"));
-			Place(C.Crumb, FAnchors(X, 0.f), FVector2D(0.f, 1.f), FVector2D(0.f, 64.f));
-			C.Right = Text(Tree, TEXT(""), 9, Faint, 360, TEXT("Regular"));
-			Place(C.Right, FAnchors(1.f - X, 0.f), FVector2D(1.f, 1.f), FVector2D(0.f, 64.f));
-			C.All.Add(HairRule(76.f, false));
-			C.All.Add(C.Crumb);
-			C.All.Add(C.Right);
-		}
-		C.All.Add(HairRule(-78.f, true));
-		C.Foot = Text(Tree, TEXT(""), 9, Faint, 360, TEXT("Regular"));
-		Place(C.Foot, FAnchors(X, 1.f), FVector2D(0.f, 0.5f), FVector2D(0.f, -50.f));
-		C.All.Add(C.Foot);
-		return C;
-	}
-
-	/** hairline - bead - hairline, centred */
-	inline UHorizontalBox* Divider(UWidgetTree* Tree, float HalfW)
-	{
-		UHorizontalBox* Row = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		for (UWidget* W : { static_cast<UWidget*>(Line(Tree, HalfW)), static_cast<UWidget*>(Bead(Tree, 5.f)), static_cast<UWidget*>(Line(Tree, HalfW)) })
-		{
-			UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(W);
-			S->SetVerticalAlignment(VAlign_Center);
-			S->SetPadding(FMargin(6.f, 0.f));
-		}
-		return Row;
-	}
-
-	/** A text-only option: a bead marks the chosen / hovered one. */
-	inline UButton* Option(UWidgetTree* Tree, const FString& Label, int32 Size, UTextBlock*& OutText, UImage*& OutBead)
-	{
-		UButton* B = Tree->ConstructWidget<UButton>(UButton::StaticClass());
-		FButtonStyle St = B->GetStyle();
-		for (FSlateBrush* Br : { &St.Normal, &St.Hovered, &St.Pressed, &St.Disabled })
-		{
-			Br->DrawAs = ESlateBrushDrawType::NoDrawType;
-		}
-		St.NormalPadding = FMargin(0.f, 2.f);
-		St.PressedPadding = FMargin(0.f, 2.f);
-		B->SetStyle(St);
-		UHorizontalBox* Row = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		OutBead = Bead(Tree, 5.f);
-		OutBead->SetRenderOpacity(0.f);
-		UHorizontalBoxSlot* BS = Row->AddChildToHorizontalBox(OutBead);
-		BS->SetVerticalAlignment(VAlign_Center);
-		BS->SetPadding(FMargin(0.f, 0.f, 10.f, 0.f));
-		OutText = Text(Tree, Label.ToUpper(), Size, Dim, 260, TEXT("Regular"));
-		Row->AddChildToHorizontalBox(OutText)->SetVerticalAlignment(VAlign_Center);
-		B->SetContent(Row);
-		return B;
 	}
 
 	/** A button that draws nothing itself (its content is the look). */

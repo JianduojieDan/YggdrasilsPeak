@@ -2,6 +2,7 @@
 
 #include "Survival/SurvivalHUDWidget.h"
 #include "Survival/YggSettings.h"
+#include "Survival/YggUIStyle.h"
 #include "Survival/InventoryComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/ExpeditionComponent.h"
@@ -132,29 +133,22 @@ void USurvivalHUDWidget::CreateReadingPanel()
 	{
 		return;
 	}
+	// v3: no box - a soft pool of shadow behind the words, the page in the serif
 	ReadingPanel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("ReadingPanel"));
-	ReadingPanel->SetBrushColor(FLinearColor(0.02f, 0.025f, 0.03f, 0.78f));
-	ReadingPanel->SetPadding(FMargin(36.f, 28.f));
+	ReadingPanel->SetBrush(YggUI::TextureBrush(YggUI::GlowTexture(), FVector2D(64.f, 64.f)));
+	ReadingPanel->SetBrushColor(YggUI::WithA(YggUI::InkC, 0.9f));
+	ReadingPanel->SetPadding(FMargin(110.f, 80.f));
 
 	UVerticalBox* Box = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ReadingBox"));
 	ReadingPanel->SetContent(Box);
-	auto MakeText = [this](const TCHAR* Name, int32 Size, const FLinearColor& Colour)
-	{
-		UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Name);
-		FSlateFontInfo Font = Text->GetFont();
-		Font.Size = Size;
-		Text->SetFont(Font);
-		Text->SetColorAndOpacity(FSlateColor(Colour));
-		Text->SetAutoWrapText(true);
-		return Text;
-	};
-	ReadingTitle = MakeText(TEXT("ReadingTitle"), 22, FLinearColor(1.f, 0.86f, 0.6f, 1.f));
-	ReadingBody = MakeText(TEXT("ReadingBody"), 15, FLinearColor(0.92f, 0.94f, 0.96f, 1.f));
-	Box->AddChildToVerticalBox(ReadingTitle)->SetPadding(FMargin(0.f, 0.f, 0.f, 14.f));
+	ReadingTitle = YggUI::Words(WidgetTree, TEXT(""), 36, YggUI::Snow);
+	ReadingBody = YggUI::Words(WidgetTree, TEXT(""), 21, YggUI::Snow);
+	ReadingTitle->SetAutoWrapText(true);
+	ReadingBody->SetAutoWrapText(true);
+	Box->AddChildToVerticalBox(ReadingTitle)->SetPadding(FMargin(0.f, 0.f, 0.f, 16.f));
 	Box->AddChildToVerticalBox(ReadingBody);
-	UTextBlock* Hint = MakeText(TEXT("ReadingHint"), 11, FLinearColor(0.7f, 0.74f, 0.78f, 0.8f));
-	Hint->SetText(NSLOCTEXT("HUD", "CloseReading", "[E] close"));
-	Box->AddChildToVerticalBox(Hint)->SetPadding(FMargin(0.f, 18.f, 0.f, 0.f));
+	UTextBlock* Hint = YggUI::Words(WidgetTree, TEXT("E  to close"), 16, YggUI::Mist);
+	Box->AddChildToVerticalBox(Hint)->SetPadding(FMargin(0.f, 22.f, 0.f, 0.f));
 
 	UCanvasPanelSlot* PanelSlot = Canvas->AddChildToCanvas(ReadingPanel);
 	PanelSlot->SetAnchors(FAnchors(0.5f, 0.5f));
@@ -484,13 +478,14 @@ void USurvivalHUDWidget::UpdateDebugText(const FSurvivalSnapshot& Snapshot) cons
 
 namespace
 {
-	const FLinearColor Ivory(0.93f, 0.91f, 0.84f, 0.96f);
-	const FLinearColor Quiet(0.80f, 0.80f, 0.78f, 0.78f);
-	const FLinearColor IceBlue(0.58f, 0.76f, 0.88f, 0.95f);
-	const FLinearColor Coral(0.84f, 0.45f, 0.40f, 0.95f);
-	const FLinearColor Champagne(0.92f, 0.86f, 0.70f, 0.95f);
-	const FLinearColor Amber(0.93f, 0.68f, 0.34f, 0.96f);
-	const FLinearColor ShadowCol(0.02f, 0.03f, 0.04f, 0.45f);
+	// v3 palette (Docs/Development/UI_Redesign_2026-11-13.md), under the HUD's old names so the wheel and icons follow
+	const FLinearColor Ivory = FLinearColor::FromSRGBColor(FColor(238, 232, 220));     // Snow
+	const FLinearColor Quiet = FLinearColor::FromSRGBColor(FColor(169, 180, 194));     // Mist
+	const FLinearColor IceBlue = FLinearColor::FromSRGBColor(FColor(156, 199, 232));   // Ice
+	const FLinearColor Coral = FLinearColor::FromSRGBColor(FColor(224, 122, 102));     // Ember
+	const FLinearColor Champagne = FLinearColor::FromSRGBColor(FColor(244, 184, 132)); // Sun
+	const FLinearColor Amber = FLinearColor::FromSRGBColor(FColor(240, 170, 104));     // a warmer Sun: caution
+	const FLinearColor ShadowCol(0.0f, 0.005f, 0.02f, 0.45f);
 
 	struct FPen
 	{
@@ -523,6 +518,23 @@ namespace
 			return FM->GetMaxCharacterHeight(F) + FM->GetBaseline(F);
 		}
 		void TextOnBase(const FString& T, float X, float BaseY, const FSlateFontInfo& F, const FLinearColor& C) const { Text(T, FVector2f(X, BaseY - Base(F)), F, C); }
+		// a soft glow (the light over a bar's fill)
+		void Glow(FVector2f Pos, FVector2f Size, const FLinearColor& C) const
+		{
+			static FSlateBrush B;
+			if (!B.GetResourceObject()) { B = YggUI::TextureBrush(YggUI::GlowTexture(), FVector2D(64.f, 64.f)); }
+			FSlateDrawElement::MakeBox(Out, Layer, G.ToPaintGeometry(FVector2f(Size), FSlateLayoutTransform(Pos)), &B, ESlateDrawEffect::None, A(C));
+		}
+		// a key's name in a soft outline, its right edge at Right; returns its width
+		float Key(const FString& K, FVector2f Right, const FSlateFontInfo& F) const
+		{
+			const float W = Width(K, F) + 10.f, H = 16.f;
+			const FVector2f TL = Right - FVector2f(W, 0.f);
+			const TArray<FVector2f> Box = { TL, TL + FVector2f(W, 0.f), TL + FVector2f(W, H), TL + FVector2f(0.f, H), TL };
+			FSlateDrawElement::MakeLines(Out, Layer + 1, G.ToPaintGeometry(), Box, ESlateDrawEffect::None, A(FLinearColor(Quiet.R, Quiet.G, Quiet.B, 0.45f)), true, 1.f);
+			FSlateDrawElement::MakeText(Out, Layer + 1, G.ToPaintGeometry(FVector2f(1.f, 1.f), FSlateLayoutTransform(TL + FVector2f(5.f, 1.f))), K, F, ESlateDrawEffect::None, A(Ivory));
+			return W;
+		}
 		// a small filled bead (the end of a bar)
 		void Bead(FVector2f At, float R, const FLinearColor& C) const { Circle(At, R * 0.5f, C, R); }
 		void TextCentre(const FString& T, FVector2f Mid, const FSlateFontInfo& F, const FLinearColor& C) const { Text(T, Mid - FVector2f(Width(T, F) * 0.5f, 0.f), F, C); }
@@ -608,6 +620,19 @@ namespace
 		return F;
 	}
 	FLinearColor WithA(const FLinearColor& C, float A) { return FLinearColor(C.R, C.G, C.B, A); }
+	/** "VEIL OF MIST" -> "Veil of Mist" (the weather names are stored in capitals; v3 has no shouting). */
+	FString HudTitle(const FString& In)
+	{
+		TArray<FString> W;
+		In.ToLower().ParseIntoArray(W, TEXT(" "));
+		for (int32 i = 0; i < W.Num(); ++i)
+		{
+			if (W[i].Len() == 0) { continue; }
+			if (i > 0 && (W[i] == TEXT("of") || W[i] == TEXT("the") || W[i] == TEXT("and"))) { continue; }
+			W[i][0] = FChar::ToUpper(W[i][0]);
+		}
+		return FString::Join(W, TEXT(" "));
+	}
 }
 
 void USurvivalHUDWidget::TickWheel(float DeltaTime)
@@ -683,87 +708,97 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 	const FVector2f Size = FVector2f(G.GetLocalSize());
 	// Settings > Game > HUD hidden: the readings fade out; warnings, messages and the weather wheel stay
 	const FPen P{ G, Out, Layer, YggSettings::HudHidden() ? 0.f : 1.f };
-	// Light numerals, letter-spaced small capitals for labels (LetterSpacing is in 1/1000 em)
-	const FSlateFontInfo Num = Sans(TEXT("Light"), 21, 10);
-	const FSlateFontInfo Unit = Sans(TEXT("Light"), 11, 120);
-	const FSlateFontInfo Label = Sans(TEXT("Regular"), 10, 200);
-	const FSlateFontInfo KeyF = Sans(TEXT("Regular"), 9, 100);
-	const FSlateFontInfo Line = Sans(TEXT("Light"), 13, 60);
-	const auto Serif = [this](int32 Sz, int32 Track) { FSlateFontInfo F = SerifFont ? FSlateFontInfo(SerifFont.Get(), Sz, TEXT("Regular")) : Sans(TEXT("Regular"), Sz); F.LetterSpacing = Track; return F; };
-	const float M = 52.f;
+	const float M = 56.f;
 	const float Pulse = IconPulse;
-	const FLinearColor Hair = WithA(Ivory, 0.16f);
+	// v3 (2026-11-13): the menus' language - the serif in sentence case, soft lines of light, words for what the body
+	// lacks; no tracked capitals, no outline icons in the readings (the weather keeps its icons)
+	const FSlateFontInfo Word = YggUI::SerifInfo(18);
+	const FSlateFontInfo Small = YggUI::SerifInfo(17);
+	const FSlateFontInfo BigNum = YggUI::SerifInfo(42);
+	const FSlateFontInfo BigUnit = YggUI::SerifInfo(21);
+	const FSlateFontInfo MidNum = YggUI::SerifInfo(23);
+	const FSlateFontInfo KeyF = Sans(TEXT("Medium"), 9, 60);
+	const FSlateFontInfo Line = YggUI::SerifInfo(19);
+	const auto Serif = [](int32 Sz, int32 Track) { (void)Track; return YggUI::SerifInfo(Sz); };
 
-	// Bottom left: condition. Three hairlines of one length, each ending in a small bead; the icon carries the alarm.
-	const float BarX = M + 28.f, BarW = 196.f, RowH = 22.f;
-	float Y = Size.Y - M - 30.f - RowH * 3.f;
-	const struct { EIcon Icon; float V; FLinearColor C; bool bAlert; } Bars[3] = {
-		{ EIcon::Thermo, Paint.Temperature, IceBlue, WarningStrength[3] > 0.5f },
-		{ EIcon::Heart, Paint.Health, Coral, Paint.bLowHealth },
-		{ EIcon::Bolt, Paint.Stamina, Champagne, Paint.bExhausted } };
+	// Bottom left: the body - three words and three soft lines of light. A line running low turns ember and pulses.
+	const float LabelW = 84.f, BarW = 170.f, RowH = 27.f;
+	float Y = Size.Y - M - RowH * 3.f - 34.f;
+	// a soft pool of shadow in each lower corner, so the words read on bright snow (no boxes)
+	const FLinearColor Pool(0.004f, 0.006f, 0.012f, 0.5f);
+	P.Glow(FVector2f(M + 130.f, Size.Y - 128.f) - FVector2f(380.f, 190.f), FVector2f(760.f, 380.f), Pool);   // centred on the body lines
+	P.Glow(FVector2f(Size.X - M - 130.f, Size.Y - 104.f) - FVector2f(400.f, 200.f), FVector2f(800.f, 400.f), Pool);   // and on the readings
+	const struct { const TCHAR* Name; float V; FLinearColor C; bool bAlert; } Bars[3] = {
+		{ TEXT("warmth"), Paint.Temperature, IceBlue, WarningStrength[3] > 0.5f },
+		{ TEXT("body"), Paint.Health, Ivory, Paint.bLowHealth },
+		{ TEXT("breath"), Paint.Stamina, Champagne, Paint.bExhausted } };
 	for (const auto& B : Bars)
 	{
 		const float V = FMath::Clamp(B.V, 0.f, 1.f);
-		const FLinearColor C = B.bAlert ? WithA(B.C, B.C.A * Pulse) : WithA(B.C, 0.9f);
-		const float Mid = Y + 8.f;
-		DrawIcon(P, B.Icon, FVector2f(M + 8.f, Mid), 7.f, B.bAlert ? C : WithA(Ivory, 0.82f), 1.3f);
-		P.Rect(FVector2f(BarX, Mid - 0.5f), FVector2f(BarW, 1.f), Hair);
-		P.Rect(FVector2f(BarX, Mid - 0.75f), FVector2f(BarW * V, 1.5f), C);
-		if (V > 0.01f) { P.Bead(FVector2f(BarX + BarW * V, Mid), 3.2f, C); }
-		// quarter marks on the track, barely there: a reading, not a gauge
-		for (int32 k = 1; k < 4; ++k) { P.Rect(FVector2f(BarX + BarW * k * 0.25f - 0.5f, Mid + 3.f), FVector2f(1.f, 2.f), WithA(Ivory, 0.14f)); }
+		const FLinearColor C = B.bAlert ? WithA(Coral, 0.5f + 0.5f * Pulse) : WithA(B.C, 0.92f);
+		const float Mid = Y + 13.f;
+		P.TextOnBase(B.Name, M, Mid + 5.f, Word, B.bAlert ? C : WithA(Quiet, 0.88f));
+		const float BX = M + LabelW;
+		P.Rect(FVector2f(BX, Mid - 1.f), FVector2f(BarW, 2.f), WithA(Quiet, 0.16f));
+		if (V > 0.005f)
+		{
+			P.Glow(FVector2f(BX - 8.f, Mid - 8.f), FVector2f(BarW * V + 16.f, 16.f), WithA(C, 0.22f));
+			P.Rect(FVector2f(BX, Mid - 1.f), FVector2f(BarW * V, 2.f), C);
+		}
 		Y += RowH;
 	}
-	// Food, water, cold: barely there until they matter
-	const struct { EIcon Icon; int32 W; } Needs[3] = { { EIcon::Bowl, 1 }, { EIcon::Drop, 2 }, { EIcon::Flake, 3 } };
-	float NX = M + 8.f;
-	for (const auto& N : Needs)
+	// what the body lacks, in words, only while it matters
 	{
-		const float S = WarningStrength[N.W];
-		DrawIcon(P, N.Icon, FVector2f(NX, Y + 12.f), 7.f, FMath::Lerp(WithA(Quiet, 0.32f), WithA(Amber, Pulse), S), 1.2f);
-		NX += 28.f;
+		float LX = M;
+		const struct { int32 W; const TCHAR* Name; } Lacks[3] = { { 1, TEXT("hungry") }, { 2, TEXT("thirsty") }, { 3, TEXT("freezing") } };
+		for (const auto& L : Lacks)
+		{
+			const float S = WarningStrength[L.W];
+			if (S <= 0.02f) { continue; }
+			P.TextOnBase(L.Name, LX, Y + 20.f, Word, WithA(Coral, S * (0.55f + 0.45f * Pulse)));
+			LX += P.Width(L.Name, Word) + 18.f;
+		}
 	}
 
-	// Bottom right: altitude | oxygen as one quiet line of light numerals, small units on the same baseline
+	// Bottom right: the altitude is the hero (serif numerals, the unit small on their baseline); oxygen under it in
+	// words, its number warming to ember as it falls; then the state of things and what is in the pack, quietly
 	const FSurvivalSnapshot& Snap = Paint.Snapshot;
 	const float RX = Size.X - M;
-	const float BaseY = Size.Y - M - 52.f;
-	const FLinearColor O2 = Snap.Oxygen > 72.f ? Ivory : Snap.Oxygen > 55.f ? Amber : Coral;
+	const float BaseY = Size.Y - M - 74.f;
 	float X = RX;
-	const auto Right = [&](const FString& T, const FSlateFontInfo& F, const FLinearColor& C) { X -= P.Width(T, F); P.TextOnBase(T, X, BaseY, F, C); };
-	Right(TEXT("%"), Unit, WithA(O2, 0.7f)); X -= 3.f;
-	Right(FString::FromInt(FMath::RoundToInt(Snap.Oxygen)), Num, O2); X -= 13.f;
-	DrawIcon(P, EIcon::Lungs, FVector2f(X - 4.f, BaseY - 7.f), 7.5f, O2, 1.3f); X -= 26.f;
-	P.Rect(FVector2f(X, BaseY - 15.f), FVector2f(1.f, 16.f), WithA(Ivory, 0.28f)); X -= 16.f;
-	Right(YggSettings::AltitudeUnit(), Unit, WithA(Ivory, 0.7f)); X -= 4.f;
-	Right(YggSettings::AltitudeNumber(Snap.ElevationMeters), Num, Ivory); X -= 14.f;
-	DrawIcon(P, EIcon::Mountain, FVector2f(X - 6.f, BaseY - 7.f), 7.5f, Ivory, 1.3f);
-
-	// Under it, small letter-spaced capitals: state and load, then supplies with their keys
+	const auto Right = [&](const FString& T, const FSlateFontInfo& F, const FLinearColor& C, float BY) { X -= P.Width(T, F); P.TextOnBase(T, X, BY, F, C); };
+	Right(YggSettings::AltitudeUnit(), BigUnit, WithA(Quiet, 0.9f), BaseY); X -= 7.f;
+	Right(YggSettings::AltitudeNumber(Snap.ElevationMeters), BigNum, Ivory, BaseY);
+	const FLinearColor O2 = Snap.Oxygen > 72.f ? Ivory : Snap.Oxygen > 55.f ? Amber : Coral;
+	X = RX;
+	const float OY = BaseY + 30.f;
+	Right(TEXT("%"), Small, WithA(Quiet, 0.85f), OY); X -= 2.f;
+	Right(FString::FromInt(FMath::RoundToInt(Snap.Oxygen)), MidNum, O2, OY); X -= 9.f;
+	Right(TEXT("oxygen"), Small, WithA(Quiet, 0.85f), OY);
 	TArray<FString> Line2;
-	if (Snap.bSheltered) { Line2.Add(TEXT("CAMP")); }
-	if (Snap.bOnRope) { Line2.Add(TEXT("ROPE")); }
-	if (Snap.OxygenBottleSeconds > 0.f) { Line2.Add(FString::Printf(TEXT("BOTTLE %d:%02d"), FMath::FloorToInt(Snap.OxygenBottleSeconds / 60.f), FMath::FloorToInt(Snap.OxygenBottleSeconds) % 60)); }
-	if (Snap.CarriedBottles > 0) { Line2.Add(FString::Printf(TEXT("SPARE %d"), Snap.CarriedBottles)); }
-	Line2.Add(FString::Printf(TEXT("%d / %d KG"), Paint.PackKg, Paint.PackMax));
-	float RY = BaseY + 12.f;
-	P.TextRight(FString::Join(Line2, TEXT("   ·   ")), FVector2f(RX, RY), Label, WithA(Ivory, 0.82f));
-	RY += 19.f;
+	if (Snap.bSheltered) { Line2.Add(TEXT("at camp")); }
+	if (Snap.bOnRope) { Line2.Add(TEXT("on the rope")); }
+	if (Snap.OxygenBottleSeconds > 0.f) { Line2.Add(FString::Printf(TEXT("bottle %d:%02d"), FMath::FloorToInt(Snap.OxygenBottleSeconds / 60.f), FMath::FloorToInt(Snap.OxygenBottleSeconds) % 60)); }
+	if (Snap.CarriedBottles > 0) { Line2.Add(FString::Printf(TEXT("%d spare"), Snap.CarriedBottles)); }
+	Line2.Add(FString::Printf(TEXT("%d / %d kg"), Paint.PackKg, Paint.PackMax));
+	float RY = OY + 8.f;
+	P.TextRight(FString::Join(Line2, TEXT("   ·   ")), FVector2f(RX, RY), Small, WithA(Quiet, 0.82f));
+	RY += 26.f;
 	float ItemX = RX;
 	const auto Item = [&](const FString& Key, const FString& Main)
 	{
-		P.TextRight(Key, FVector2f(ItemX, RY + 1.f), KeyF, WithA(Ivory, 0.5f)); ItemX -= P.Width(Key, KeyF) + 6.f;
-		P.TextRight(Main, FVector2f(ItemX, RY), Label, WithA(Ivory, 0.82f)); ItemX -= P.Width(Main, Label);
+		ItemX -= P.Key(Key, FVector2f(ItemX, RY + 2.f), KeyF) + 7.f;
+		P.TextRight(Main, FVector2f(ItemX, RY), Small, WithA(Quiet, 0.82f)); ItemX -= P.Width(Main, Small);
 	};
-	Item(YggSettings::KeyLabel(TEXT("Drink"), EKeys::Two), FString::Printf(TEXT("WATER %d"), Paint.Water));
-	P.TextRight(TEXT("·"), FVector2f(ItemX - 12.f, RY), Label, WithA(Quiet, 0.5f)); ItemX -= 28.f;
-	Item(YggSettings::KeyLabel(TEXT("Eat"), EKeys::One), FString::Printf(TEXT("FOOD %d"), Paint.Food));
+	Item(YggSettings::KeyLabel(TEXT("Drink"), EKeys::Two), FString::Printf(TEXT("water %d"), Paint.Water));
+	ItemX -= 22.f;
+	Item(YggSettings::KeyLabel(TEXT("Eat"), EKeys::One), FString::Printf(TEXT("food %d"), Paint.Food));
 
-	// Bottom centre: subtitle, light and spaced, no box
+	// Bottom centre: a subtitle, in the serif, no box
 	if (Paint.SubtitleTimer > 0.f && !Paint.Subtitle.IsEmpty())
 	{
 		const FPen PS{ G, Out, Layer, FMath::Clamp(Paint.SubtitleTimer * 2.f, 0.f, 1.f) };
-		PS.TextCentre(Paint.Subtitle, FVector2f(Size.X * 0.5f, Size.Y - M - 46.f), Sans(TEXT("Light"), 16, 40), Ivory);
+		PS.TextCentre(Paint.Subtitle, FVector2f(Size.X * 0.5f, Size.Y - M - 52.f), YggUI::SerifInfo(23), Ivory);
 	}
 
 	// After the reveal: a small icon and the countdown above the readings, nothing else
@@ -771,11 +806,11 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 	{
 		const FString T = FString::Printf(TEXT("%d:%02d"), FMath::FloorToInt(Paint.ForecastSeconds / 60.f), FMath::FloorToInt(Paint.ForecastSeconds) % 60);
 		const bool bDanger = ARealmSky::GetWeatherInfo(Paint.ForecastIndex).Danger > 0;
-		const FLinearColor C = bDanger ? Amber : WithA(Quiet, 0.75f);
-		const float TY = BaseY - 50.f;
-		const FSlateFontInfo CF = Sans(TEXT("Light"), 13, 80);
+		const FLinearColor C = bDanger ? Amber : WithA(Quiet, 0.8f);
+		const float TY = BaseY - 74.f;
+		const FSlateFontInfo CF = YggUI::SerifInfo(19);
 		P.TextRight(T, FVector2f(RX, TY), CF, C);
-		DrawIcon(P, WeatherIcons[Paint.ForecastIndex], FVector2f(RX - P.Width(T, CF) - 16.f, TY + 9.f), 7.f, C, 1.2f);
+		DrawIcon(P, WeatherIcons[Paint.ForecastIndex], FVector2f(RX - P.Width(T, CF) - 16.f, TY + 12.f), 7.f, C, 1.2f);
 	}
 
 	// Presentation only: the weather now, under the top edge, in the serif
@@ -784,7 +819,7 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 		const FPen DC{ G, Out, Layer, Paint.DemoCaption * 0.9f };
 		const FVector2f At(Size.X * 0.5f, 44.f + (1.f - Paint.DemoCaption) * -8.f);
 		DrawIcon(DC, WeatherIcons[Paint.DemoIndex], At, 12.f, Ivory, 1.3f);
-		DC.TextCentre(ARealmSky::GetWeatherInfo(Paint.DemoIndex).Name, At + FVector2f(0.f, 20.f), Serif(17, 160), Ivory);
+		DC.TextCentre(HudTitle(ARealmSky::GetWeatherInfo(Paint.DemoIndex).Name), At + FVector2f(0.f, 20.f), Serif(22, 0), Ivory);
 	}
 
 	// Top centre: the wheel. Its centre stays above the screen: a shallow arc, three sectors, one fixed pointer.
@@ -848,10 +883,10 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 				W.Circle(IconAt, FMath::Lerp(15.f, 34.f, Land), WithA(Verdict, 0.45f * (1.f - Land)), 1.f);
 			}
 			// the small spaced name gives way to the serif one, so the type never jumps
-			const FSlateFontInfo Small = Sans(TEXT("Regular"), 9, 240), Large = Serif(20, 140);
+			const FSlateFontInfo WSmall = YggUI::SerifInfo(15), Large = YggUI::SerifInfo(25);
 			const float SmallAlpha = bChosen ? 1.f - Stopped : 1.f;
-			if (SmallAlpha > 0.f) { W.TextCentre(ARealmSky::GetWeatherInfo(i).Name, IconAt + FVector2f(0.f, 24.f), Small, WithA(C, C.A * SmallAlpha)); }
-			if (bChosen && Stopped > 0.f) { W.TextCentre(Info.Name, IconAt + FVector2f(0.f, 21.f), Large, WithA(C, Stopped)); }
+			if (SmallAlpha > 0.f) { W.TextCentre(HudTitle(ARealmSky::GetWeatherInfo(i).Name), IconAt + FVector2f(0.f, 24.f), WSmall, WithA(C, C.A * SmallAlpha)); }
+			if (bChosen && Stopped > 0.f) { W.TextCentre(HudTitle(Info.Name), IconAt + FVector2f(0.f, 21.f), Large, WithA(C, Stopped)); }
 			// dividers: only a short mark on the outer ring, so the sectors stay open (no boxes)
 			const FVector2f DD = Arm(Delta + Sector * 0.5f);
 			W.Line({ Hub + DD * (Rad - 14.f), Hub + DD * Rad }, WithA(Ivory, 0.34f * Edge), 1.f);

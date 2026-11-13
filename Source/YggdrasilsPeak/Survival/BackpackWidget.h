@@ -14,7 +14,8 @@ class UTextBlock;
 class UTexture2D;
 class UBackpackWidget;
 
-/** One thing in (or on) the pack: a sketch the player can point at and click. */
+/** One thing in the kit: its studio render lying on the cloth, with its shadow, the light that finds it when chosen,
+ *  and how many there are. The player can point at it and click it. */
 UCLASS()
 class YGGDRASILSPEAK_API UBackpackItemWidget : public UUserWidget
 {
@@ -23,18 +24,28 @@ class YGGDRASILSPEAK_API UBackpackItemWidget : public UUserWidget
 public:
 
 	void Setup(UBackpackWidget* InOwner, FName InItem, UTexture2D* Texture, float Size);
+	/** How many there are: "×3" under it when more than one; none left = the thing stays, faded. */
+	void SetCount(int32 Count, bool bCounted);
 
 	FName Item;
 	float Size = 100.f;
 	float BaseAngle = 0.f;
 	FVector2D Home = FVector2D::ZeroVector;
-	/** Seconds after opening when it drops into the pack. */
+	/** Seconds after opening when it is laid down. */
 	float Delay = 0.f;
 	bool bHovered = false;
+	bool bEmpty = false;
+	float ShadowY = 0.15f;
 	float HoverAlpha = 0.f;
 
 	UPROPERTY()
 	TObjectPtr<UImage> Image;
+	UPROPERTY()
+	TObjectPtr<UImage> Shadow;
+	UPROPERTY()
+	TObjectPtr<UImage> Light;
+	UPROPERTY()
+	TObjectPtr<UTextBlock> CountText;
 
 protected:
 
@@ -49,11 +60,12 @@ private:
 };
 
 /**
- *  The pack screen (Tab): the world blurs and darkens, the expedition pack rises and its front panel folds open,
- *  and what you carry drops into it as field-journal sketches cut out of paper (Tools/UI: the items are drawn from
- *  the game's own meshes). Point at a thing to read its page on the right; click to eat, drink or open an oxygen
- *  bottle. The porter's spring scale on the left shows the load against the comfortable and maximum weight.
- *  The world keeps running while the pack is open. Built in code; art in /Game/UI/Backpack, fonts in /Game/UI/Fonts.
+ *  The pack screen (Tab), v3 (2026-11-13, user: the old paper cut-outs "did not fit" the menus and HUD): the world
+ *  blurs and goes dark, and your kit lies laid out on a canvas tarp in a pool of lamplight (M_UI_Cloth) - the items'
+ *  studio renders from the game's own meshes (Saved/ItemIcons/render -> /Game/UI/Backpack/Kit, Tools/UI). The thing
+ *  you point at lifts and is lit like a chosen menu word; its page stands on the right in the menus' serif; the load
+ *  is a line of light under its weight on the left. Click (or Enter) to eat, drink or open an oxygen bottle.
+ *  The world keeps running while the pack is open. Built in code.
  */
 UCLASS()
 class YGGDRASILSPEAK_API UBackpackWidget : public UUserWidget
@@ -147,10 +159,19 @@ private:
 	TObjectPtr<UFont> HandFont;
 	UPROPERTY()
 	TObjectPtr<UFont> BookFont;
+	UPROPERTY()
+	TObjectPtr<class UMaterialInstanceDynamic> ClothMID;
+	UPROPERTY()
+	TObjectPtr<UImage> ScaleComfort;
+	UPROPERTY()
+	TObjectPtr<UImage> ScaleGlow;
+	UPROPERTY()
+	TObjectPtr<UWidget> PromptRow;
 
 	FName Selected;
 	float OpenTime = 0.f;
 	float CloseTime = 0.f;
+	float PageAge = 0.f;     // since the page last changed (it comes in again)
 	bool bClosing = false;
 	float ShownLoadKg = 0.f;
 	float ScaleVelocity = 0.f;

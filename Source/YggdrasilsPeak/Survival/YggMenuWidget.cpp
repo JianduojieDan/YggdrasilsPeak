@@ -7,6 +7,7 @@
 #include "Survival/SurvivalComponent.h"
 #include "Survival/YggSettings.h"
 #include "Survival/YggFateFx.h"
+#include "Survival/YggUIStyle.h"
 #include "Environment/RouteLandmark.h"
 #include "GameFramework/Character.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
@@ -47,13 +48,27 @@ namespace
 
 	FString Duration(int32 Seconds)
 	{
-		return FString::Printf(TEXT("%d|h  %02d|m"), Seconds / 3600, (Seconds / 60) % 60);
+		return FString::Printf(TEXT("%d h %02d m"), Seconds / 3600, (Seconds / 60) % 60);
 	}
 
 	FString Height(float Meters)
 	{
-		return FString::Printf(TEXT("%s|%s"), *YggSettings::AltitudeNumber(Meters), YggSettings::AltitudeUnit());
+		return FString::Printf(TEXT("%s %s"), *YggSettings::AltitudeNumber(Meters), YggSettings::AltitudeUnit());
 	}
+
+	FString MenuFalls(int32 N)
+	{
+		return N == 0 ? FString(TEXT("no falls")) : FString::Printf(TEXT("%d %s"), N, N == 1 ? TEXT("fall") : TEXT("falls"));
+	}
+
+	/** A camp's name without the height it carries in brackets ("Camp 3 (7160 m)"). */
+	FString MenuCamp(const FString& In)
+	{
+		const int32 Br = In.Find(TEXT("("));
+		return Br > 0 ? In.Left(Br).TrimStartAndEnd() : In;
+	}
+
+	const TCHAR* MenuDot = TEXT("   ·   ");
 
 	/** One word for what took you, from the cause line. */
 	FString DeathWord(const FString& Cause)
@@ -85,13 +100,10 @@ TArray<FString> UYggMenuWidget::GetCredits()
 UYggMenuBase::FPage UYggMenuWidget::CreditsPage()
 {
 	FPage C;
-	C.Eyebrow = TEXT("THOSE WHO MADE THE WAY");
 	C.Title = TEXT("Credits");
-	C.TitleSize = 64.f;
-	C.Context = TEXT("Credits");
+	C.TitleSize = 72.f;
 	C.Body = GetCredits();
 	C.bRoll = true;
-	C.bNumbered = false;
 	return C;
 }
 
@@ -141,17 +153,17 @@ void UYggMenuWidget::PausePage()
 	const USurvivalComponent* Body = P ? P->FindComponentByClass<USurvivalComponent>() : nullptr;
 	const UExpeditionComponent* Exp = P ? P->FindComponentByClass<UExpeditionComponent>() : nullptr;
 	FPage Pg;
-	Pg.Eyebrow = TEXT("THE MOUNTAIN WAITS");
-	Pg.Title = TEXT("Paused");
-	Pg.TitleSize = 64.f;
-	Pg.Context = TEXT("Paused");
-	// the right-hand panel: where you are, the route of camps (the highest at the top), the time on the mountain
-	if (Body)
+	// the title is where you are: the last camp you reached (the start below the first), the facts under it
+	Pg.Eyebrow = TEXT("Paused");
+	Pg.Title = Exp && Exp->GetLastCamp() ? MenuCamp(Exp->GetLastCamp()->LandmarkName) : FString(TEXT("On the mountain"));
+	Pg.TitleSize = 76.f;
 	{
-		Pg.Side.Add(TEXT("#Altitude"));
-		Pg.Side.Add(TEXT("=") + Height(Body->GetElevationMeters()));
-		Pg.Side.Add(TEXT("~Above the sea"));
+		TArray<FString> F;
+		if (Body) { F.Add(Height(Body->GetElevationMeters())); }
+		if (Exp) { F.Add(Duration(Exp->GetPlaySeconds()) + TEXT(" on the mountain")); F.Add(MenuFalls(Exp->GetDeaths())); }
+		Pg.Facts = FString::Join(F, MenuDot);
 	}
+	// the right-hand panel: the route of camps, the highest at the top, a light where you are
 	if (Exp && Body && Exp->GetCamps().Num() > 0)
 	{
 		Pg.Side.Add(TEXT("#The route"));
@@ -165,32 +177,22 @@ void UYggMenuWidget::PausePage()
 			const float M = Body->GetElevationMeters() + (C->GetActorLocation().Z - FeetZ) / 100.f;
 			const int32 State = i == Here ? 2 : (Here >= 0 && i < Here ? 1 : 0);
 			// the names carry their height in brackets ("Camp 3 (7160 m)"): ours is measured, show the name alone
-			FString Name = C->LandmarkName;
-			const int32 Br = Name.Find(TEXT("("));
-			if (Br > 0) { Name = Name.Left(Br).TrimStartAndEnd(); }
-			Pg.Side.Add(FString::Printf(TEXT("@%s|%s %s|%d"), *Name, *YggSettings::AltitudeNumber(FMath::RoundToFloat(M / 10.f) * 10.f), YggSettings::AltitudeUnit(), State));
+			Pg.Side.Add(FString::Printf(TEXT("@%s|%s %s|%d"), *MenuCamp(C->LandmarkName), *YggSettings::AltitudeNumber(FMath::RoundToFloat(M / 10.f) * 10.f), YggSettings::AltitudeUnit(), State));
 		}
-		Pg.Side.Add(TEXT("-"));
-	}
-	if (Exp)
-	{
-		Pg.Side.Add(TEXT("#On the mountain"));
-		Pg.Side.Add(TEXT("=") + Duration(Exp->GetPlaySeconds()));
-		Pg.Side.Add(Exp->GetDeaths() == 0 ? FString(TEXT("~No falls yet")) : FString::Printf(TEXT("~%d %s"), Exp->GetDeaths(), Exp->GetDeaths() == 1 ? TEXT("fall") : TEXT("falls")));
 	}
 	Pg.Options = {
-		{ TEXT("Resume"), TEXT("Back to the climb"), [this]() { Resume(); } },
-		{ TEXT("Settings"), TEXT("Game, graphics, sound, controls"), [this]()
+		{ TEXT("Resume"), FString(), [this]() { Resume(); } },
+		{ TEXT("Settings"), FString(), [this]()
 			{
 				APlayerController* C = GetOwningPlayer();
 				RemoveFromParent();
 				USettingsWidget::Open(C, [C]() { UYggMenuWidget::TogglePause(C); });
 			} },
-		{ TEXT("Start menu"), TEXT("Your climb is kept at the last camp"), [this]()
+		{ TEXT("Start menu"), FString(), [this]()
 			{
 				Confirm(TEXT("Leave the mountain?"), TEXT("Your climb is kept at the last camp you reached."), TEXT("Leave"), TEXT("Stay"), [this]() { ToStartMenu(); });
 			} },
-		{ TEXT("Quit"), TEXT("To the desktop"), [this]()
+		{ TEXT("Quit"), FString(), [this]()
 			{
 				Confirm(TEXT("Quit the game?"), TEXT("Your climb is kept at the last camp you reached."), TEXT("Quit"), TEXT("Stay"), [this]() { Quit(); });
 			} },
@@ -203,12 +205,10 @@ void UYggMenuWidget::Confirm(const FString& InTitle, const FString& InLine, cons
 {
 	const FPage Before = Page;
 	FPage Pg;
-	Pg.Eyebrow = Before.Eyebrow;
-	Pg.Context = Before.Context;
 	Pg.Tone = Before.Tone;
 	Pg.Title = InTitle;
 	Pg.Line = InLine;
-	Pg.TitleSize = 46.f;
+	Pg.TitleSize = 56.f;
 	Pg.bModal = true;
 	Pg.Options = { { Yes, FString(), OnYes }, { No, FString(), [this, Before]() { SetPage(Before); } } };
 	Pg.Selected = 1;   // the safe answer first
@@ -220,17 +220,12 @@ void UYggMenuWidget::ShowSummit(APlayerController* PC, int32 Seconds, int32 Deat
 {
 	UYggMenuWidget* W = Make(PC);
 	if (!W) { return; }
-	W->HeaderRight = TEXT("Everest  ·  above the clouds");
-	W->FooterLeft = TEXT("Everest  ·  8,849 m  ·  the roof of the world");
 	FPage& Pg = W->SummitSaved;
-	Pg.Eyebrow = TEXT("EIGHT THOUSAND EIGHT HUNDRED AND FORTY-NINE METRES");
 	Pg.Title = TEXT("The Summit");
-	Pg.TitleSize = 84.f;
+	Pg.TitleSize = 104.f;
 	Pg.Tone = ETone::Summit;
-	Pg.bEmblem = true;
-	Pg.Context = TEXT("The summit");
 	Pg.Line = TEXT("You stand beneath the World Tree.");
-	Pg.Stats = { { Height(8849.f), TEXT("ALTITUDE") }, { Duration(Seconds), TEXT("ON THE MOUNTAIN") }, { FString::Printf(TEXT("%d|"), Deaths), TEXT("FALLS") } };
+	Pg.Facts = Height(8849.f) + MenuDot + Duration(Seconds) + TEXT(" on the mountain") + MenuDot + MenuFalls(Deaths);
 	Pg.Options = {
 		{ TEXT("Stay at the summit"), FString(), [W]() { W->CloseMenu(); } },
 		{ TEXT("Credits"), FString(), [W]()
@@ -253,29 +248,24 @@ void UYggMenuWidget::ShowDeath(APlayerController* PC, const FText& Cause, float 
 {
 	UYggMenuWidget* W = Make(PC);
 	if (!W) { return; }
-	W->HeaderRight = TEXT("Everest  ·  South Col route");
-	W->FooterLeft = TEXT("Your pack is as you left it at the camp");
 	FPage Pg;
-	Pg.Eyebrow = TEXT("THE MOUNTAIN KEEPS ITS OWN");
 	Pg.Title = DeathWord(Cause.ToString());
-	Pg.TitleSize = 92.f;
 	Pg.Tone = ETone::Death;
-	// each way of dying has its own art (YggFateFx) and its own accent
+	// each way of dying turns the world its own way (M_PP_Fate) and lights the chosen word in its own colour
 	struct FFateLook { const TCHAR* Word; uint8 Fate; FLinearColor Accent; };
 	static const FFateLook Looks[] = {
-		{ TEXT("Frozen"), YggFate::Frozen, FLinearColor(0.68f, 0.84f, 0.98f, 0.96f) },
-		{ TEXT("Breathless"), YggFate::Breathless, FLinearColor(0.66f, 0.72f, 0.98f, 0.96f) },
-		{ TEXT("Fallen"), YggFate::Fallen, FLinearColor::Transparent },
-		{ TEXT("Buried"), YggFate::Buried, FLinearColor(0.9f, 0.95f, 1.f, 0.96f) },
-		{ TEXT("Parched"), YggFate::Parched, FLinearColor(0.92f, 0.7f, 0.42f, 0.96f) },
-		{ TEXT("Starved"), YggFate::Starved, FLinearColor(0.76f, 0.75f, 0.72f, 0.96f) },
-		{ TEXT("Lost"), YggFate::Lost, FLinearColor(0.9f, 0.9f, 0.86f, 0.96f) },
+		{ TEXT("Frozen"), YggFate::Frozen, YggUI::Ice },
+		{ TEXT("Breathless"), YggFate::Breathless, YggUI::Hex(170, 182, 240) },
+		{ TEXT("Fallen"), YggFate::Fallen, YggUI::Hex(150, 196, 230) },
+		{ TEXT("Buried"), YggFate::Buried, YggUI::Hex(225, 234, 246) },
+		{ TEXT("Parched"), YggFate::Parched, YggUI::Hex(236, 184, 120) },
+		{ TEXT("Starved"), YggFate::Starved, YggUI::Hex(200, 196, 188) },
+		{ TEXT("Lost"), YggFate::Lost, YggUI::Hex(228, 228, 222) },
 	};
 	for (const FFateLook& F : Looks) { if (Pg.Title == F.Word) { Pg.Fate = F.Fate; Pg.AccentOverride = F.Accent; } }
-	Pg.TitleSize = 104.f;
-	Pg.Context = TEXT("Lost on the mountain");
+	Pg.TitleSize = 120.f;
 	Pg.Line = Cause.ToString();
-	Pg.Stats = { { Height(Meters), TEXT("WHERE YOU FELL") }, { Duration(Seconds), TEXT("ON THE MOUNTAIN") }, { FString::Printf(TEXT("%d|"), Deaths), TEXT("FALLS") } };
+	Pg.Facts = Height(Meters) + MenuDot + Duration(Seconds) + TEXT(" on the mountain") + MenuDot + MenuFalls(Deaths);
 	const FString Back = Camp.IsEmpty() ? TEXT("Return to the start") : FString::Printf(TEXT("Return to %s"), *Camp);
 	Pg.Options = {
 		{ Back, TEXT("Your pack as it was at the camp"), [W, OnReturn]() { W->CloseMenu(); if (OnReturn) { OnReturn(); } } },

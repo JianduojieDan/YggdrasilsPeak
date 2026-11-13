@@ -47,7 +47,79 @@ namespace
 		TEXT("ygg.Snow.StepSurface"),
 		0,
 		TEXT("Footstep sound surface: 0 = the real ground, 1 = snow, 2 = ice, 3 = rubble, 4 = ladder."));
+
+	TAutoConsoleVariable<float> CVarAutoWalk(
+		TEXT("ygg.Snow.AutoWalk"),
+		0.f,
+		TEXT("Testing: >0 = the player walks straight ahead by itself at this input strength (0.5 walk, 1 jog)."));
+
+	TAutoConsoleVariable<float> CVarAutoYaw(
+		TEXT("ygg.Snow.AutoYaw"),
+		-999.f,
+		TEXT("Testing, with ygg.Snow.AutoWalk: the heading (world yaw, degrees) to walk; -999 = keep the current one."));
+
+	TAutoConsoleVariable<int32> CVarStepLog(
+		TEXT("ygg.Snow.StepLog"),
+		0,
+		TEXT("1 = log every footstep: which foot, its height and how fast it still moved (share of the walking speed)."));
 }
+
+// Testing the footsteps on rock: finds the biggest walkable patch of terrain rock near the player and puts them on it.
+static FAutoConsoleCommandWithWorldAndArgs CmdGoRock(TEXT("ygg.Snow.GoRock"), TEXT("ygg.Snow.GoRock [radius m = 150] - stand on the nearest big walkable patch of rock (testing footsteps)."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+		APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+		if (!Pawn) { return; }
+		const float Radius = (Args.Num() > 0 ? FCString::Atof(*Args[0]) : 150.f) * 100.f;
+		const FVector Me = Pawn->GetActorLocation();
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(GoRock), false, Pawn);
+		Params.bReturnFaceIndex = true;
+		const float Step = 300.f;
+		const int32 N = FMath::CeilToInt(Radius / Step);
+		TMap<FIntPoint, FVector> Rock;
+		for (int32 y = -N; y <= N; ++y)
+		{
+			for (int32 x = -N; x <= N; ++x)
+			{
+				const FVector P = Me + FVector(x * Step, y * Step, 0.f);
+				FHitResult Hit;
+				if (World->LineTraceSingleByChannel(Hit, P + FVector(0.f, 0.f, 50000.f), P - FVector(0.f, 0.f, 50000.f), ECC_Visibility, Params)
+					&& Hit.ImpactNormal.Z > 0.82f && USnowTrailComponent::IsTerrain(Hit) && USnowTrailComponent::IsRock(Hit))
+				{
+					Rock.Add(FIntPoint(x, y), Hit.ImpactPoint);
+				}
+			}
+		}
+		// the patch with the most rock around it (a 5 x 5 neighbourhood), nearest first on a tie
+		FIntPoint Best(INT32_MAX, 0);
+		int32 BestScore = 0;
+		for (const TPair<FIntPoint, FVector>& R : Rock)
+		{
+			int32 Score = 0;
+			for (int32 dy = -2; dy <= 2; ++dy) { for (int32 dx = -2; dx <= 2; ++dx) { Score += Rock.Contains(R.Key + FIntPoint(dx, dy)) ? 1 : 0; } }
+			if (Score > BestScore || (Score == BestScore && FVector::DistSquared(R.Value, Me) < FVector::DistSquared(Rock.FindRef(Best), Me)))
+			{
+				BestScore = Score;
+				Best = R.Key;
+			}
+		}
+		if (BestScore == 0) { UE_LOG(LogTemp, Warning, TEXT("GoRock: no walkable rock within %.0f m (%d probes)"), Radius / 100.f, (2 * N + 1) * (2 * N + 1)); return; }
+		// walk along the patch: towards the neighbour direction with the most rock
+		const FVector At = Rock[Best];
+		int32 BestDir = 0, DirScore = -1;
+		for (int32 d = 0; d < 8; ++d)
+		{
+			const FIntPoint Dir(FMath::RoundToInt(FMath::Cos(d * PI / 4.f)), FMath::RoundToInt(FMath::Sin(d * PI / 4.f)));
+			int32 S = 0;
+			for (int32 k = 1; k <= 4; ++k) { S += Rock.Contains(Best + Dir * k) ? 1 : 0; }
+			if (S > DirScore) { DirScore = S; BestDir = d; }
+		}
+		Pawn->TeleportTo(At + FVector(0.f, 0.f, Pawn->GetSimpleCollisionHalfHeight() + 20.f), FRotator(0.f, BestDir * 45.f, 0.f));
+		PC->SetControlRotation(FRotator(0.f, BestDir * 45.f, 0.f));
+		UE_LOG(LogTemp, Display, TEXT("GoRock: %d rock probes, standing on %s (patch %d/25), heading %d deg (rock ahead %d/4) - set ygg.Snow.AutoYaw %d"),
+			Rock.Num(), *At.ToCompactString(), BestScore, BestDir * 45, DirScore, BestDir * 45);
+	}));
 
 USnowTrailComponent::USnowTrailComponent()
 {
@@ -307,6 +379,20 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// steps waiting for the boot to land (hard ground, see PickStepSet)
+	if (PendingSteps.Num() > 0)
+	{
+		const double Now = GetWorld()->GetTimeSeconds();
+		for (int32 i = PendingSteps.Num() - 1; i >= 0; --i)
+		{
+			if (PendingSteps[i].At <= Now)
+			{
+				if (PendingSteps[i].Set) { PlayStepFrom(*PendingSteps[i].Set, PendingSteps[i].Location); }
+				PendingSteps.RemoveAtSwap(i);
+			}
+		}
+	}
+
 	const ACharacter* Character = Cast<ACharacter>(GetOwner());
 	if (!Character || !Body)
 	{
@@ -322,6 +408,20 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	}
 	bStormFilling = bStorm;
 
+	if (const float Auto = CVarAutoWalk.GetValueOnGameThread(); Auto > 0.f)
+	{
+		if (APawn* Pawn = Cast<APawn>(GetOwner()))
+		{
+			FVector Dir = Pawn->GetActorForwardVector();
+			if (const float Yaw = CVarAutoYaw.GetValueOnGameThread(); Yaw > -900.f)
+			{
+				Dir = FRotator(0.f, Yaw, 0.f).Vector();
+				if (AController* C = Pawn->GetController()) { C->SetControlRotation(FRotator(0.f, Yaw, 0.f)); }
+			}
+			Pawn->AddMovementInput(Dir, FMath::Min(Auto, 1.f));
+		}
+	}
+
 	UpdateSinking(DeltaTime);
 	if (bTrailReady)
 	{
@@ -335,6 +435,7 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	{
 		// Standing still or in the air: feet count as planted, so the next real step is not missed or doubled.
 		Feet[0].bPlanted = Feet[1].bPlanted = true;
+		Feet[0].bHasLast = Feet[1].bHasLast = false;   // no stale foot position when walking starts again
 		return;
 	}
 
@@ -367,6 +468,51 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	}
 }
 
+bool USnowTrailComponent::NotifiesActive() const
+{
+	const UWorld* World = GetWorld();
+	return World && World->GetTimeSeconds() - LastNotifyTime < 1.5;
+}
+
+void USnowTrailComponent::OnFootContact(bool bLeft, USkeletalMeshComponent* Mesh)
+{
+	UWorld* World = GetWorld();
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!World || !Body || Mesh != Body || !Character) { return; }
+	const UCharacterMovementComponent* Movement = Character->GetCharacterMovement();
+	if (!Movement || !Movement->IsMovingOnGround() || Character->GetVelocity().Size2D() < 40.f) { return; }
+	const double Now = World->GetTimeSeconds();
+	double& Last = LastContactTime[bLeft ? 1 : 0];
+	if (Now - Last < 0.18) { return; }   // the same contact again, from another clip of the blend
+	Last = Now;
+	LastNotifyTime = Now;
+	const FFootState& Foot = Feet[0].bLeft == bLeft ? Feet[0] : Feet[1];
+	// the foot is still in the air: look where it is about to land
+	FVector Ahead = FVector(Foot.Velocity.X, Foot.Velocity.Y, 0.0) * StepNotifyLead;
+	Ahead = Ahead.GetClampedToMaxSize(60.0);
+	const FVector Land = Body->GetSocketLocation(Foot.Bone) + Ahead;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(SnowTrailContact), false, GetOwner());
+	Params.bReturnPhysicalMaterial = true;
+	Params.bReturnFaceIndex = true;
+	FHitResult Hit;
+	if (!World->LineTraceSingleByChannel(Hit, Land + FVector(0.f, 0.f, 60.f), Land - FVector(0.f, 0.f, 150.f), ECC_Visibility, Params))
+	{
+		return;
+	}
+	TimeSinceStep = 0.f;
+	float Delay = 0.f;
+	const TArray<TObjectPtr<USoundBase>>* Set = PickStepSet(Hit, Delay);
+	if (CVarStepLog.GetValueOnGameThread() != 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("Contact %s: lands in %.0f ms, %s, sound after %.0f ms, walk %.0f cm/s"),
+			bLeft ? TEXT("L") : TEXT("R"), StepNotifyLead * 1000.f, Set == &RubbleSteps ? TEXT("rock") : Set == &IceSteps ? TEXT("ice") : Set == &LadderSteps ? TEXT("ladder") : TEXT("snow"),
+			Delay * 1000.f, Character->GetVelocity().Size2D());
+	}
+	if (!Set) { return; }
+	if (Delay <= 0.005f) { PlayStepFrom(*Set, Hit.ImpactPoint); }
+	else { PendingSteps.Add({ Now + Delay, Set, Hit.ImpactPoint }); }
+}
+
 void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirection, float DeltaTime)
 {
 	// Height of the foot bone above the ground right under it (the skeleton root shifts on slopes).
@@ -383,6 +529,21 @@ void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirect
 	const float Height = float(FootLocation.Z - Hit.ImpactPoint.Z);
 	Foot.Height = Height;
 
+	// How fast the foot itself moves, as a share of the walking speed: a planted foot stands still on the ground,
+	// a swinging one moves at about twice the body's speed. (Play-test 2026-11-13: on rock the steps came at the wrong
+	// time. The height above the ground right under a swinging foot jumps when it passes over a rock edge, which read
+	// as a step; snow is smooth, so only rock did it. The speed does not care what the ground looks like.)
+	const float WalkSpeed = FMath::Max(float(GetOwner()->GetVelocity().Size2D()), 60.f);
+	if (Foot.bHasLast && DeltaTime > KINDA_SMALL_NUMBER)
+	{
+		const float Raw = float(FVector::Dist(FootLocation, Foot.LastLocation)) / DeltaTime / WalkSpeed;
+		const float K = 1.f - FMath::Exp(-DeltaTime * 40.f);
+		Foot.SpeedRatio = FMath::Lerp(Foot.SpeedRatio, Raw, K);
+		Foot.Velocity = FMath::Lerp(Foot.Velocity, (FootLocation - Foot.LastLocation) / DeltaTime, double(K));
+	}
+	Foot.LastLocation = FootLocation;
+	Foot.bHasLast = true;
+
 	// Each foot's own lowest and highest height over the last steps: the planted height depends on the skeleton
 	// (Mixamo ankles sit higher than the mannequin's) and the lift on the clip, so thresholds sit inside that range.
 	const float Drift = SwingDriftCmPerSecond * DeltaTime;
@@ -393,13 +554,41 @@ void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirect
 	if (Foot.bPlanted)
 	{
 		Foot.bPlanted = Height < PlantBelow + Swing * LiftHysteresis;
+		Foot.LowSeconds = 0.f;
 		return;
 	}
 	if (Height < PlantBelow)
 	{
+		// low enough: it lands once it has (nearly) stopped. A clip whose feet slide a little still lands a moment
+		// later, but a foot sweeping over a rock edge at full swing speed never counts.
+		if (Foot.LowSeconds <= 0.f && CVarStepLog.GetValueOnGameThread() != 0)
+		{
+			UE_LOG(LogTemp, Display, TEXT("Low  %s: height %.1f (low %.1f high %.1f), foot speed %.2f x walk, %s"),
+				Foot.bLeft ? TEXT("L") : TEXT("R"), Height, Foot.Lowest, Foot.Highest, Foot.SpeedRatio, IsRock(Hit) ? TEXT("rock") : TEXT("other"));
+		}
+		Foot.LowSeconds += DeltaTime;
+		const bool bStill = Foot.SpeedRatio < 0.75f || (Foot.LowSeconds > 0.12f && Foot.SpeedRatio < 1.3f);
+		if (!bStill)
+		{
+			return;
+		}
+		if (CVarStepLog.GetValueOnGameThread() != 0)
+		{
+			UE_LOG(LogTemp, Display, TEXT("Step %s: height %.1f (low %.1f high %.1f), foot speed %.2f x walk, %.0f ms after it got low, %s, walk %.0f cm/s at %s"),
+				Foot.bLeft ? TEXT("L") : TEXT("R"), Height, Foot.Lowest, Foot.Highest, Foot.SpeedRatio, Foot.LowSeconds * 1000.f, IsRock(Hit) ? TEXT("rock") : TEXT("other"),
+				GetOwner()->GetVelocity().Size2D(), *Hit.ImpactPoint.ToCompactString());
+		}
 		Foot.bPlanted = true;
-		PlayFootstep(Hit);
+		Foot.LowSeconds = 0.f;
+		if (!NotifiesActive())
+		{
+			PlayFootstep(Hit);   // fallback for clips without foot-contact notifies
+		}
 		StampPrint(Hit, WalkDirection, Foot.bLeft);
+	}
+	else
+	{
+		Foot.LowSeconds = 0.f;
 	}
 }
 
@@ -481,9 +670,8 @@ void USnowTrailComponent::LoadDefaultFootsteps()
 	Fill(LadderSteps, TEXT("/Game/Audio/Footsteps"), TEXT("Step_Ladder_"), 10, 2);
 }
 
-void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
+const TArray<TObjectPtr<USoundBase>>* USnowTrailComponent::PickStepSet(const FHitResult& Hit, float& OutDelay) const
 {
-	TimeSinceStep = 0.f;
 	// Which surface: the ladder over a crevasse, the landscape (rock, glacier rubble / bare ice, hard crust or
 	// snow, the same zones the landscape material and the footprints use), or ice meshes (seracs, crevasse lips).
 	const TArray<TObjectPtr<USoundBase>>* Set = &SnowSteps;
@@ -517,20 +705,43 @@ void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
 	case 4: Set = &LadderSteps; break;
 	default: break;
 	}
-	if (Set->Num() == 0)
+	// A notify comes StepNotifyLead before the boot lands. Snow's crunch builds up and peaks as it lands, so it starts
+	// at once (as approved); the hard ground's clips hit within their first few tens of ms, so they wait for the boot
+	// (measured onsets: rubble ~30 ms, ice ~10 ms, ladder ~5 ms into the clip).
+	OutDelay = Set == &RubbleSteps ? StepNotifyLead - 0.03f
+		: Set == &IceSteps ? StepNotifyLead - 0.01f
+		: Set == &LadderSteps ? StepNotifyLead - 0.005f
+		: 0.f;
+	return Set;
+}
+
+void USnowTrailComponent::PlayStepFrom(const TArray<TObjectPtr<USoundBase>>& Set, const FVector& Location)
+{
+	if (Set.Num() == 0)
 	{
 		return;
 	}
 	// never the same variation twice in a row
-	int32 Pick = FMath::RandRange(0, Set->Num() - 1);
-	if (Set->Num() > 1 && Pick == LastStepVariation)
+	int32 Pick = FMath::RandRange(0, Set.Num() - 1);
+	if (Set.Num() > 1 && Pick == LastStepVariation)
 	{
-		Pick = (Pick + 1) % Set->Num();
+		Pick = (Pick + 1) % Set.Num();
 	}
 	LastStepVariation = Pick;
 	const float Speed = GetOwner()->GetVelocity().Size2D();
 	const float Volume = FootstepVolume * FMath::GetMappedRangeValueClamped(FVector2f(0.f, 450.f), FVector2f(0.6f, 1.2f), Speed);
-	UGameplayStatics::PlaySoundAtLocation(this, (*Set)[Pick], Hit.ImpactPoint, Volume, FMath::FRandRange(0.92f, 1.08f));
+	UGameplayStatics::PlaySoundAtLocation(this, Set[Pick], Location, Volume, FMath::FRandRange(0.92f, 1.08f));
+}
+
+void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
+{
+	// the fallback paths (foot height, cadence net): no notify lead to make up for, so everything plays at once
+	TimeSinceStep = 0.f;
+	float Delay = 0.f;
+	if (const TArray<TObjectPtr<USoundBase>>* Set = PickStepSet(Hit, Delay))
+	{
+		PlayStepFrom(*Set, Hit.ImpactPoint);
+	}
 }
 
 bool USnowTrailComponent::IsTerrain(const FHitResult& Hit)

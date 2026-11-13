@@ -33,6 +33,15 @@ public:
 
 	USnowTrailComponent();
 
+	/** A foot-contact notify from the walk / run clips (UYggFootstepNotify), sent StepNotifyLead seconds BEFORE the
+	 *  foot lands. While these arrive, they decide when a step sounds; the foot-height detection then only shapes the
+	 *  prints. Only the player's body (Body) counts. */
+	void OnFootContact(bool bLeft, USkeletalMeshComponent* Mesh);
+
+	/** How long before the foot lands the notifies come (Tools/Anim/add_footstep_notifies.py places them so). The
+	 *  snow steps the user approved started this early: their crunch builds up and peaks as the boot lands. */
+	static constexpr float StepNotifyLead = 0.155f;
+
 	/** Decal material for one boot print (decal colour: R = left foot, A = depth 0..1). */
 	UPROPERTY(EditAnywhere, Category="Snow Trail")
 	TObjectPtr<UMaterialInterface> FootprintMaterial;
@@ -221,6 +230,14 @@ private:
 		/** Lowest / highest foot height over the last steps (cm), relaxing towards each other at SwingDriftCmPerSecond. */
 		float Lowest = 1000.f;
 		float Highest = -1000.f;
+		/** How fast the foot moves, as a share of the walking speed (smoothed): ~0 planted, ~2 mid-swing. */
+		float SpeedRatio = 0.f;
+		/** The foot's own velocity (cm/s, smoothed): where it will land a moment from now. */
+		FVector Velocity = FVector::ZeroVector;
+		FVector LastLocation = FVector::ZeroVector;
+		bool bHasLast = false;
+		/** Seconds the lifted foot has been low enough to count as landed without having stopped yet. */
+		float LowSeconds = 0.f;
 	};
 
 	/** Samples the snow under the player and eases the body's sink depth towards it. */
@@ -235,6 +252,15 @@ public:
 private:
 	float TimeSinceStep = 0.f;
 	int32 CadenceSteps = 0;
+	/** World time of the last foot-contact notify, and of each foot's last one (several blended clips send the same contact). */
+	double LastNotifyTime = -100.0;
+	double LastContactTime[2] = { -100.0, -100.0 };
+	bool NotifiesActive() const;
+	/** Which sounds suit the ground of this hit, and how long after a notify they start (sharp hits wait for the boot). */
+	const TArray<TObjectPtr<USoundBase>>* PickStepSet(const FHitResult& Hit, float& OutDelay) const;
+	void PlayStepFrom(const TArray<TObjectPtr<USoundBase>>& Set, const FVector& Location);
+	struct FPendingStep { double At = 0.0; const TArray<TObjectPtr<USoundBase>>* Set = nullptr; FVector Location = FVector::ZeroVector; };
+	TArray<FPendingStep> PendingSteps;
 	void LoadDefaultFootsteps();
 	int32 LastStepVariation = -1;
 	/** Glacier rubble or bare ice (T_GlacierMask, below ~6000 m): no snow to sink into or leave prints in. */

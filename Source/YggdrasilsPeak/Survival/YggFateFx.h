@@ -3,22 +3,20 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Components/Widget.h"
-#include "YggFateFx.generated.h"
 
 /**
- *  The death screen's art (2026-11-13, user: "if you've frozen to death, the font should be frozen ... make it artistic").
- *  Each way of dying has its own title and its own screen:
- *  - Frozen: the letters shiver, then freeze ice-blue; icicles grow under them, frost glints on top; frost creeps in from
- *    the corners of the screen along every edge.
- *  - Breathless: the letters breathe in short gasps and drift apart, some go dark; the view tunnels in and out.
- *  - Fallen: the letters fall into place and land crooked; the screen cracks from where they hit, with a jolt.
- *  - Buried: the letters sink and a drift of snow rises over their feet; heavy snow, a white haze from below.
- *  - Parched: the letters turn sand-coloured, shimmer in the heat and crack; warm dust in a burnt vignette.
- *  - Starved: the letters grow faint unevenly and sag; a grey, near-empty world.
- *  - Lost: the word is written by hand, letter by letter, then drifts apart into the fog.
- *  One UYggFateFx sits over the title (title effects, letter rectangles given each frame by the menu), one over the
- *  whole screen. Vector lines and the menus' soft textures only.
+ *  How a death is shown (2026-11-13, user: "if you've frozen to death, the font should be frozen ... make it artistic";
+ *  later the same day: the effects were "not good enough" - redone). Two parts:
+ *  - The world behind the death screen turns into the cause: M_PP_Fate, a post-process material on an unbound volume
+ *    (Tools/UI/shaders/pp_fate.hlsl): Frozen = frost grows over the lens from the edges, crystals catch the light, the
+ *    world under it blurs and goes cold; Breathless = the view tunnels in with each gasp, the edges smear and drain;
+ *    Fallen = a jolt, then walls of blue glacier ice close over the last sliver of sky; Buried = the avalanche's snow
+ *    rises over the view, powder hangs above it, the light goes; Parched = heat shimmer, bleached dust colour, a dry
+ *    crust cracking in from the edges; Starved = the colour drains, the sight fades and comes back weaker; Lost = a
+ *    whiteout swallows everything, spindrift streams through it.
+ *  - The title's letters act it out (UYggMenuBase::AnimateFate): shiver and freeze, gasp, fall and land crooked, sink,
+ *    shimmer, fade unevenly, or (Lost) are written by hand and drift apart.
+ *  (The v2 vector art, UYggFateFx, is gone.)
  */
 namespace YggFate
 {
@@ -31,29 +29,3 @@ namespace YggFate
 		return Ph < 0.25f ? E(Ph / 0.25f) : 1.f - E((Ph - 0.25f) / 0.75f);
 	}
 }
-
-struct FYggFateState
-{
-	uint8 Fate = 0;
-	bool bScreen = false;
-	double Start = 0.0;
-	TArray<FBox2f> Letters;                     // title layer: each letter's box in the layer's own space
-	FVector2f AnchorAbs = FVector2f(-1.f, -1.f); // screen layer: where the title ends (cracks start there), absolute
-};
-
-UCLASS()
-class YGGDRASILSPEAK_API UYggFateFx : public UWidget
-{
-	GENERATED_BODY()
-
-public:
-	TSharedPtr<FYggFateState> State = MakeShared<FYggFateState>();
-	void Restart(uint8 InFate, bool bInScreen);
-	virtual void ReleaseSlateResources(bool bReleaseChildren) override;
-
-protected:
-	virtual TSharedRef<SWidget> RebuildWidget() override;
-
-private:
-	TSharedPtr<SWidget> Slate;
-};

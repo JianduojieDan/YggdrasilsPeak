@@ -2,12 +2,11 @@
 
 #include "Survival/YggMenuBase.h"
 
-#include "Survival/YggEmblem.h"
 #include "Survival/YggFateFx.h"
 #include "Survival/SurvivalHUDWidget.h"
-#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Survival/YggUIProxy.h"
 #include "Survival/YggUIStyle.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/BackgroundBlur.h"
 #include "Components/Button.h"
@@ -23,19 +22,27 @@
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Engine/PostProcessVolume.h"
+#include "Engine/World.h"
 #include "Framework/Application/SlateApplication.h"
 #include "GameFramework/PlayerController.h"
-
+#include "Materials/MaterialInstanceDynamic.h"
 
 namespace
 {
-	FLinearColor MenuWithA(const FLinearColor& C, float A) { return FLinearColor(C.R, C.G, C.B, A); }
+	/** "8,849|m" -> "8,849 m", "2|h  14|m" -> "2 h 14 m" (v2's numeral markup, read as plain words). */
+	FString MenuPlain(const FString& S)
+	{
+		FString R = S.Replace(TEXT("|"), TEXT(" "));
+		while (R.Contains(TEXT("  "))) { R.ReplaceInline(TEXT("  "), TEXT(" ")); }
+		return R.TrimStartAndEnd();
+	}
 }
 
 FLinearColor UYggMenuBase::Accent() const
 {
 	if (Page.AccentOverride.A > 0.f) { return Page.AccentOverride; }
-	return Page.Tone == ETone::Death ? YggUI::Ember : YggUI::Gold;
+	return Page.Tone == ETone::Death ? YggUI::EmberC : YggUI::Sun;
 }
 
 void UYggMenuBase::SetPage(const FPage& InPage)
@@ -64,11 +71,11 @@ void UYggMenuBase::BuildFrame()
 {
 	Canvas = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("Canvas"));
 	WidgetTree->RootWidget = Canvas;
-	Serif = YggUI::MakeSerif(this);
+	Serif = YggUI::SerifFont();
 	Hand = YggUI::MakeHand(this);
 	BuildBackground(Canvas);
 	// on the mountain the world behind the menu goes soft (the bright snow fought with the words); the start menu's
-	// own pictures stay sharp
+	// own pictures stay sharp. A death page's world is changed by M_PP_Fate instead (no blur over it).
 	if (!bUIOnlyInput)
 	{
 		Blur = WidgetTree->ConstructWidget<UBackgroundBlur>(UBackgroundBlur::StaticClass());
@@ -78,40 +85,28 @@ void UYggMenuBase::BuildFrame()
 		BS->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
 		BS->SetOffsets(FMargin(0.f));
 	}
-
-	YggUI::Layer(WidgetTree, Canvas, YggUI::VeilTexture(), MenuWithA(YggUI::Ink, VeilAlpha));
-	// a second veil from the right, under the side panel (the world is brightest there)
-	RightVeil = YggUI::Layer(WidgetTree, Canvas, YggUI::VeilTexture(), MenuWithA(YggUI::Ink, 0.8f));
-	RightVeil->SetRenderTransformAngle(180.f);
-	RightVeil->SetVisibility(ESlateVisibility::Collapsed);
-	YggUI::Layer(WidgetTree, Canvas, YggUI::VignetteTexture(), MenuWithA(YggUI::Ink, 0.6f));
-	// the death screen's art over the whole screen (frost, cracks, snow...)
-	ScreenFx = WidgetTree->ConstructWidget<UYggFateFx>(UYggFateFx::StaticClass());
-	ScreenFx->SetVisibility(ESlateVisibility::Collapsed);
-	{
-		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(ScreenFx);
-		S->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
-		S->SetOffsets(FMargin(0.f));
-	}
+	UMaterialInstanceDynamic* MID = nullptr;
+	YggUI::CloudVeil(WidgetTree, Canvas, this, VeilAlpha, 0.2f, MID);
+	VeilMID = MID;
 	// the summit's warm light from the upper right
 	ToneGlow = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
 	ToneGlow->SetBrush(YggUI::TextureBrush(YggUI::GlowTexture(), FVector2D(64.f, 64.f)));
-	ToneGlow->SetColorAndOpacity(FLinearColor(1.f, 0.8f, 0.52f, 0.2f));
+	ToneGlow->SetColorAndOpacity(YggUI::WithA(YggUI::Hex(255, 176, 110), 0.42f));
 	ToneGlow->SetVisibility(ESlateVisibility::Collapsed);
 	{
 		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(ToneGlow);
-		S->SetAnchors(FAnchors(0.78f, 0.12f));
+		S->SetAnchors(FAnchors(0.8f, 0.1f));
 		S->SetAlignment(FVector2D(0.5f, 0.5f));
-		S->SetSize(FVector2D(1900.f, 1500.f));
+		S->SetSize(FVector2D(2000.f, 1500.f));
 	}
-	// a darkening behind a question (and under a death)
+	// a darkening behind a question
 	{
 		DimLayer = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
 		FSlateBrush B;
 		B.DrawAs = ESlateBrushDrawType::Box;
 		B.TintColor = FSlateColor(FLinearColor::White);
 		DimLayer->SetBrush(B);
-		DimLayer->SetColorAndOpacity(YggUI::Ink);
+		DimLayer->SetColorAndOpacity(YggUI::InkC);
 		DimLayer->SetRenderOpacity(0.f);
 		DimLayer->SetVisibility(ESlateVisibility::HitTestInvisible);
 		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(DimLayer);
@@ -133,7 +128,7 @@ void UYggMenuBase::BuildFrame()
 	Roll = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("Roll"));
 	{
 		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(Roll);
-		S->SetAnchors(FAnchors(0.64f, 0.f));
+		S->SetAnchors(FAnchors(0.66f, 0.f));
 		S->SetAlignment(FVector2D(0.5f, 0.f));
 		S->SetAutoSize(true);
 	}
@@ -141,66 +136,30 @@ void UYggMenuBase::BuildFrame()
 	{
 		UImage* M = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
 		M->SetBrush(YggUI::TextureBrush(YggUI::FadeTexture(), FVector2D(4.f, 64.f)));
-		M->SetColorAndOpacity(FLinearColor(YggUI::Ink.R, YggUI::Ink.G, YggUI::Ink.B, 0.9f));
+		M->SetColorAndOpacity(YggUI::WithA(YggUI::InkC, 0.85f));
 		M->SetVisibility(ESlateVisibility::Collapsed);
 		if (k == 1) { M->SetRenderTransformAngle(180.f); }
 		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(M);
 		S->SetAnchors(k == 0 ? FAnchors(0.f, 0.f, 1.f, 0.f) : FAnchors(0.f, 1.f, 1.f, 1.f));
-		S->SetOffsets(k == 0 ? FMargin(0.f, 0.f, 0.f, 300.f) : FMargin(0.f, -300.f, 0.f, 300.f));
+		S->SetOffsets(k == 0 ? FMargin(0.f, 0.f, 0.f, 320.f) : FMargin(0.f, -320.f, 0.f, 320.f));
 		RollMasks.Add(M);
 	}
-
-	YggUI::FChrome C = YggUI::Chrome(WidgetTree, Canvas, 0.06f, bHeader);
-	CrumbText = C.Crumb;
-	if (C.Right) { C.Right->SetText(FText::FromString(HeaderRight.ToUpper())); }
-	if (C.Foot) { C.Foot->SetText(FText::FromString(FooterLeft.ToUpper())); }
-	for (UWidget* W : C.All) { FadeWithWords.Add(W); }
-
-	GrainImg = YggUI::Grain(WidgetTree, Canvas);
 	SetRenderOpacity(0.f);
-}
-
-UWidget* UYggMenuBase::Numbers(const FString& Key, int32 Big, int32 Small, bool bRight)
-{
-	// "8,849|m" -> light numerals with a small unit on their baseline (as the HUD's altitude); "2|h  14|m"
-	UHorizontalBox* Num = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	TArray<FString> Parts;
-	Key.ParseIntoArray(Parts, TEXT("|"), false);
-	for (int32 p = 0; p < Parts.Num(); ++p)
-	{
-		FString Piece = Parts[p];
-		FString Unit;
-		if (p > 0) { const int32 Sp = Piece.Find(TEXT(" ")); Unit = Piece.Left(Sp >= 0 ? Sp : Piece.Len()); Piece = Piece.Mid(Unit.Len()); }
-		if (!Unit.IsEmpty())
-		{
-			UHorizontalBoxSlot* US = Num->AddChildToHorizontalBox(YggUI::Text(WidgetTree, Unit, Small, YggUI::Dim, 120));
-			US->SetVerticalAlignment(VAlign_Bottom);
-			US->SetPadding(FMargin(0.f, 0.f, 0.f, Big * 0.12f));
-		}
-		if (!Piece.TrimStartAndEnd().IsEmpty())
-		{
-			UHorizontalBoxSlot* S = Num->AddChildToHorizontalBox(YggUI::Text(WidgetTree, Piece.TrimStartAndEnd(), Big, YggUI::Ivory, 10));
-			S->SetVerticalAlignment(VAlign_Bottom);
-			S->SetPadding(FMargin(p > 0 ? 10.f : 0.f, 0.f, 3.f, 0.f));
-		}
-	}
-	return Num;
 }
 
 void UYggMenuBase::BuildColumn()
 {
 	Column->ClearChildren();
-	OptButtons.Reset(); OptTexts.Reset(); OptSubs.Reset(); OptNums.Reset(); OptBands.Reset(); OptBars.Reset(); Proxies.Reset(); OptHot.Reset();
+	OptButtons.Reset(); OptTexts.Reset(); OptSubs.Reset(); OptGlows.Reset(); Proxies.Reset(); OptHot.Reset();
 	SplashPrompt = nullptr;
 	const bool bCentre = Page.bModal || Page.bSplash;
 	if (ColumnSlot)
 	{
 		ColumnSlot->SetAnchors(bCentre ? FAnchors(0.5f, 0.5f) : FAnchors(ColumnX, 0.5f));
 		ColumnSlot->SetAlignment(bCentre ? FVector2D(0.5f, 0.5f) : FVector2D(0.f, 0.5f));
-		ColumnSlot->SetPosition(FVector2D(0.f, bCentre ? -10.f : 8.f));
+		ColumnSlot->SetPosition(FVector2D(0.f, bCentre ? -20.f : 30.f));
 	}
 	const EHorizontalAlignment HA = bCentre ? HAlign_Center : HAlign_Left;
-	const FLinearColor Acc = Accent();
 	auto Add = [this, HA](UWidget* W, float Gap)
 	{
 		UVerticalBoxSlot* S = Column->AddChildToVerticalBox(W);
@@ -209,97 +168,40 @@ void UYggMenuBase::BuildColumn()
 	};
 	auto Centre = [bCentre](UTextBlock* T) { if (bCentre) { T->SetJustification(ETextJustify::Center); } return T; };
 
-	if (Page.bEmblem)
-	{
-		UYggEmblem* E = WidgetTree->ConstructWidget<UYggEmblem>(UYggEmblem::StaticClass());
-		E->Diameter = Page.bSplash ? 176.f : 92.f;
-		USizeBox* SB = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-		SB->SetWidthOverride(E->Diameter);
-		SB->SetHeightOverride(E->Diameter);
-		SB->SetContent(E);
-		Add(SB, Page.bSplash ? 34.f : 22.f);
-	}
-	if (!Page.Eyebrow.IsEmpty()) { Add(Centre(YggUI::Text(WidgetTree, Page.Eyebrow, 10, YggUI::Dim, 460, TEXT("Regular"))), 6.f); }
+	if (!Page.Eyebrow.IsEmpty()) { Add(Centre(YggUI::Words(WidgetTree, Page.Eyebrow, 20, YggUI::Mist)), 2.f); }
 	TitleLetters.Reset();
-	TitleFx = nullptr;
 	TitleBox = nullptr;
+	const float TitleGap = Page.bSplash ? 10.f : 16.f;
 	if (Page.Fate != YggFate::None)
 	{
-		// the title letter by letter, so each can shiver, fall, sink or breathe; its own art layer on top
+		// the title letter by letter, so each can shiver, fall, sink or breathe
 		TitleBox = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		const bool bHand = Page.Fate == YggFate::Lost && Hand;
 		for (int32 c = 0; c < Page.Title.Len(); ++c)
 		{
-			UTextBlock* L = YggUI::Text(WidgetTree, FString::Chr(Page.Title[c]), int32(Page.TitleSize * (bHand ? 1.2f : 1.f)), YggUI::Ivory, 0, TEXT("Regular"), bHand ? Hand.Get() : Serif.Get());
+			UTextBlock* L = YggUI::Text(WidgetTree, FString::Chr(Page.Title[c]), int32(Page.TitleSize * (bHand ? 1.2f : 1.f)), YggUI::Snow, 0, TEXT("Regular"), bHand ? Hand.Get() : Serif.Get());
 			L->SetRenderTransformPivot(FVector2D(0.5f, 0.75f));
 			L->SetRenderOpacity(0.f);
 			Row->AddChildToHorizontalBox(L)->SetVerticalAlignment(VAlign_Bottom);
 			TitleLetters.Add(L);
 		}
 		TitleBox->AddChildToOverlay(Row);
-		TitleFx = WidgetTree->ConstructWidget<UYggFateFx>(UYggFateFx::StaticClass());
-		TitleFx->Restart(Page.Fate, false);
-		TitleFx->SetVisibility(ESlateVisibility::HitTestInvisible);
-		UOverlaySlot* FS = TitleBox->AddChildToOverlay(TitleFx);
-		FS->SetHorizontalAlignment(HAlign_Fill);
-		FS->SetVerticalAlignment(VAlign_Fill);
-		Add(TitleBox, 10.f);
+		Add(TitleBox, TitleGap);
 	}
 	else
 	{
-		Add(Centre(YggUI::Text(WidgetTree, Page.Title, int32(Page.TitleSize), YggUI::Ivory, Page.bSplash ? 30 : 0, TEXT("Regular"), Serif)), 10.f);
-	}
-	if (ScreenFx)
-	{
-		ScreenFx->Restart(Page.Fate, true);
-		ScreenFx->SetVisibility(Page.Fate != YggFate::None ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	}
-	RealmBeads.Reset();
-	{
-		UHorizontalBox* RuleRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		const float LineW = Page.bNineBeads ? 120.f : (bCentre ? 150.f : 300.f);
-		RuleRow->AddChildToHorizontalBox(YggUI::Line(WidgetTree, LineW))->SetVerticalAlignment(VAlign_Center);
-		// one bead, or nine for the nine realms (a gold light wanders slowly from one to the next)
-		for (int32 k = 0; k < (Page.bNineBeads ? 9 : 1); ++k)
-		{
-			UImage* Bd = YggUI::Bead(WidgetTree, Page.bNineBeads ? 4.f : 5.f, Page.bNineBeads ? YggUI::Faint : Acc);
-			UHorizontalBoxSlot* BS = RuleRow->AddChildToHorizontalBox(Bd);
-			BS->SetVerticalAlignment(VAlign_Center);
-			BS->SetPadding(FMargin(k == 0 ? 8.f : 7.f, 0.f, 0.f, 0.f));
-			if (Page.bNineBeads) { RealmBeads.Add(Bd); }
-		}
-		if (Page.bNineBeads || bCentre)
-		{
-			UHorizontalBoxSlot* LS = RuleRow->AddChildToHorizontalBox(YggUI::Line(WidgetTree, LineW));
-			LS->SetVerticalAlignment(VAlign_Center);
-			LS->SetPadding(FMargin(8.f, 0.f, 0.f, 0.f));
-		}
-		Add(RuleRow, Page.Line.IsEmpty() ? 38.f : 20.f);
+		Add(Centre(YggUI::Words(WidgetTree, Page.Title, int32(Page.TitleSize), YggUI::Snow)), TitleGap);
 	}
 	if (!Page.Line.IsEmpty())
 	{
-		UTextBlock* L = Centre(YggUI::Text(WidgetTree, Page.Line, 19, YggUI::Ivory, 10, TEXT("Regular"), Serif));
-		L->SetWrapTextAt(640.f);   // a fixed measure: auto wrap followed the narrow column and broke the line early
-		Add(L, 34.f);
+		UTextBlock* L = Centre(YggUI::Words(WidgetTree, Page.Line, 24, YggUI::Mist));
+		L->SetWrapTextAt(700.f);   // a fixed measure: auto wrap followed the narrow column and broke the line early
+		Add(L, Page.Facts.IsEmpty() ? 46.f : 8.f);
 	}
-	if (Page.Stats.Num() > 0)
+	if (!Page.Facts.IsEmpty())
 	{
-		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		for (int32 i = 0; i < Page.Stats.Num(); ++i)
-		{
-			UVerticalBox* Cell = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-			Cell->AddChildToVerticalBox(Numbers(Page.Stats[i].Key, 34, 14, false));
-			UVerticalBoxSlot* LS = Cell->AddChildToVerticalBox(YggUI::Text(WidgetTree, Page.Stats[i].Value, 9, YggUI::Faint, 320, TEXT("Regular")));
-			LS->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
-			UHorizontalBoxSlot* CSl = Row->AddChildToHorizontalBox(Cell);
-			CSl->SetPadding(FMargin(i == 0 ? 0.f : 28.f, 0.f, 28.f, 0.f));
-			if (i + 1 < Page.Stats.Num())
-			{
-				Row->AddChildToHorizontalBox(YggUI::Line(WidgetTree, 1.f, YggUI::Hair, 40.f))->SetVerticalAlignment(VAlign_Center);
-			}
-		}
-		Add(Row, 44.f);
+		Add(Centre(YggUI::Words(WidgetTree, Page.Facts, 19, YggUI::Shade)), 46.f);
 	}
 	if (Page.Body.Num() > 0 && !Page.bRoll)
 	{
@@ -307,75 +209,41 @@ void UYggMenuBase::BuildColumn()
 		{
 			const FString& L = Page.Body[i];
 			const bool bHead = L.StartsWith(TEXT("#"));
-			UTextBlock* T = bHead ? YggUI::Text(WidgetTree, L.Mid(1).ToUpper(), 9, YggUI::Faint, 340, TEXT("Regular"))
-				: YggUI::Text(WidgetTree, L, 16, YggUI::Ivory, 10, TEXT("Regular"), Serif);
+			UTextBlock* T = bHead ? YggUI::Words(WidgetTree, L.Mid(1), 16, YggUI::Shade) : YggUI::Words(WidgetTree, L, 19, YggUI::Snow);
 			const bool bNextHead = i + 1 < Page.Body.Num() && Page.Body[i + 1].StartsWith(TEXT("#"));
-			Add(T, bHead ? 3.f : (bNextHead ? 16.f : 1.f));
+			Add(T, bHead ? 2.f : (bNextHead ? 18.f : 1.f));
 		}
-		Add(YggUI::Line(WidgetTree, 1.f, FLinearColor::Transparent, 18.f), 0.f);
+		Add(YggUI::Line(WidgetTree, 1.f, FLinearColor::Transparent, 20.f), 0.f);
 	}
 
-	// the options: numbered rows; the chosen one sits in a band of soft light behind an accent bar
+	// the options: words; the chosen one is lit by the sun (a glow behind it), the rest stand in shadow
 	UHorizontalBox* Across = nullptr;
 	if (Page.bModal)
 	{
 		Across = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		Add(Across, 0.f);
 	}
+	const FLinearColor Acc = Accent();
 	for (int32 i = 0; i < Page.Options.Num(); ++i)
 	{
 		UButton* B = YggUI::Bare(WidgetTree);
 		USizeBox* SB = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-		SB->SetWidthOverride(Page.bModal ? 230.f : 500.f);
+		SB->SetWidthOverride(Page.bModal ? 260.f : 560.f);
 		UOverlay* O = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
-		UImage* Band = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-		Band->SetBrush(YggUI::TextureBrush(Page.bModal ? YggUI::GlowTexture() : YggUI::BandTexture(), FVector2D(256.f, 32.f)));
-		Band->SetColorAndOpacity(MenuWithA(FMath::Lerp(YggUI::Ivory, Acc, 0.5f), Page.bModal ? 0.18f : 0.17f));
-		Band->SetRenderOpacity(0.f);
-		UOverlaySlot* BandS = O->AddChildToOverlay(Band);
-		BandS->SetHorizontalAlignment(HAlign_Fill);
-		BandS->SetVerticalAlignment(VAlign_Fill);
-		UTextBlock* T = YggUI::Text(WidgetTree, Page.Options[i].Label.ToUpper(), 15, YggUI::Dim, 280, TEXT("Regular"));
-		UTextBlock* Sub = nullptr;
-		if (!Page.Options[i].Sub.IsEmpty()) { Sub = YggUI::Text(WidgetTree, Page.Options[i].Sub.ToUpper(), 9, YggUI::Faint, 260, TEXT("Regular")); }
-		UTextBlock* Num = nullptr;
-		UImage* Bar = nullptr;
-		if (Page.bModal)
-		{
-			UVerticalBox* V = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-			V->AddChildToVerticalBox(T)->SetHorizontalAlignment(HAlign_Center);
-			Bar = YggUI::Line(WidgetTree, 30.f, Acc, 2.f);
-			UVerticalBoxSlot* BarS = V->AddChildToVerticalBox(Bar);
-			BarS->SetHorizontalAlignment(HAlign_Center);
-			BarS->SetPadding(FMargin(0.f, 8.f, 0.f, 0.f));
-			UOverlaySlot* VS = O->AddChildToOverlay(V);
-			VS->SetHorizontalAlignment(HAlign_Center);
-			VS->SetVerticalAlignment(VAlign_Center);
-			VS->SetPadding(FMargin(0.f, 14.f));
-		}
-		else
-		{
-			UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-			Bar = YggUI::Line(WidgetTree, 2.f, Acc, 30.f);
-			UHorizontalBoxSlot* BarS = Row->AddChildToHorizontalBox(Bar);
-			BarS->SetVerticalAlignment(VAlign_Center);
-			BarS->SetPadding(FMargin(0.f, 0.f, 18.f, 0.f));
-			if (Page.bNumbered)
-			{
-				Num = YggUI::Text(WidgetTree, FString::Printf(TEXT("%02d"), i + 1), 10, YggUI::Faint, 200, TEXT("Regular"));
-				UHorizontalBoxSlot* NS = Row->AddChildToHorizontalBox(Num);
-				NS->SetVerticalAlignment(VAlign_Center);
-				NS->SetPadding(FMargin(0.f, 2.f, 18.f, 0.f));
-			}
-			UVerticalBox* V = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-			V->AddChildToVerticalBox(T);
-			if (Sub) { V->AddChildToVerticalBox(Sub)->SetPadding(FMargin(0.f, 5.f, 0.f, 0.f)); }
-			Row->AddChildToHorizontalBox(V)->SetVerticalAlignment(VAlign_Center);
-			UOverlaySlot* RS = O->AddChildToOverlay(Row);
-			RS->SetVerticalAlignment(VAlign_Center);
-			RS->SetPadding(FMargin(0.f, Sub ? 10.f : 13.f, 12.f, Sub ? 10.f : 13.f));
-		}
-		Bar->SetRenderOpacity(0.f);
+		UImage* Glow = YggUI::Glow(WidgetTree, YggUI::WithA(FMath::Lerp(YggUI::Sun, Acc, 0.5f), Page.bModal ? 0.38f : 0.34f), Page.bModal ? FVector2D(340.f, 120.f) : FVector2D(540.f, 130.f));
+		Glow->SetRenderOpacity(0.f);
+		UOverlaySlot* GS = O->AddChildToOverlay(Glow);
+		GS->SetHorizontalAlignment(Page.bModal ? HAlign_Center : HAlign_Left);
+		GS->SetVerticalAlignment(VAlign_Center);
+		UTextBlock* T = YggUI::Words(WidgetTree, Page.Options[i].Label, Page.bModal ? 27 : 31, YggUI::Mist);
+		UTextBlock* Sub = Page.Options[i].Sub.IsEmpty() ? nullptr : YggUI::Words(WidgetTree, Page.Options[i].Sub, 16, YggUI::Shade);
+		UVerticalBox* V = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		V->AddChildToVerticalBox(T)->SetHorizontalAlignment(Page.bModal ? HAlign_Center : HAlign_Left);
+		if (Sub) { V->AddChildToVerticalBox(Sub)->SetPadding(FMargin(1.f, 0.f, 0.f, 0.f)); }
+		UOverlaySlot* VS = O->AddChildToOverlay(V);
+		VS->SetHorizontalAlignment(Page.bModal ? HAlign_Center : HAlign_Left);
+		VS->SetVerticalAlignment(VAlign_Center);
+		VS->SetPadding(FMargin(Page.bModal ? 0.f : 30.f, Sub ? 8.f : 10.f, 0.f, Sub ? 8.f : 10.f));
 		SB->SetContent(O);
 		B->SetContent(SB);
 		UYggUIProxy* P = NewObject<UYggUIProxy>(this);
@@ -384,35 +252,35 @@ void UYggMenuBase::BuildColumn()
 		D.BindUFunction(P, TEXT("Click"));
 		B->OnClicked.Add(D);
 		Proxies.Add(P);
-		OptButtons.Add(B); OptTexts.Add(T); OptSubs.Add(Sub); OptNums.Add(Num); OptBands.Add(Band); OptBars.Add(Bar); OptHot.Add(i == Selected ? 1.f : 0.f);
+		OptButtons.Add(B); OptTexts.Add(T); OptSubs.Add(Sub); OptGlows.Add(Glow); OptHot.Add(i == Selected ? 1.f : 0.f);
 		if (Across)
 		{
-			UHorizontalBoxSlot* S = Across->AddChildToHorizontalBox(B);
-			S->SetPadding(FMargin(i == 0 ? 0.f : 12.f, 0.f, 0.f, 0.f));
+			Across->AddChildToHorizontalBox(B)->SetPadding(FMargin(i == 0 ? 0.f : 24.f, 0.f, 0.f, 0.f));
 		}
 		else
 		{
-			Add(B, 2.f);
+			// the column's left edge is the words' edge: the option's own inset moves back out
+			UVerticalBoxSlot* S = Column->AddChildToVerticalBox(B);
+			S->SetHorizontalAlignment(HAlign_Left);
+			S->SetPadding(FMargin(-30.f, 0.f, 0.f, 0.f));
 		}
 	}
 	if (Page.bSplash)
 	{
-		SplashPrompt = YggUI::Text(WidgetTree, TEXT("PRESS ANY KEY"), 11, YggUI::Ivory, 700, TEXT("Regular"));
+		SplashPrompt = YggUI::Words(WidgetTree, TEXT("Press any key"), 20, YggUI::Mist);
 		SplashPrompt->SetRenderOpacity(0.f);
 		UVerticalBoxSlot* S = Column->AddChildToVerticalBox(SplashPrompt);
 		S->SetHorizontalAlignment(HAlign_Center);
-		S->SetPadding(FMargin(0.f, 70.f, 0.f, 0.f));
+		S->SetPadding(FMargin(0.f, 84.f, 0.f, 0.f));
 	}
 	Column->SetRenderOpacity(0.f);
-	if (CrumbText)
-	{
-		CrumbText->SetText(FText::FromString(Page.Context.IsEmpty() ? FString(TEXT("YGGDRASIL'S PEAK")) : FString::Printf(TEXT("YGGDRASIL'S PEAK      /      %s"), *Page.Context.ToUpper())));
-	}
-	if (RightVeil) { RightVeil->SetVisibility(Page.Side.Num() > 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed); }
+	// the far side's shadow deepens under a side panel or the credits (the world is brightest there)
+	if (VeilMID) { VeilMID->SetScalarParameterValue(TEXT("Right"), (Page.Side.Num() > 0 || Page.bRoll) ? 0.55f : (bCentre ? 0.45f : 0.18f)); }
 	if (ToneGlow) { ToneGlow->SetVisibility(Page.Tone == ETone::Summit ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed); }
 	BuildSide();
 	BuildRoll();
 	BuildPrompts();
+	UpdateFateWorld();
 }
 
 void UYggMenuBase::BuildSide()
@@ -420,63 +288,70 @@ void UYggMenuBase::BuildSide()
 	SidePanel->ClearChildren();
 	SideItems.Reset();
 	const FLinearColor Acc = Accent();
+	auto AddRight = [this](UWidget* W, float Gap, float RightPad = 0.f)
+	{
+		UVerticalBoxSlot* S = SidePanel->AddChildToVerticalBox(W);
+		S->SetHorizontalAlignment(HAlign_Right);
+		S->SetPadding(FMargin(0.f, 0.f, RightPad, Gap));
+		SideItems.Add(W);
+	};
 	for (int32 i = 0; i < Page.Side.Num(); ++i)
 	{
 		const FString& L = Page.Side[i];
-		UWidget* W = nullptr;
-		float Gap = 0.f;
-		if (L.StartsWith(TEXT("#"))) { W = YggUI::Text(WidgetTree, L.Mid(1).ToUpper(), 9, YggUI::Faint, 380, TEXT("Regular")); Gap = 10.f; }
-		else if (L.StartsWith(TEXT("="))) { W = Numbers(L.Mid(1), 38, 15, true); Gap = 4.f; }
-		else if (L.StartsWith(TEXT("~"))) { W = YggUI::Text(WidgetTree, L.Mid(1).ToUpper(), 9, YggUI::Faint, 320, TEXT("Regular")); Gap = 26.f; }
-		else if (L == TEXT("-")) { W = YggUI::Line(WidgetTree, 220.f, YggUI::Rule); Gap = 24.f; }
+		if (L.StartsWith(TEXT("#"))) { AddRight(YggUI::Words(WidgetTree, L.Mid(1), 17, YggUI::Shade), 12.f); }
+		else if (L.StartsWith(TEXT("="))) { AddRight(YggUI::Words(WidgetTree, MenuPlain(L.Mid(1)), 46, YggUI::Snow), 0.f); }
+		else if (L.StartsWith(TEXT("~"))) { AddRight(YggUI::Words(WidgetTree, L.Mid(1), 17, YggUI::Mist), 30.f); }
+		else if (L == TEXT("-")) { AddRight(YggUI::Line(WidgetTree, 1.f, FLinearColor::Transparent, 22.f), 0.f); }
 		else if (L.StartsWith(TEXT("@")))
 		{
+			// a camp on the thread of the route: name and height, a point of light where you are
 			TArray<FString> F;
 			L.Mid(1).ParseIntoArray(F, TEXT("|"), false);
 			const int32 State = F.Num() > 2 ? FCString::Atoi(*F[2]) : 0;
 			UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-			const FLinearColor NameC = State == 2 ? YggUI::Ivory : State == 1 ? YggUI::Dim : MenuWithA(YggUI::Ivory, 0.34f);
-			UHorizontalBoxSlot* NS = Row->AddChildToHorizontalBox(YggUI::Text(WidgetTree, F.Num() > 0 ? F[0] : FString(), 15, NameC, 10, TEXT("Regular"), Serif));
+			const FLinearColor NameC = State == 2 ? YggUI::Snow : State == 1 ? YggUI::Mist : YggUI::Shade;
+			UHorizontalBoxSlot* NS = Row->AddChildToHorizontalBox(YggUI::Words(WidgetTree, F.Num() > 0 ? F[0] : FString(), State == 2 ? 21 : 18, NameC));
 			NS->SetVerticalAlignment(VAlign_Center);
-			NS->SetPadding(FMargin(0.f, 0.f, 16.f, 0.f));
-			UHorizontalBoxSlot* AS = Row->AddChildToHorizontalBox(YggUI::Text(WidgetTree, F.Num() > 1 ? F[1].ToUpper() : FString(), 9, State == 0 ? MenuWithA(YggUI::Ivory, 0.3f) : YggUI::Faint, 200, TEXT("Regular")));
+			NS->SetPadding(FMargin(0.f, 0.f, 14.f, 0.f));
+			UHorizontalBoxSlot* AS = Row->AddChildToHorizontalBox(YggUI::Words(WidgetTree, F.Num() > 1 ? F[1] : FString(), 15, State == 2 ? YggUI::Mist : YggUI::Shade));
 			AS->SetVerticalAlignment(VAlign_Center);
-			AS->SetPadding(FMargin(0.f, 1.f, 14.f, 0.f));
+			AS->SetPadding(FMargin(0.f, 2.f, 16.f, 0.f));
 			USizeBox* BB = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-			BB->SetWidthOverride(11.f);
-			BB->SetHeightOverride(11.f);
-			UImage* Bd = YggUI::Bead(WidgetTree, State == 2 ? 9.f : 5.f, State == 2 ? Acc : State == 1 ? MenuWithA(YggUI::Ivory, 0.75f) : MenuWithA(YggUI::Ivory, 0.25f));
-			if (USizeBoxSlot* BS = Cast<USizeBoxSlot>(BB->SetContent(Bd))) { BS->SetHorizontalAlignment(HAlign_Center); BS->SetVerticalAlignment(VAlign_Center); }
+			BB->SetWidthOverride(14.f);
+			BB->SetHeightOverride(14.f);
+			UOverlay* Dot = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+			if (State == 2)
+			{
+				UImage* G = YggUI::Glow(WidgetTree, YggUI::WithA(Acc, 0.55f), FVector2D(34.f, 34.f));
+				UOverlaySlot* GS = Dot->AddChildToOverlay(G);
+				GS->SetHorizontalAlignment(HAlign_Center);
+				GS->SetVerticalAlignment(VAlign_Center);
+			}
+			UImage* Bd = YggUI::Bead(WidgetTree, State == 2 ? 8.f : 5.f, State == 2 ? Acc : State == 1 ? YggUI::Mist : YggUI::WithA(YggUI::Shade, 0.7f));
+			UOverlaySlot* DS = Dot->AddChildToOverlay(Bd);
+			DS->SetHorizontalAlignment(HAlign_Center);
+			DS->SetVerticalAlignment(VAlign_Center);
+			if (USizeBoxSlot* BS = Cast<USizeBoxSlot>(BB->SetContent(Dot))) { BS->SetHorizontalAlignment(HAlign_Center); BS->SetVerticalAlignment(VAlign_Center); }
 			Row->AddChildToHorizontalBox(BB)->SetVerticalAlignment(VAlign_Center);
-			W = Row;
 			const bool bNext = i + 1 < Page.Side.Num() && Page.Side[i + 1].StartsWith(TEXT("@"));
+			AddRight(Row, 0.f);
 			if (bNext)
 			{
-				UVerticalBoxSlot* RS = SidePanel->AddChildToVerticalBox(Row);
-				RS->SetHorizontalAlignment(HAlign_Right);
-				SideItems.Add(Row);
-				// the rope between two camps
-				W = YggUI::Line(WidgetTree, 1.f, MenuWithA(YggUI::Ivory, State >= 1 ? 0.3f : 0.12f), 12.f);
-				UVerticalBoxSlot* CS = SidePanel->AddChildToVerticalBox(W);
-				CS->SetHorizontalAlignment(HAlign_Right);
-				CS->SetPadding(FMargin(0.f, 2.f, 5.f, 2.f));
-				SideItems.Add(W);
-				continue;
+				// the thread between two camps (lit up to where you are)
+				AddRight(YggUI::Line(WidgetTree, 1.f, YggUI::WithA(YggUI::Mist, State >= 1 ? 0.4f : 0.16f), 14.f), 0.f, 6.5f);
 			}
-			Gap = 26.f;
+			else
+			{
+				AddRight(YggUI::Line(WidgetTree, 1.f, FLinearColor::Transparent, 28.f), 0.f);
+			}
 		}
 		else
 		{
-			UTextBlock* T = YggUI::Text(WidgetTree, L, 16, YggUI::Dim, 10, TEXT("Regular"), Serif);
+			UTextBlock* T = YggUI::Words(WidgetTree, L, 18, YggUI::Mist);
 			T->SetJustification(ETextJustify::Right);
 			T->SetWrapTextAt(380.f);
-			W = T;
-			Gap = 20.f;
+			AddRight(T, 20.f);
 		}
-		UVerticalBoxSlot* S = SidePanel->AddChildToVerticalBox(W);
-		S->SetHorizontalAlignment(HAlign_Right);
-		S->SetPadding(FMargin(0.f, 0.f, 0.f, Gap));
-		SideItems.Add(W);
 	}
 	SidePanel->SetRenderOpacity(0.f);
 }
@@ -496,35 +371,26 @@ void UYggMenuBase::BuildRoll()
 		S->SetHorizontalAlignment(HAlign_Center);
 		S->SetPadding(FMargin(0.f, 0.f, 0.f, Gap));
 	};
-	UYggEmblem* E = WidgetTree->ConstructWidget<UYggEmblem>(UYggEmblem::StaticClass());
-	E->Diameter = 120.f;
-	USizeBox* SB = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-	SB->SetWidthOverride(120.f);
-	SB->SetHeightOverride(120.f);
-	SB->SetContent(E);
-	Add(SB, 30.f);
-	Add(YggUI::Text(WidgetTree, TEXT("Yggdrasil's Peak"), 46, YggUI::Ivory, 0, TEXT("Regular"), Serif), 8.f);
-	Add(YggUI::Text(WidgetTree, TEXT("A CLIMB BENEATH THE WORLD TREE"), 9, YggUI::Faint, 460, TEXT("Regular")), 90.f);
+	Add(YggUI::Words(WidgetTree, TEXT("Yggdrasil's Peak"), 54, YggUI::Snow), 4.f);
+	Add(YggUI::Words(WidgetTree, TEXT("A climb beneath the World Tree"), 19, YggUI::Mist), 100.f);
 	for (int32 i = 0; i < Page.Body.Num(); ++i)
 	{
 		const FString& L = Page.Body[i];
 		if (L.StartsWith(TEXT("#")))
 		{
-			Add(YggUI::Line(WidgetTree, 24.f, MenuWithA(YggUI::Gold, 0.7f)), 14.f);
-			Add(YggUI::Text(WidgetTree, L.Mid(1).ToUpper(), 9, YggUI::Dim, 420, TEXT("Regular")), 12.f);
+			Add(YggUI::Words(WidgetTree, L.Mid(1), 17, YggUI::WithA(YggUI::Sun, 0.9f)), 8.f);
 		}
 		else
 		{
-			UTextBlock* T = YggUI::Text(WidgetTree, L, 20, YggUI::Ivory, 10, TEXT("Regular"), Serif);
+			UTextBlock* T = YggUI::Words(WidgetTree, L, 23, YggUI::Snow);
 			T->SetJustification(ETextJustify::Center);
-			T->SetWrapTextAt(620.f);
+			T->SetWrapTextAt(640.f);
 			const bool bNextHead = i + 1 >= Page.Body.Num() || Page.Body[i + 1].StartsWith(TEXT("#"));
-			Add(T, bNextHead ? 64.f : 6.f);
+			Add(T, bNextHead ? 66.f : 6.f);
 		}
 	}
-	Add(YggUI::Line(WidgetTree, 1.f, FLinearColor::Transparent, 60.f), 0.f);
-	Add(YggUI::Divider(WidgetTree, 60.f), 26.f);
-	Add(YggUI::Text(WidgetTree, TEXT("Thank you for climbing."), 24, YggUI::Ivory, 10, TEXT("Regular"), Serif), 0.f);
+	Add(YggUI::Line(WidgetTree, 1.f, FLinearColor::Transparent, 70.f), 0.f);
+	Add(YggUI::Words(WidgetTree, TEXT("Thank you for climbing."), 28, YggUI::Snow), 0.f);
 }
 
 void UYggMenuBase::BuildPrompts()
@@ -548,14 +414,58 @@ void UYggMenuBase::BuildPrompts()
 		UHorizontalBox* Row = YggUI::Prompts(WidgetTree, k == 0 ? Items : Pad);
 		Row->SetVisibility(k == 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 		UCanvasPanelSlot* S = Canvas->AddChildToCanvas(Row);
-		S->SetAnchors(FAnchors(0.94f, 1.f));
+		S->SetAnchors(FAnchors(0.95f, 1.f));
 		S->SetAlignment(FVector2D(1.f, 0.5f));
-		S->SetPosition(FVector2D(0.f, -50.f));
+		S->SetPosition(FVector2D(0.f, -54.f));
 		S->SetAutoSize(true);
 		S->SetZOrder(5);
 		FadeWithWords.Add(Row);
 		(k == 0 ? PromptRow : PadRow) = Row;
 	}
+}
+
+void UYggMenuBase::UpdateFateWorld()
+{
+	UWorld* World = GetWorld();
+	if (Page.Fate == YggFate::None || !World)
+	{
+		RemoveFateWorld();
+		return;
+	}
+	if (!FateVolume.IsValid())
+	{
+		UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/UI/Materials/M_PP_Fate.M_PP_Fate"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+		if (!M) { return; }
+		FActorSpawnParameters P;
+		P.ObjectFlags |= RF_Transient;
+		APostProcessVolume* V = World->SpawnActor<APostProcessVolume>(P);
+		if (!V) { return; }
+		V->bUnbound = true;
+		V->Priority = 100000.f;
+		V->BlendWeight = 1.f;
+		FateMID = UMaterialInstanceDynamic::Create(M, V);
+		V->Settings.WeightedBlendables.Array.Add(FWeightedBlendable(1.f, FateMID));
+		FateVolume = V;
+	}
+	if (FateMID)
+	{
+		FateMID->SetScalarParameterValue(TEXT("Fate"), float(Page.Fate));
+		FateMID->SetScalarParameterValue(TEXT("T"), 0.f);
+		FateMID->SetScalarParameterValue(TEXT("Amount"), 0.f);
+	}
+}
+
+void UYggMenuBase::RemoveFateWorld()
+{
+	if (FateVolume.IsValid()) { FateVolume->Destroy(); }
+	FateVolume = nullptr;
+	FateMID = nullptr;
+}
+
+void UYggMenuBase::NativeDestruct()
+{
+	RemoveFateWorld();
+	Super::NativeDestruct();
 }
 
 void UYggMenuBase::SetColumnVisible(bool bVisible)
@@ -662,38 +572,39 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	Age += InDeltaTime;
 	PageAge += InDeltaTime;
-	// the menu breathes in: the veil first, then the column slides in, the options one after another (a death slower)
-	SetRenderOpacity(YggUI::Ease(Age * (Page.Tone == ETone::Death ? 0.8f : 2.2f)));
+	const FVector2D View = MyGeometry.GetLocalSize();
+	const bool bFate = Page.Fate != YggFate::None;
+	// the menu comes in: the shadow first, then the words (a death slower)
+	SetRenderOpacity(YggUI::Ease(Age * (bFate ? 0.9f : 2.4f)));
+	YggUI::TickVeil(VeilMID, Age, View);
 	Words = FMath::FInterpConstantTo(Words, WordsTarget, InDeltaTime, 1.6f);   // ~0.6 s to fade
 	const float W = YggUI::Ease(Words);
 	const bool bCentre = Page.bModal || Page.bSplash;
 	if (Column)
 	{
-		const float C = YggUI::Ease(PageAge * (Page.bSplash ? 0.9f : 2.6f));
+		const float C = YggUI::Ease((PageAge - (bFate ? 0.5f : 0.f)) * (Page.bSplash ? 0.8f : 2.4f));
 		Column->SetRenderOpacity(C * W);
-		Column->SetRenderTranslation(bCentre ? FVector2D(0.f, 14.f * (1.f - C)) : FVector2D(-22.f * (1.f - C) - 18.f * (1.f - W), 0.f));
+		Column->SetRenderTranslation(bCentre ? FVector2D(0.f, 12.f * (1.f - C)) : FVector2D(-20.f * (1.f - C) - 18.f * (1.f - W), 0.f));
 		if (WordsTarget <= 0.f && Words <= 0.001f && Column->GetVisibility() != ESlateVisibility::Hidden) { Column->SetVisibility(ESlateVisibility::Hidden); }
 	}
 	if (SidePanel)
 	{
-		const float C = YggUI::Ease((PageAge - 0.25f) * 2.2f);
+		const float C = YggUI::Ease((PageAge - 0.3f) * 2.f);
 		SidePanel->SetRenderOpacity(C * W);
-		SidePanel->SetRenderTranslation(FVector2D(20.f * (1.f - C), 0.f));
+		SidePanel->SetRenderTranslation(FVector2D(18.f * (1.f - C), 0.f));
 	}
 	if (DimLayer)
 	{
-		const float Target = Page.bModal ? 0.6f : (Page.Tone == ETone::Death ? 0.3f : 0.f);
-		DimNow = FMath::FInterpTo(DimNow, Target, InDeltaTime, 6.f);
+		DimNow = FMath::FInterpTo(DimNow, Page.bModal ? 0.55f : 0.f, InDeltaTime, 6.f);
 		DimLayer->SetRenderOpacity(DimNow);
 	}
 	if (ToneGlow && Page.Tone == ETone::Summit) { ToneGlow->SetRenderOpacity(YggUI::Ease(PageAge * 0.5f) * (0.85f + 0.15f * FMath::Sin(Age * 0.6f))); }
 	if (Roll && Page.bRoll)
 	{
-		const FVector2D View = MyGeometry.GetLocalSize();
 		const float H = Roll->GetDesiredSize().Y;
 		// (a flag, not a negative position: the roll's top is above the screen most of the time)
 		if (!bRollStarted && H > 1.f) { RollY = View.Y * 0.55f; bRollStarted = true; }
-		RollY -= 36.f * InDeltaTime;
+		RollY -= 34.f * InDeltaTime;
 		if (RollY + H < 0.f) { RollY = View.Y; }
 		Roll->SetRenderTranslation(FVector2D(0.f, RollY));
 		Roll->SetRenderOpacity(YggUI::Ease(PageAge * 1.5f) * W);
@@ -703,50 +614,57 @@ void UYggMenuBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	{
 		for (int32 i = 0; i < OptButtons.Num(); ++i) { if (OptButtons[i] && OptButtons[i]->IsHovered()) { Selected = i; } }
 	}
-	const FLinearColor Acc = Accent();
-	for (int32 k = 0; k < RealmBeads.Num(); ++k)
-	{
-		// a light that wanders slowly along the nine realms and back
-		const float Pos = 4.f + 4.f * FMath::Sin(Age * 0.35f);
-		const float L = FMath::Clamp(1.f - FMath::Abs(Pos - k) * 0.8f, 0.f, 1.f);
-		if (RealmBeads[k]) { RealmBeads[k]->SetColorAndOpacity(FMath::Lerp(YggUI::Faint, Acc, L)); }
-	}
+	// the lit word: warm snow-white, a soft glow that breathes and drifts a little, like light through moving cloud
+	const float Drift = FMath::Sin(Age * 0.45f) * 10.f;
+	const float Breathe = 0.86f + 0.14f * FMath::Sin(Age * 0.8f + 1.3f);
 	for (int32 i = 0; i < OptTexts.Num(); ++i)
 	{
-		const float Target = i == Selected ? 1.f : 0.f;
-		OptHot[i] = FMath::FInterpTo(OptHot[i], Target, InDeltaTime, 14.f);
+		OptHot[i] = FMath::FInterpTo(OptHot[i], i == Selected ? 1.f : 0.f, InDeltaTime, 12.f);
 		const float H = OptHot[i];
-		const float In = YggUI::Ease((PageAge - 0.2f - 0.07f * i) * 4.f);
+		const float In = YggUI::Ease((PageAge - (bFate ? 0.9f : 0.18f) - 0.07f * i) * 4.f);
 		if (OptButtons[i])
 		{
 			OptButtons[i]->SetRenderOpacity(In);
-			OptButtons[i]->SetRenderTranslation(Page.bModal ? FVector2D(0.f, 8.f * (1.f - In)) : FVector2D(6.f * H - 12.f * (1.f - In), 0.f));
+			OptButtons[i]->SetRenderTranslation(Page.bModal ? FVector2D(0.f, 8.f * (1.f - In)) : FVector2D(8.f * H - 12.f * (1.f - In), 0.f));
 		}
-		if (OptTexts[i]) { OptTexts[i]->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Dim, YggUI::Ivory, H))); }
-		if (OptSubs[i]) { OptSubs[i]->SetRenderOpacity(FMath::Lerp(0.6f, 1.f, H)); }
-		if (OptNums[i]) { OptNums[i]->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Faint, Acc, H))); }
-		if (OptBands[i]) { OptBands[i]->SetRenderOpacity(H); }
-		if (OptBars[i]) { OptBars[i]->SetRenderOpacity(H); }
+		if (OptTexts[i]) { OptTexts[i]->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, H))); }
+		if (OptSubs[i]) { OptSubs[i]->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Shade, YggUI::Mist, H))); }
+		if (OptGlows[i])
+		{
+			OptGlows[i]->SetRenderOpacity(H * Breathe);
+			OptGlows[i]->SetRenderTranslation(FVector2D(Page.bModal ? 0.f : Drift + 215.f, 0.f));   // the 8 px glow sits at the left: its light centres on the word
+		}
 	}
 	if (TitleLetters.Num() > 0) { AnimateFate(); }
 	if (SplashPrompt)
 	{
-		SplashPrompt->SetRenderOpacity(YggUI::Ease((PageAge - 2.f) * 1.2f) * (0.4f + 0.6f * (0.5f + 0.5f * FMath::Sin(Age * 2.1f))));
+		SplashPrompt->SetRenderOpacity(YggUI::Ease((PageAge - 2.f) * 1.2f) * (0.45f + 0.55f * (0.5f + 0.5f * FMath::Sin(Age * 1.8f))));
 	}
-	YggUI::JitterGrain(GrainImg, GrainClock, InDeltaTime);
 	if (PromptRow && PadRow)
 	{
 		PromptRow->SetVisibility(bPad ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 		PadRow->SetVisibility(bPad ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
-	if (Blur) { Blur->SetBlurStrength(7.f * YggUI::Ease(Age * 2.5f)); }
+	const float BlurTarget = bFate ? 0.f : 7.f;
+	if (Blur) { Blur->SetBlurStrength(BlurTarget * YggUI::Ease(Age * 2.5f)); }
+	float Fade = 1.f;
 	if (bClosing)
 	{
 		CloseT += InDeltaTime;
-		const float K = 1.f - YggUI::Ease(CloseT / 0.22f);
-		SetRenderOpacity(K);
-		if (Blur) { Blur->SetBlurStrength(7.f * K); }
-		if (CloseT > 0.24f) { RemoveFromParent(); }
+		Fade = 1.f - YggUI::Ease(CloseT / 0.22f);
+		SetRenderOpacity(Fade);
+		if (Blur) { Blur->SetBlurStrength(BlurTarget * Fade); }
+	}
+	if (FateMID)
+	{
+		FateMID->SetScalarParameterValue(TEXT("T"), PageAge);
+		FateMID->SetScalarParameterValue(TEXT("Amount"), YggUI::Ease(PageAge * 0.8f) * Fade);
+		FateMID->SetScalarParameterValue(TEXT("Aspect"), View.Y > 1.f ? float(View.X / View.Y) : 1.7778f);
+	}
+	if (bClosing && CloseT > 0.24f)
+	{
+		RemoveFateWorld();
+		RemoveFromParent();
 	}
 }
 
@@ -765,39 +683,37 @@ namespace
 
 void UYggMenuBase::AnimateFate()
 {
-	const float t = PageAge;
+	// the words come in after the world has begun to turn
+	const float t = PageAge - 0.5f;
 	const int32 N = TitleLetters.Num();
-	if (!TitleBox) { return; }
-	const FGeometry& OG = TitleBox->GetCachedGeometry();
-	TArray<FBox2f> Rects;
 	for (int32 i = 0; i < N; ++i)
 	{
 		UTextBlock* L = TitleLetters[i];
 		if (!L) { continue; }
 		FRandomStream R(i * 7919 + 13);
 		const float r1 = R.FRandRange(-1.f, 1.f), r2 = R.FRandRange(-1.f, 1.f), r3 = R.FRand();
-		const float In = YggUI::Ease((t - 0.25f - 0.06f * i) * 3.f);
+		const float In = YggUI::Ease((t - 0.06f * i) * 2.5f);
 		FVector2D Off(0.f, 0.f);
 		float Ang = 0.f, Op = In, Sc = 1.f;
-		FLinearColor C = YggUI::Ivory;
+		FLinearColor C = YggUI::Snow;
 		switch (Page.Fate)
 		{
 		case YggFate::Frozen:
 		{
-			// a shiver that stops as the frost takes each letter, left to right
-			const float Amp = 2.4f * (1.f - YggUI::Ease((t - 0.4f) / 1.8f));
+			// a shiver that stops as the cold takes each letter, left to right, into the blue of ice
+			const float Amp = 2.6f * (1.f - YggUI::Ease((t - 0.3f) / 2.2f));
 			Off = FVector2D(FMath::Sin(t * 47.f + i * 3.1f) * Amp, FMath::Cos(t * 53.f + i * 4.7f) * Amp * 0.6f);
-			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.76f, 0.9f, 1.f, 0.98f), YggUI::Ease((t - 0.5f - 0.11f * i) / 1.4f));
+			C = FMath::Lerp(YggUI::Snow, YggUI::Ice, YggUI::Ease((t - 0.6f - 0.12f * i) / 1.6f));
 			break;
 		}
 		case YggFate::Breathless:
 		{
 			const float B = YggFate::Breath(t - 0.6f);
 			const float Drop = FMath::Pow(FMath::Max(0.f, FMath::Sin(t * 0.83f + i * 1.7f)), 10.f);
-			Op = In * (0.45f + 0.55f * B) * (1.f - 0.7f * Drop);
-			Sc = 1.f + 0.03f * B;
+			Op = In * (0.4f + 0.6f * B) * (1.f - 0.7f * Drop);
+			Sc = 1.f + 0.035f * B;
 			Off.X = (i - (N - 1) * 0.5f) * 4.f * YggUI::Ease(t / 7.f);
-			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.7f, 0.76f, 0.98f, 0.96f), 0.45f);
+			C = FMath::Lerp(YggUI::Snow, YggUI::Hex(176, 186, 236), 0.45f);
 			break;
 		}
 		case YggFate::Fallen:
@@ -805,39 +721,40 @@ void UYggMenuBase::AnimateFate()
 			// each letter drops from above, bounces, and lands a little crooked
 			const float D = 0.2f + 0.075f * i;
 			const float K = FMath::Clamp((t - D) / 0.6f, 0.f, 1.f);
-			Off.Y = -160.f * (1.f - FateBounce(K)) + (r2 * 0.5f + 0.5f) * 9.f * K;
+			Off.Y = -180.f * (1.f - FateBounce(K)) + (r2 * 0.5f + 0.5f) * 10.f * K;
 			Ang = r1 * 9.f * YggUI::Ease(K * 1.4f);
 			Op = YggUI::Ease(K * 6.f);
 			break;
 		}
 		case YggFate::Buried:
 		{
+			// the letters settle and sink a little under the weight, going the colour of packed snow
 			const float S = YggUI::Ease((t - 1.0f - 0.05f * i) / 3.2f);
-			Off.Y = 18.f * S * (0.7f + 0.3f * r3);
+			Off.Y = 20.f * S * (0.7f + 0.3f * r3);
 			Ang = r1 * 3.f * S;
-			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.86f, 0.9f, 0.96f, 0.97f), 0.5f * S);
+			C = FMath::Lerp(YggUI::Snow, YggUI::Hex(214, 224, 238), 0.6f * S);
 			break;
 		}
 		case YggFate::Parched:
-			Off = FVector2D(FMath::Sin(t * 1.9f + i * 1.3f) * 0.9f, FMath::Sin(t * 2.7f + i * 0.8f) * 1.8f);
-			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.9f, 0.74f, 0.52f, 0.97f), YggUI::Ease((t - 0.4f) / 1.5f));
+			Off = FVector2D(FMath::Sin(t * 1.9f + i * 1.3f) * 1.f, FMath::Sin(t * 2.7f + i * 0.8f) * 2.f);
+			C = FMath::Lerp(YggUI::Snow, YggUI::Hex(232, 196, 148), YggUI::Ease((t - 0.4f) / 1.5f));
 			break;
 		case YggFate::Starved:
 		{
-			const float W = 0.5f + 0.5f * FMath::Sin(t * 0.7f + i * 2.3f);
-			Op = In * (0.38f + 0.62f * W);
-			Off.Y = 5.f * YggUI::Ease(t / 6.f) * (i % 2 ? 1.f : 0.4f);
-			C = FMath::Lerp(YggUI::Ivory, FLinearColor(0.74f, 0.73f, 0.7f, 0.95f), 0.7f);
+			const float Wv = 0.5f + 0.5f * FMath::Sin(t * 0.7f + i * 2.3f);
+			Op = In * (0.35f + 0.65f * Wv);
+			Off.Y = 6.f * YggUI::Ease(t / 6.f) * (i % 2 ? 1.f : 0.4f);
+			C = FMath::Lerp(YggUI::Snow, YggUI::Hex(190, 188, 182), 0.7f);
 			break;
 		}
 		case YggFate::Lost:
 		{
-			// written by hand, a letter at a time, then the word comes apart in the fog
-			const float W = YggUI::Ease((t - 0.4f - 0.11f * i) * 5.f);
+			// written by hand, a letter at a time, then the word comes apart in the whiteout
+			const float Wr = YggUI::Ease((t - 0.4f - 0.11f * i) * 5.f);
 			const float Dr = YggUI::Ease((t - 3.6f) / 9.f);
 			Off = FVector2D((i - (N - 1) * 0.5f) * 7.f * Dr, FMath::Sin(i * 1.9f + 0.5f) * 7.f * Dr);
 			Ang = r1 * 4.f * Dr;
-			Op = W * (1.f - (i % 2 ? 0.45f * YggUI::Ease((t - 4.5f) / 8.f) : 0.f));
+			Op = Wr * (1.f - (i % 2 ? 0.45f * YggUI::Ease((t - 4.5f) / 8.f) : 0.f));
 			break;
 		}
 		default:
@@ -848,16 +765,6 @@ void UYggMenuBase::AnimateFate()
 		L->SetRenderOpacity(Op);
 		L->SetRenderScale(FVector2D(Sc, Sc));
 		L->SetColorAndOpacity(FSlateColor(C));
-		const FGeometry& LG = L->GetCachedGeometry();
-		const FVector2D P = OG.AbsoluteToLocal(LG.GetAbsolutePosition());
-		const FVector2D S = LG.GetLocalSize();
-		Rects.Add(FBox2f(FVector2f(P), FVector2f(P + S)));
-	}
-	if (TitleFx) { TitleFx->State->Letters = Rects; }
-	if (ScreenFx)
-	{
-		const FVector2D Sz = OG.GetLocalSize();
-		ScreenFx->State->AnchorAbs = FVector2f(OG.LocalToAbsolute(FVector2D(Sz.X + 24.f, Sz.Y * 0.6f)));
 	}
 	// the jolt when the fallen word hits
 	if (Page.Fate == YggFate::Fallen && Column && t > 0.9f && t < 1.35f)
@@ -904,9 +811,4 @@ FReply UYggMenuBase::NativeOnMouseMove(const FGeometry& InGeometry, const FPoint
 {
 	if (!InMouseEvent.GetCursorDelta().IsNearlyZero()) { bMouseMoved = true; bPad = false; }
 	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
-}
-
-void UYggMenuBase::NativeOnFocusLost(const FFocusEvent& InFocusEvent)
-{
-	Super::NativeOnFocusLost(InFocusEvent);
 }

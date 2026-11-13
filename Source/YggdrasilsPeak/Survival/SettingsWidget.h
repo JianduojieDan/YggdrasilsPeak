@@ -18,12 +18,11 @@ class UYggUIProxy;
 
 /**
  *  Settings (F2 on the mountain, from the pause menu and the start menu; console ygg.Settings), in the menus' language
- *  (UYggMenuBase / YggUIStyle). v2, 2026-11-13: the same frame of hairlines, grain and key caps as the menus; six tabs
- *  - GAME, GRAPHICS, DISPLAY, SOUND, CONTROLS, ACCESSIBILITY - with a gold underline and Q / E key caps; rows of a
- *  fixed width (label left, control right, a quiet rule under each): choices are selectors (‹ value ›, one pip per
- *  choice), sliders a hairline with a gold fill and light numerals, key bindings a key cap (click, then press a key).
- *  The chosen row sits in the band of soft light. What it does stands in a fixed panel on the right (title, the line,
- *  every choice with the current one marked) - it never moves the rows (to-do #62).
+ *  (UYggMenuBase / YggUIStyle). v3, 2026-11-13: light, not lines - six tabs as serif words between Q / E key caps (the
+ *  open one lit); rows of a fixed width, label left in the serif, control right: choices are ‹ value ›, sliders a soft
+ *  line with a sunlit fill, key bindings a key cap (click, then press a key). The chosen row is lit like a chosen
+ *  option (warm words, a soft glow behind). What it does stands in a fixed panel on the right (the line, every choice
+ *  with the current one lit) - it never moves the rows (to-do #62).
  *  Every value lives in YggSettings (saved in GameUserSettings.ini) and applies at once.
  *  Keys: Up/Down rows, Left/Right change, Q/E or the bumpers change tab, Enter rebinds a key, Esc goes back.
  */
@@ -109,7 +108,8 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> DescTitle;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> DescText;
 	UPROPERTY(Transient) TObjectPtr<UVerticalBox> DescChoices;
-	UPROPERTY(Transient) TObjectPtr<UImage> GrainImg;
+	UPROPERTY(Transient) TObjectPtr<UImage> GrainImg;   // (v2; unused)
+	UPROPERTY(Transient) TObjectPtr<class UMaterialInstanceDynamic> VeilMID;
 	UPROPERTY(Transient) TObjectPtr<UWidget> KeysRow;
 	UPROPERTY(Transient) TObjectPtr<UWidget> PadKeysRow;
 	UPROPERTY(Transient) TObjectPtr<class UBackgroundBlur> Blur;

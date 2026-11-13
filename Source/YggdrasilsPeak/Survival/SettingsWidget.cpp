@@ -33,6 +33,7 @@
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 static FAutoConsoleCommandWithWorldAndArgs CmdSettings(TEXT("ygg.Settings"), TEXT("ygg.Settings [tab 0-5]: opens or closes the settings (same as F2); a tab number opens that tab."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
@@ -49,6 +50,22 @@ static FAutoConsoleCommandWithWorldAndArgs CmdSettings(TEXT("ygg.Settings"), TEX
 namespace
 {
 	float SEase(float T) { T = FMath::Clamp(T, 0.f, 1.f); return T * T * (3.f - 2.f * T); }
+	/** "MOUSE SPEED" -> "Mouse speed" (the rows are defined in capitals; v3 speaks in sentence case). Acronyms stay. */
+	FString SettingsSentence(const FString& In)
+	{
+		static const TCHAR* Keep[] = { TEXT("HUD"), TEXT("FOV"), TEXT("DLSS"), TEXT("FSR"), TEXT("TSR"), TEXT("FPS"), TEXT("UI"), TEXT("O2") };
+		TArray<FString> W;
+		In.ParseIntoArray(W, TEXT(" "));
+		for (int32 i = 0; i < W.Num(); ++i)
+		{
+			bool bKeep = false;
+			for (const TCHAR* K : Keep) { if (W[i].Equals(K, ESearchCase::CaseSensitive)) { bKeep = true; } }
+			if (bKeep) { continue; }
+			W[i] = W[i].ToLower();
+			if (i == 0 && W[i].Len() > 0) { W[i][0] = FChar::ToUpper(W[i][0]); }
+		}
+		return FString::Join(W, TEXT(" "));
+	}
 	USettingsWidget* FindOpenSettings(APlayerController* PC)
 	{
 		TArray<UUserWidget*> Open;
@@ -282,9 +299,9 @@ void USettingsWidget::DefineTabs()
 
 UButton* USettingsWidget::TextButton(const FString& Label, int32 Size, UTextBlock*& OutText, TFunction<void()> OnClick)
 {
-	UImage* Bd = nullptr;
-	UButton* B = YggUI::Option(WidgetTree, Label, Size, OutText, Bd);
-	if (Bd) { Bd->SetVisibility(ESlateVisibility::Collapsed); }
+	UButton* B = YggUI::Bare(WidgetTree);
+	OutText = YggUI::Words(WidgetTree, Label, Size, YggUI::Mist);
+	B->SetContent(OutText);
 	UYggUIProxy* P = NewObject<UYggUIProxy>(this);
 	P->OnClick = OnClick;
 	FScriptDelegate D;
@@ -311,7 +328,7 @@ void USettingsWidget::Build()
 {
 	Canvas = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("Canvas"));
 	WidgetTree->RootWidget = Canvas;
-	Serif = YggUI::MakeSerif(this);
+	Serif = YggUI::SerifFont();
 	// on the mountain the world behind goes soft (not over the start menu's pictures)
 	if (!bUIOnly)
 	{
@@ -322,56 +339,52 @@ void USettingsWidget::Build()
 		BlS->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
 		BlS->SetOffsets(FMargin(0.f));
 	}
-	// a full-screen menu: the whole world steps back a little, the veil darkens the side of the words
+	// a full-screen menu: the whole world steps back a little, cloud shadow darkens the side of the words
 	{
 		UImage* Base = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
 		FSlateBrush BB;
 		BB.DrawAs = ESlateBrushDrawType::Box;
 		BB.TintColor = FSlateColor(FLinearColor::White);
 		Base->SetBrush(BB);
-		Base->SetColorAndOpacity(FLinearColor(YggUI::Ink.R, YggUI::Ink.G, YggUI::Ink.B, 0.45f));
+		Base->SetColorAndOpacity(YggUI::WithA(YggUI::InkC, 0.3f));
 		Base->SetVisibility(ESlateVisibility::HitTestInvisible);
 		UCanvasPanelSlot* BS = Canvas->AddChildToCanvas(Base);
 		BS->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
 		BS->SetOffsets(FMargin(0.f));
 	}
-	YggUI::Layer(WidgetTree, Canvas, YggUI::VeilTexture(), YggUI::Ink);
-	YggUI::Layer(WidgetTree, Canvas, YggUI::VignetteTexture(), FLinearColor(YggUI::Ink.R, YggUI::Ink.G, YggUI::Ink.B, 0.6f));
+	UMaterialInstanceDynamic* MID = nullptr;
+	YggUI::CloudVeil(WidgetTree, Canvas, this, 0.8f, 0.5f, MID);
+	VeilMID = MID;
 
 	UVerticalBox* Col = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Col->AddChildToVerticalBox(YggUI::Text(WidgetTree, TEXT("THE CLIMBER'S KIT"), 10, YggUI::Dim, 460, TEXT("Regular")))->SetPadding(FMargin(0.f, 0.f, 0.f, 6.f));
-	Col->AddChildToVerticalBox(YggUI::Text(WidgetTree, TEXT("Settings"), 58, YggUI::Ivory, 0, TEXT("Regular"), Serif))->SetPadding(FMargin(0.f, 0.f, 0.f, 10.f));
-	{
-		UHorizontalBox* RuleRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		RuleRow->AddChildToHorizontalBox(YggUI::Line(WidgetTree, 300.f))->SetVerticalAlignment(VAlign_Center);
-		UHorizontalBoxSlot* BS = RuleRow->AddChildToHorizontalBox(YggUI::Bead(WidgetTree, 5.f, YggUI::Gold));
-		BS->SetVerticalAlignment(VAlign_Center);
-		BS->SetPadding(FMargin(8.f, 0.f, 0.f, 0.f));
-		Col->AddChildToVerticalBox(RuleRow)->SetPadding(FMargin(0.f, 0.f, 0.f, 30.f));
-	}
-	// tabs: small capitals between the Q and E key caps; the chosen one is lit and underlined in gold
+	Col->AddChildToVerticalBox(YggUI::Words(WidgetTree, TEXT("Settings"), 76, YggUI::Snow))->SetPadding(FMargin(0.f, 0.f, 0.f, 28.f));
+	// tabs: serif words between the Q and E key caps; the open one is lit
 	UHorizontalBox* TabRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	TabRow->AddChildToHorizontalBox(YggUI::KeyCap(WidgetTree, TEXT("Q")))->SetVerticalAlignment(VAlign_Top);
+	TabRow->AddChildToHorizontalBox(YggUI::KeyCap(WidgetTree, TEXT("Q")))->SetVerticalAlignment(VAlign_Center);
 	for (int32 t = 0; t < Tabs.Num(); ++t)
 	{
-		UVerticalBox* TV = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		UOverlay* TO = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		UImage* TL = YggUI::Glow(WidgetTree, YggUI::WithA(YggUI::Sun, 0.26f), FVector2D(200.f, 80.f));
+		TL->SetRenderOpacity(0.f);
+		UOverlaySlot* GS = TO->AddChildToOverlay(TL);
+		GS->SetHorizontalAlignment(HAlign_Center);
+		GS->SetVerticalAlignment(VAlign_Center);
 		UTextBlock* TT = nullptr;
-		UButton* TB = TextButton(Tabs[t].Name, 12, TT, [this, t]() { SetTab(t); });
-		TV->AddChildToVerticalBox(TB);
-		UImage* TL = YggUI::Line(WidgetTree, 10.f, YggUI::Gold, 2.f);
-		UVerticalBoxSlot* LS = TV->AddChildToVerticalBox(TL);
-		LS->SetHorizontalAlignment(HAlign_Fill);
-		LS->SetPadding(FMargin(0.f, 7.f, 0.f, 0.f));
+		UButton* TB = TextButton(Tabs[t].Name, 23, TT, [this, t]() { SetTab(t); });
+		UOverlaySlot* BS = TO->AddChildToOverlay(TB);
+		BS->SetHorizontalAlignment(HAlign_Center);
+		BS->SetVerticalAlignment(VAlign_Center);
 		TabTexts.Add(TT); TabLines.Add(TL); TabHot.Add(0.f);
-		TabRow->AddChildToHorizontalBox(TV)->SetPadding(FMargin(t == 0 ? 24.f : 34.f, 0.f, 0.f, 0.f));
+		UHorizontalBoxSlot* TS = TabRow->AddChildToHorizontalBox(TO);
+		TS->SetPadding(FMargin(t == 0 ? 26.f : 34.f, 0.f, 0.f, 0.f));
+		TS->SetVerticalAlignment(VAlign_Center);
 	}
 	{
 		UHorizontalBoxSlot* ES = TabRow->AddChildToHorizontalBox(YggUI::KeyCap(WidgetTree, TEXT("E")));
-		ES->SetPadding(FMargin(28.f, 0.f, 0.f, 0.f));
-		ES->SetVerticalAlignment(VAlign_Top);
+		ES->SetPadding(FMargin(30.f, 0.f, 0.f, 0.f));
+		ES->SetVerticalAlignment(VAlign_Center);
 	}
-	Col->AddChildToVerticalBox(TabRow)->SetPadding(FMargin(0.f, 0.f, 0.f, 18.f));
-	Col->AddChildToVerticalBox(YggUI::Line(WidgetTree, 860.f, YggUI::Rule))->SetPadding(FMargin(0.f, 0.f, 0.f, 4.f));
+	Col->AddChildToVerticalBox(TabRow)->SetPadding(FMargin(0.f, 0.f, 0.f, 24.f));
 
 	Pages = WidgetTree->ConstructWidget<UWidgetSwitcher>(UWidgetSwitcher::StaticClass());
 	for (int32 t = 0; t < Tabs.Num(); ++t)
@@ -383,45 +396,40 @@ void USettingsWidget::Build()
 	Col->AddChildToVerticalBox(Pages);
 	UHorizontalBox* Foot = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 	UTextBlock* RT = nullptr;
-	ResetBtn = TextButton(TEXT("Reset this tab"), 11, RT, [this]() { YggSettings::ResetTab(GetWorld(), TabIndex); Refresh(); });
+	ResetBtn = TextButton(TEXT("Reset this tab"), 19, RT, [this]() { YggSettings::ResetTab(GetWorld(), TabIndex); Refresh(); });
 	ResetText = RT;
-	Foot->AddChildToHorizontalBox(ResetBtn)->SetPadding(FMargin(0.f, 0.f, 18.f, 0.f));
-	Foot->AddChildToHorizontalBox(YggUI::Text(WidgetTree, TEXT("·"), 11, YggUI::Faint, 0))->SetPadding(FMargin(0.f, 1.f, 18.f, 0.f));
+	Foot->AddChildToHorizontalBox(ResetBtn)->SetPadding(FMargin(24.f, 0.f, 18.f, 0.f));
+	Foot->AddChildToHorizontalBox(YggUI::Words(WidgetTree, TEXT("·"), 19, YggUI::Shade))->SetPadding(FMargin(0.f, 0.f, 18.f, 0.f));
 	UTextBlock* BT = nullptr;
-	BackBtn = TextButton(TEXT("Back"), 11, BT, [this]() { Close(); });
+	BackBtn = TextButton(TEXT("Back"), 19, BT, [this]() { Close(); });
 	BackText = BT;
 	Foot->AddChildToHorizontalBox(BackBtn);
-	Col->AddChildToVerticalBox(Foot)->SetPadding(FMargin(0.f, 26.f, 0.f, 0.f));
+	Col->AddChildToVerticalBox(Foot)->SetPadding(FMargin(0.f, 30.f, 0.f, 0.f));
 
 	UCanvasPanelSlot* CS = Canvas->AddChildToCanvas(Col);
 	// the top stays put whichever tab is open (centred, the title jumped when a tab had fewer rows)
 	CS->SetAnchors(FAnchors(0.085f, 0.5f));
 	CS->SetAlignment(FVector2D(0.f, 0.f));
-	CS->SetPosition(FVector2D(0.f, -405.f));
+	CS->SetPosition(FVector2D(-24.f, -420.f));
 	CS->SetAutoSize(true);
 
 	// what the chosen row does: a fixed place on the right, so nothing moves when the words change (to-do #62)
 	Desc = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	DescTitle = YggUI::Text(WidgetTree, TEXT(""), 10, YggUI::Gold, 460, TEXT("Regular"));
-	Desc->AddChildToVerticalBox(DescTitle);
-	Desc->AddChildToVerticalBox(YggUI::Line(WidgetTree, 48.f, YggUI::Hair))->SetPadding(FMargin(0.f, 14.f, 0.f, 18.f));
-	DescText = YggUI::Text(WidgetTree, TEXT(""), 19, YggUI::Ivory, 10, TEXT("Regular"), Serif);
-	DescText->SetWrapTextAt(420.f);
+	DescTitle = YggUI::Words(WidgetTree, TEXT(""), 19, YggUI::Sun);
+	Desc->AddChildToVerticalBox(DescTitle)->SetPadding(FMargin(0.f, 0.f, 0.f, 12.f));
+	DescText = YggUI::Words(WidgetTree, TEXT(""), 25, YggUI::Snow);
+	DescText->SetWrapTextAt(460.f);
 	Desc->AddChildToVerticalBox(DescText);
 	DescChoices = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Desc->AddChildToVerticalBox(DescChoices)->SetPadding(FMargin(0.f, 26.f, 0.f, 0.f));
+	Desc->AddChildToVerticalBox(DescChoices)->SetPadding(FMargin(0.f, 30.f, 0.f, 0.f));
 	{
 		UCanvasPanelSlot* DS = Canvas->AddChildToCanvas(Desc);
 		DS->SetAnchors(FAnchors(0.085f, 0.5f));
 		DS->SetAlignment(FVector2D(0.f, 0.f));
-		DS->SetPosition(FVector2D(960.f, -190.f));
-		DS->SetSize(FVector2D(440.f, 420.f));
+		DS->SetPosition(FVector2D(1000.f, -200.f));
+		DS->SetSize(FVector2D(480.f, 460.f));
 	}
 
-	YggUI::FChrome C = YggUI::Chrome(WidgetTree, Canvas, 0.06f, true);
-	if (C.Crumb) { C.Crumb->SetText(FText::FromString(TEXT("YGGDRASIL'S PEAK      /      SETTINGS"))); }
-	if (C.Right) { C.Right->SetText(FText::FromString(TEXT("SAVED AS YOU CHANGE THEM"))); }
-	if (C.Foot) { C.Foot->SetText(FText::FromString(TEXT("EVEREST  ·  THE SOUTH COL ROUTE"))); }
 	for (int32 k = 0; k < 2; ++k)
 	{
 		UHorizontalBox* Keys = k == 0
@@ -429,13 +437,12 @@ void USettingsWidget::Build()
 			: YggUI::Prompts(WidgetTree, { { TEXT("D-pad"), TEXT("Choose") }, { TEXT("D-pad"), TEXT("Change") }, { TEXT("LB RB"), TEXT("Tab") }, { TEXT("B"), TEXT("Back") } });
 		Keys->SetVisibility(k == 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 		UCanvasPanelSlot* KS = Canvas->AddChildToCanvas(Keys);
-		KS->SetAnchors(FAnchors(0.94f, 1.f));
+		KS->SetAnchors(FAnchors(0.95f, 1.f));
 		KS->SetAlignment(FVector2D(1.f, 0.5f));
-		KS->SetPosition(FVector2D(0.f, -50.f));
+		KS->SetPosition(FVector2D(0.f, -54.f));
 		KS->SetAutoSize(true);
 		(k == 0 ? KeysRow : PadKeysRow) = Keys;
 	}
-	GrainImg = YggUI::Grain(WidgetTree, Canvas);
 	SetTab(PendingTab);
 	SetRenderOpacity(0.f);
 }
@@ -449,25 +456,22 @@ void USettingsWidget::BuildTabPage(int32 Tab, UVerticalBox* Box)
 		Hit->SetBrushColor(FLinearColor::Transparent);
 		Hit->SetPadding(FMargin(0.f));
 		USizeBox* Width = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-		Width->SetWidthOverride(860.f);
+		Width->SetWidthOverride(900.f);
 		UOverlay* O = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
-		R.Band = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-		R.Band->SetBrush(YggUI::TextureBrush(YggUI::BandTexture(), FVector2D(256.f, 32.f)));
-		R.Band->SetColorAndOpacity(FLinearColor(0.95f, 0.88f, 0.71f, 0.15f));
+		// the chosen row is lit: a soft glow behind its words, like a chosen option
+		R.Band = YggUI::Glow(WidgetTree, YggUI::WithA(YggUI::Sun, 0.22f), FVector2D(560.f, 84.f));
 		R.Band->SetRenderOpacity(0.f);
+		R.Band->SetRenderTranslation(FVector2D(250.f, 0.f));   // the 8 px glow sits at the left: its light centres on the label
 		UOverlaySlot* BandS = O->AddChildToOverlay(R.Band);
-		BandS->SetHorizontalAlignment(HAlign_Fill);
-		BandS->SetVerticalAlignment(VAlign_Fill);
-		UVerticalBox* V = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		BandS->SetHorizontalAlignment(HAlign_Left);
+		BandS->SetVerticalAlignment(VAlign_Center);
+		R.Bar = nullptr;
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		R.Bar = YggUI::Line(WidgetTree, 2.f, YggUI::Gold, 22.f);
-		R.Bar->SetRenderOpacity(0.f);
-		UHorizontalBoxSlot* RB = Row->AddChildToHorizontalBox(R.Bar);
-		RB->SetVerticalAlignment(VAlign_Center);
-		RB->SetPadding(FMargin(0.f, 0.f, 16.f, 0.f));
-		R.LabelW = YggUI::Text(WidgetTree, R.Label, 11, YggUI::Faint, 320, TEXT("Regular"));
-		R.LabelW->SetMinDesiredWidth(300.f);
-		Row->AddChildToHorizontalBox(R.LabelW)->SetVerticalAlignment(VAlign_Center);
+		R.LabelW = YggUI::Words(WidgetTree, SettingsSentence(R.Label), 21, YggUI::Mist);
+		R.LabelW->SetMinDesiredWidth(330.f);
+		UHorizontalBoxSlot* LS = Row->AddChildToHorizontalBox(R.LabelW);
+		LS->SetVerticalAlignment(VAlign_Center);
+		LS->SetPadding(FMargin(24.f, 0.f, 0.f, 0.f));
 		// the control, at the right end of the row
 		UHorizontalBox* Ctl = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		switch (R.Kind)
@@ -475,39 +479,24 @@ void USettingsWidget::BuildTabPage(int32 Tab, UVerticalBox* Box)
 		case EKind::Choice:
 		case EKind::Cycle:
 		{
-			// < VALUE > with a pip for every choice under the value
 			UTextBlock* L = nullptr; UTextBlock* Rt = nullptr;
-			UButton* Prev = TextButton(TEXT("‹"), 18, L, [this, r]() { RowIndex = r; Change(-1); });
+			UButton* Prev = TextButton(TEXT("‹"), 26, L, [this, r]() { RowIndex = r; Change(-1); });
 			Ctl->AddChildToHorizontalBox(Prev)->SetVerticalAlignment(VAlign_Center);
-			UVerticalBox* VB = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-			R.Value = YggUI::Text(WidgetTree, TEXT(""), 12, YggUI::Ivory, 240, TEXT("Regular"));
+			R.Value = YggUI::Words(WidgetTree, TEXT(""), 20, YggUI::Snow);
 			R.Value->SetJustification(ETextJustify::Center);
-			R.Value->SetMinDesiredWidth(210.f);
-			VB->AddChildToVerticalBox(R.Value)->SetHorizontalAlignment(HAlign_Center);
-			if (R.Kind == EKind::Choice && R.Choices.Num() > 1)
-			{
-				UHorizontalBox* PipRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-				for (int32 c = 0; c < R.Choices.Num(); ++c)
-				{
-					UImage* Pip = YggUI::Line(WidgetTree, 14.f, YggUI::Hair, 2.f);
-					PipRow->AddChildToHorizontalBox(Pip)->SetPadding(FMargin(c == 0 ? 0.f : 4.f, 0.f, 0.f, 0.f));
-					R.Pips.Add(Pip);
-					Keep.Add(Pip);
-				}
-				UVerticalBoxSlot* PS = VB->AddChildToVerticalBox(PipRow);
-				PS->SetHorizontalAlignment(HAlign_Center);
-				PS->SetPadding(FMargin(0.f, 7.f, 0.f, 0.f));
-			}
-			UButton* Mid = Clickable(VB, [this, r]() { RowIndex = r; Change(1); });
+			R.Value->SetMinDesiredWidth(230.f);
+			UButton* Mid = Clickable(R.Value, [this, r]() { RowIndex = r; Change(1); });
 			Ctl->AddChildToHorizontalBox(Mid)->SetVerticalAlignment(VAlign_Center);
-			UButton* Next = TextButton(TEXT("›"), 18, Rt, [this, r]() { RowIndex = r; Change(1); });
+			UButton* Next = TextButton(TEXT("›"), 26, Rt, [this, r]() { RowIndex = r; Change(1); });
 			Ctl->AddChildToHorizontalBox(Next)->SetVerticalAlignment(VAlign_Center);
 			Keep.Add(R.Value);
+			if (L) { Keep.Add(L); }
+			if (Rt) { Keep.Add(Rt); }
 			break;
 		}
 		case EKind::Slider:
 		{
-			R.SliderW = YggUI::Slider(WidgetTree, 280.f);
+			R.SliderW = YggUI::Slider(WidgetTree, 300.f);
 			R.SliderW->SetMinValue(R.Min);
 			R.SliderW->SetMaxValue(R.Max);
 			R.SliderW->SetStepSize(R.Step);
@@ -516,22 +505,22 @@ void USettingsWidget::BuildTabPage(int32 Tab, UVerticalBox* Box)
 			P->OnValue = [this, Tab, r](float V) { FRow& X = Tabs[Tab].Rows[r]; RowIndex = r; if (X.SetF) { X.SetF(V); } };
 			FScriptDelegate D; D.BindUFunction(P, TEXT("Value")); R.SliderW->OnValueChanged.Add(D);
 			Proxies.Add(P);
-			// a slider only asks for its thumb's size: give the hairline its length; a gold fill up to the bead
+			// a slider only asks for its thumb's size: give the line its length; a sunlit fill up to the bead
 			UOverlay* Track = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
-			R.Fill = YggUI::Line(WidgetTree, 1.f, YggUI::Gold, 2.f);
+			R.Fill = YggUI::Line(WidgetTree, 1.f, YggUI::Sun, 2.f);
 			UOverlaySlot* FS = Track->AddChildToOverlay(R.Fill);
 			FS->SetHorizontalAlignment(HAlign_Left);
 			FS->SetVerticalAlignment(VAlign_Center);
 			USizeBox* SB = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-			SB->SetWidthOverride(280.f);
-			SB->SetHeightOverride(24.f);
+			SB->SetWidthOverride(300.f);
+			SB->SetHeightOverride(26.f);
 			SB->SetContent(R.SliderW);
 			Track->AddChildToOverlay(SB);
 			UHorizontalBoxSlot* S = Ctl->AddChildToHorizontalBox(Track);
 			S->SetVerticalAlignment(VAlign_Center);
-			S->SetPadding(FMargin(0.f, 0.f, 20.f, 0.f));
-			R.Value = YggUI::Text(WidgetTree, TEXT(""), 15, YggUI::Ivory, 20);
-			R.Value->SetMinDesiredWidth(64.f);
+			S->SetPadding(FMargin(0.f, 0.f, 22.f, 0.f));
+			R.Value = YggUI::Words(WidgetTree, TEXT(""), 20, YggUI::Snow);
+			R.Value->SetMinDesiredWidth(70.f);
 			R.Value->SetJustification(ETextJustify::Right);
 			Ctl->AddChildToHorizontalBox(R.Value)->SetVerticalAlignment(VAlign_Center);
 			Keep.Add(SB); Keep.Add(R.SliderW); Keep.Add(R.Value); Keep.Add(R.Fill); Keep.Add(Track);
@@ -540,7 +529,7 @@ void USettingsWidget::BuildTabPage(int32 Tab, UVerticalBox* Box)
 		case EKind::Key:
 		{
 			UBorder* Cap = YggUI::KeyCap(WidgetTree, TEXT("-"), 10);
-			Cap->SetPadding(FMargin(14.f, 2.f, 14.f, 2.f));
+			Cap->SetPadding(FMargin(14.f, 3.f, 14.f, 3.f));
 			R.Value = Cast<UTextBlock>(Cap->GetContent());
 			if (R.Value) { R.Value->SetMinDesiredWidth(90.f); R.Value->SetJustification(ETextJustify::Center); }
 			UButton* KB = Clickable(Cap, [this, r]() { RowIndex = r; Waiting = r; SetKeyboardFocus(); Refresh(); });
@@ -554,18 +543,15 @@ void USettingsWidget::BuildTabPage(int32 Tab, UVerticalBox* Box)
 		CtlS->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		CtlS->SetHorizontalAlignment(HAlign_Right);
 		CtlS->SetVerticalAlignment(VAlign_Center);
-		const bool bPips = R.Kind == EKind::Choice && R.Choices.Num() > 1;
-		UVerticalBoxSlot* RowS = V->AddChildToVerticalBox(Row);
-		const float Pad = R.Kind == EKind::Key ? 5.f : (bPips ? 7.f : 9.f);
-		RowS->SetPadding(FMargin(0.f, Pad, 14.f, bPips ? 6.f : Pad));
-		UImage* Under = YggUI::Line(WidgetTree, 8.f, YggUI::Rule);
-		V->AddChildToVerticalBox(Under)->SetHorizontalAlignment(HAlign_Fill);
-		O->AddChildToOverlay(V)->SetHorizontalAlignment(HAlign_Fill);
+		UOverlaySlot* RS = O->AddChildToOverlay(Row);
+		RS->SetHorizontalAlignment(HAlign_Fill);
+		RS->SetVerticalAlignment(VAlign_Center);
+		RS->SetPadding(FMargin(0.f, R.Kind == EKind::Key ? 6.f : 8.f, 18.f, R.Kind == EKind::Key ? 6.f : 8.f));
 		Width->SetContent(O);
 		Hit->SetContent(Width);
 		R.Hit = Hit;
-		Keep.Add(Hit); Keep.Add(R.LabelW); Keep.Add(R.Band); Keep.Add(R.Bar);
-		Box->AddChildToVerticalBox(Hit);
+		Keep.Add(Hit); Keep.Add(R.LabelW); Keep.Add(R.Band);
+		Box->AddChildToVerticalBox(Hit)->SetHorizontalAlignment(HAlign_Left);   // the row keeps its own width (the tabs above are wider)
 	}
 }
 
@@ -616,11 +602,7 @@ void USettingsWidget::Refresh()
 			if (R.Kind == EKind::Choice && R.Get)
 			{
 				const int32 Cur = R.Get();
-				if (R.Value) { R.Value->SetText(FText::FromString(R.Choices.IsValidIndex(Cur) ? R.Choices[Cur].ToUpper() : FString())); }
-				for (int32 c = 0; c < R.Pips.Num(); ++c)
-				{
-					if (R.Pips[c]) { R.Pips[c]->SetColorAndOpacity(c == Cur ? YggUI::Gold : FLinearColor(0.93f, 0.91f, 0.84f, 0.22f)); }
-				}
+				if (R.Value) { R.Value->SetText(FText::FromString(R.Choices.IsValidIndex(Cur) ? R.Choices[Cur] : FString())); }
 			}
 			else if (R.Kind == EKind::Slider && R.SliderW && R.GetF)
 			{
@@ -653,30 +635,36 @@ void USettingsWidget::ShowDescription()
 	bDescDirty = false;
 	DescTab = TabIndex;
 	DescRow = RowIndex;
-	DescTitle->SetText(FText::FromString(R.Label));
+	DescTitle->SetText(FText::FromString(SettingsSentence(R.Label)));
 	DescText->SetText(FText::FromString(R.Hint));
 	DescChoices->ClearChildren();
 	if (R.Kind == EKind::Choice && R.Get)
 	{
+		// every choice, the current one lit
 		const int32 Cur = R.Get();
 		for (int32 c = 0; c < R.Choices.Num(); ++c)
 		{
 			UHorizontalBox* L = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 			USizeBox* BB = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-			BB->SetWidthOverride(8.f);
-			BB->SetHeightOverride(8.f);
-			UImage* Bd = YggUI::Bead(WidgetTree, c == Cur ? 7.f : 4.f, c == Cur ? YggUI::Gold : FLinearColor(0.93f, 0.91f, 0.84f, 0.25f));
-			if (USizeBoxSlot* BS = Cast<USizeBoxSlot>(BB->SetContent(Bd))) { BS->SetHorizontalAlignment(HAlign_Center); BS->SetVerticalAlignment(VAlign_Center); }
+			BB->SetWidthOverride(10.f);
+			BB->SetHeightOverride(10.f);
+			if (c == Cur)
+			{
+				UImage* Bd = YggUI::Bead(WidgetTree, 6.f, YggUI::Sun);
+				if (USizeBoxSlot* BS = Cast<USizeBoxSlot>(BB->SetContent(Bd))) { BS->SetHorizontalAlignment(HAlign_Center); BS->SetVerticalAlignment(VAlign_Center); }
+			}
 			UHorizontalBoxSlot* S = L->AddChildToHorizontalBox(BB);
 			S->SetVerticalAlignment(VAlign_Center);
 			S->SetPadding(FMargin(0.f, 0.f, 14.f, 0.f));
-			L->AddChildToHorizontalBox(YggUI::Text(WidgetTree, R.Choices[c].ToUpper(), 10, c == Cur ? YggUI::Ivory : YggUI::Faint, 300, TEXT("Regular")))->SetVerticalAlignment(VAlign_Center);
-			DescChoices->AddChildToVerticalBox(L)->SetPadding(FMargin(0.f, 0.f, 0.f, 10.f));
+			L->AddChildToHorizontalBox(YggUI::Words(WidgetTree, R.Choices[c], 20, c == Cur ? YggUI::Snow : YggUI::Shade))->SetVerticalAlignment(VAlign_Center);
+			DescChoices->AddChildToVerticalBox(L)->SetPadding(FMargin(0.f, 0.f, 0.f, 6.f));
 		}
 	}
 	else if (R.Kind == EKind::Key)
 	{
-		DescChoices->AddChildToVerticalBox(YggUI::Text(WidgetTree, TEXT("ENTER OR CLICK, THEN THE NEW KEY  ·  ESC KEEPS THE OLD ONE"), 9, YggUI::Faint, 300, TEXT("Regular")));
+		UTextBlock* T = YggUI::Words(WidgetTree, TEXT("Enter or click, then the new key. Esc keeps the old one."), 18, YggUI::Shade);
+		T->SetWrapTextAt(460.f);
+		DescChoices->AddChildToVerticalBox(T);
 	}
 }
 
@@ -687,8 +675,8 @@ void USettingsWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	TabAge += InDeltaTime;
 	DescAge += InDeltaTime;
 	SetRenderOpacity(YggUI::Ease((Age - 0.15f) * 2.2f));   // a moment after the words under it begin to fade
+	YggUI::TickVeil(VeilMID, Age, MyGeometry.GetLocalSize());
 	if (Pages) { Pages->SetRenderOpacity(YggUI::Ease(TabAge * 3.f)); Pages->SetRenderTranslation(FVector2D(-14.f * (1.f - YggUI::Ease(TabAge * 3.f)), 0.f)); }
-	YggUI::JitterGrain(GrainImg, GrainClock, InDeltaTime);
 	if (Blur) { Blur->SetBlurStrength(7.f * YggUI::Ease(Age * 2.5f)); }
 	if (KeysRow && PadKeysRow)
 	{
@@ -702,42 +690,43 @@ void USettingsWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		for (int32 r = 0; r < Rows.Num(); ++r) { if (Rows[r].Hit && Rows[r].Hit->IsHovered()) { RowIndex = r; } }
 	}
 	RowIndex = FMath::Clamp(RowIndex, 0, FMath::Max(Rows.Num() - 1, 0));
+	const float Breathe = 0.86f + 0.14f * FMath::Sin(Age * 0.8f + 1.3f);
 	for (int32 r = 0; r < Rows.Num(); ++r)
 	{
 		FRow& R = Rows[r];
 		const bool bHot = r == RowIndex;
-		R.Hot = FMath::FInterpTo(R.Hot, bHot ? 1.f : 0.f, InDeltaTime, 14.f);
+		R.Hot = FMath::FInterpTo(R.Hot, bHot ? 1.f : 0.f, InDeltaTime, 12.f);
 		const float In = YggUI::Ease((TabAge - 0.03f * r) * 5.f);
-		if (R.Hit) { R.Hit->SetRenderOpacity(In); R.Hit->SetRenderTranslation(FVector2D(5.f * R.Hot - 10.f * (1.f - In), 0.f)); }
-		if (R.LabelW) { R.LabelW->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Faint, YggUI::Ivory, R.Hot))); }
-		if (R.Band) { R.Band->SetRenderOpacity(R.Hot); }
-		if (R.Bar) { R.Bar->SetRenderOpacity(R.Hot); }
+		if (R.Hit) { R.Hit->SetRenderOpacity(In); R.Hit->SetRenderTranslation(FVector2D(6.f * R.Hot - 10.f * (1.f - In), 0.f)); }
+		if (R.LabelW) { R.LabelW->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, R.Hot))); }
+		if (R.Band) { R.Band->SetRenderOpacity(R.Hot * Breathe); }
 		if (R.Kind == EKind::Choice || R.Kind == EKind::Cycle)
 		{
-			if (R.Value) { R.Value->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Dim, YggUI::Ivory, R.Hot))); }
+			if (R.Value) { R.Value->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, R.Hot))); }
 		}
 		if (R.Kind == EKind::Slider && R.SliderW)
 		{
 			const float V = R.SliderW->GetValue();
 			if (R.Value && R.Fmt) { R.Value->SetText(FText::FromString(R.Fmt(V))); }
-			if (R.Fill) { R.Fill->SetDesiredSizeOverride(FVector2D(FMath::Max(1.f, 280.f * (V - R.Min) / FMath::Max(R.Max - R.Min, 0.0001f)), 2.f)); }
+			if (R.Value) { R.Value->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, R.Hot))); }
+			if (R.Fill) { R.Fill->SetDesiredSizeOverride(FVector2D(FMath::Max(1.f, 300.f * (V - R.Min) / FMath::Max(R.Max - R.Min, 0.0001f)), 2.f)); }
 		}
 		if (R.Kind == EKind::Key && R.Value)
 		{
-			if (r == Waiting) { R.Value->SetRenderOpacity(0.55f + 0.45f * FMath::Abs(FMath::Sin(Age * 3.f))); R.Value->SetColorAndOpacity(FSlateColor(YggUI::Gold)); }
-			else { R.Value->SetRenderOpacity(1.f); R.Value->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Dim, YggUI::Ivory, R.Hot))); }
+			if (r == Waiting) { R.Value->SetRenderOpacity(0.55f + 0.45f * FMath::Abs(FMath::Sin(Age * 3.f))); R.Value->SetColorAndOpacity(FSlateColor(YggUI::Sun)); }
+			else { R.Value->SetRenderOpacity(1.f); R.Value->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, R.Hot))); }
 		}
 	}
 	for (int32 t = 0; t < TabTexts.Num(); ++t)
 	{
-		const UWidget* Btn = TabTexts[t] && TabTexts[t]->GetParent() ? TabTexts[t]->GetParent()->GetParent() : nullptr;
+		const UWidget* Btn = TabTexts[t] ? TabTexts[t]->GetParent() : nullptr;
 		TabHot[t] = FMath::FInterpTo(TabHot[t], t == TabIndex ? 1.f : 0.f, InDeltaTime, 12.f);
-		if (TabTexts[t]) { TabTexts[t]->SetColorAndOpacity(FSlateColor(t == TabIndex || (Btn && Btn->IsHovered()) ? YggUI::Ivory : YggUI::Dim)); }
-		if (TabLines[t]) { TabLines[t]->SetRenderOpacity(TabHot[t]); TabLines[t]->SetRenderScale(FVector2D(FMath::Max(TabHot[t], 0.01f), 1.f)); }
+		if (TabTexts[t]) { TabTexts[t]->SetColorAndOpacity(FSlateColor(t == TabIndex ? YggUI::Snow : (Btn && Btn->IsHovered() ? FMath::Lerp(YggUI::Mist, YggUI::Snow, 0.5f) : YggUI::Mist))); }
+		if (TabLines[t]) { TabLines[t]->SetRenderOpacity(TabHot[t] * Breathe); }
 	}
 	for (UTextBlock* T : { ResetText.Get(), BackText.Get() })
 	{
-		if (T) { const UWidget* B = T->GetParent() ? T->GetParent()->GetParent() : nullptr; T->SetColorAndOpacity(FSlateColor(B && B->IsHovered() ? YggUI::Ivory : YggUI::Dim)); }
+		if (T) { const UWidget* B = T->GetParent(); T->SetColorAndOpacity(FSlateColor(B && B->IsHovered() ? YggUI::Snow : YggUI::Mist)); }
 	}
 	ShowDescription();
 	if (Desc)
