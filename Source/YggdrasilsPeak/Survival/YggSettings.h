@@ -65,6 +65,12 @@ namespace YggSettings
 	void ApplyAccessibility(UWorld* World);
 	void ResetTab(UWorld* World, int32 Tab); // back to the defaults of one settings tab (0 game .. 5 accessibility)
 
+	/** What the engine is really doing right now (scalability, resolution, upscaler, frame cap, gamma, FOV, mouse scale,
+	 *  volumes, interface scale...), name -> value: the settings self-test (ygg.Settings.Test) diffs it per row. */
+	TMap<FString, FString> EngineState(UWorld* World);
+	bool HasDLSS();                          // NVIDIA's plugin is installed and running
+	bool HasFrameGeneration();
+
 	// ---- key bindings of our own actions
 	struct FBinding
 	{

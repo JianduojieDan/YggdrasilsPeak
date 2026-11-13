@@ -3,6 +3,7 @@
 #include "Survival/YggSettings.h"
 
 #include "Survival/SnowTrailComponent.h"
+#include "Environment/YggQualitySubsystem.h"
 #include "AudioDevice.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Camera/CameraComponent.h"
@@ -138,54 +139,122 @@ namespace YggSettings
 	float FlashScale() { return SoftFlashes() ? 0.35f : 1.f; }
 	int32 ColourVision() { return FMath::Clamp(GetInt(TEXT("ColourVision"), 0), 0, 3); }
 
+	bool HasDLSS() { return IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Enable")) != nullptr; }
+	bool HasFrameGeneration() { return IConsoleManager::Get().FindConsoleVariable(TEXT("r.Streamline.DLSSG.Enable")) != nullptr; }
+
 	void ApplyGraphics(UWorld* World)
 	{
 		USnowTrailComponent::SetFootprintQuality(FMath::Clamp(GetInt(TEXT("Footprints"), 1), 0, 2));
 		const int32 Tier = FMath::Clamp(GetInt(TEXT("Graphics"), -1), -1, 3);
-		if (GEngine && World)
-		{
-			GEngine->Exec(World, *(Tier < 0 ? FString(TEXT("ygg.Quality auto")) : FString::Printf(TEXT("ygg.Quality %d"), Tier)));
-		}
-		// to-do #63, the usual detail options: "Preset" (0) follows the quality tier, 1..4 = low..epic for that group alone.
-		// Through the engine's own game settings, so the automatic quality may still step a tier down when it must.
+		const int32 Up = FMath::Clamp(GetInt(TEXT("Upscaling"), 0), 0, 4);
+		// 2026-11-13 rework: the quality tier and the render resolution come from the player's choices every time
+		// (YggQualitySubsystem::Configure); the automatic quality only ever lowers them for the session and never saves
+		UYggQualitySubsystem* Q = UYggQualitySubsystem::Get(World);
+		if (Q) { Q->Configure(Tier, Up); }
+		// the usual detail options: "Preset" (0) follows the tier in use, 1..4 = low..epic for that group alone
 		if (UGameUserSettings* U = GEngine ? GEngine->GetGameUserSettings() : nullptr)
 		{
-			// the tier itself: once one group differs the overall level reads "custom" (-1); post processing is never
-			// overridden here, so it still carries the tier (the automatic quality's included)
-			const int32 Overall = U->GetOverallScalabilityLevel();
-			const int32 Base = FMath::Clamp(Tier >= 0 ? Tier : (Overall >= 0 ? Overall : U->GetPostProcessingQuality()), 0, 3);
+			const int32 Base = Q ? Q->GetTierInUse() : (Tier >= 0 ? Tier : 2);
+			if (!Q) { U->SetOverallScalabilityLevel(Base); }
 			auto Pick = [Base](const TCHAR* Key) { const int32 V = FMath::Clamp(GetInt(Key, 0), 0, 4); return V == 0 ? Base : V - 1; };
 			U->SetShadowQuality(Pick(TEXT("GfxShadows")));
 			U->SetViewDistanceQuality(Pick(TEXT("GfxViewDistance")));
 			U->SetVisualEffectQuality(Pick(TEXT("GfxEffects")));
 			U->SetTextureQuality(Pick(TEXT("GfxTextures")));
+			U->SetResolutionScaleValueEx(100.f);
+			// the engine re-applies its own frame-rate limit with the scalability (found by ygg.Settings.Test: Quality
+			// High -> Epic set t.MaxFPS 120 -> 0); keep it the player's Frame limit
+			static const float Fps[] = { 30.f, 60.f, 120.f, 0.f };
+			U->SetFrameRateLimit(Fps[FrameCap()]);
 			U->ApplyNonResolutionSettings();
-			U->SaveSettings();
+			U->SaveSettings();                 // the player's choices only: Configure just reset the tier to the base
 		}
-		// Upscaling: render fewer pixels and let DLSS (when the NVIDIA plugin is installed) or TSR rebuild the full image.
-		// Auto in the packaged game = YggQualitySubsystem dynamic resolution; in the editor that system is off, so Auto
-		// means Quality there (Play used to render every pixel natively: the GPU sat at 100%).
-		const int32 Up = FMath::Clamp(GetInt(TEXT("Upscaling"), 0), 0, 4);
-		static const float Percent[] = { 67.f, 100.f, 67.f, 58.f, 50.f };
-		const bool bDLSS = IConsoleManager::Get().FindConsoleVariable(TEXT("r.NGX.DLSS.Enable")) != nullptr;
-		if (Up != 0 || GIsEditor) { CVar(TEXT("r.ScreenPercentage"), Percent[Up]); }
-		if (bDLSS) { CVar(TEXT("r.NGX.DLSS.Enable"), Up == 1 ? 0.f : 1.f); }
+		// the upscaler: NVIDIA DLSS when the plugin runs (Native = DLAA, DLSS at full resolution), else TSR
+		const bool bDLSS = HasDLSS() && GetInt(TEXT("Upscaler"), 0) == 0;
 		CVar(TEXT("r.AntiAliasingMethod"), 4.f);
+		if (HasDLSS()) { CVar(TEXT("r.NGX.DLSS.Enable"), bDLSS ? 1.f : 0.f); }
+		// DLSS frame generation (RTX 40/50): 0 off, 1..3 = 2x..4x frames; Reflex keeps the latency down (always with frame generation)
+		const int32 FrameGen = bDLSS && HasFrameGeneration() ? FMath::Clamp(GetInt(TEXT("FrameGen"), 0), 0, 3) : 0;
+		if (HasFrameGeneration())
+		{
+			CVar(TEXT("r.Streamline.DLSSG.Enable"), FrameGen > 0 ? 1.f : 0.f);
+			if (FrameGen > 0) { CVar(TEXT("r.Streamline.DLSSG.FramesToGenerate"), float(FrameGen)); }
+		}
+		if (IConsoleManager::Get().FindConsoleVariable(TEXT("t.Streamline.Reflex.Enable")))
+		{
+			const bool bReflex = FrameGen > 0 || GetInt(TEXT("Reflex"), 1) == 1;
+			CVar(TEXT("t.Streamline.Reflex.Enable"), bReflex ? 1.f : 0.f);
+			CVar(TEXT("t.Streamline.Reflex.Mode"), bReflex ? 1.f : 0.f);
+		}
+		// a light sharpen after the upscaler (2026-11-13, user: the snow looked blurry): fine snow grain survives the rebuild
+		CVar(TEXT("r.Tonemapper.Sharpen"), Up == 1 ? 0.25f : 0.5f);
 		CVar(TEXT("r.Lumen.HardwareRayTracing"), float(FMath::Clamp(GetInt(TEXT("RayTracing"), 1), 0, 1)));
 		if (GetInt(TEXT("MotionBlur"), 1) == 0) { CVar(TEXT("r.MotionBlurQuality"), 0.f); }
 		else if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionBlurQuality")); C && C->GetInt() == 0) { C->Set(4, ECVF_SetByConsole); }
 		if (const UGameUserSettings* U = GEngine ? GEngine->GetGameUserSettings() : nullptr)
 		{
-			UE_LOG(LogTemp, Display, TEXT("Settings: shadows %d, view distance %d, effects %d, textures %d"), U->GetShadowQuality(), U->GetViewDistanceQuality(), U->GetVisualEffectQuality(), U->GetTextureQuality());
+			UE_LOG(LogTemp, Display, TEXT("Settings: tier %d (%s), shadows %d, view distance %d, effects %d, textures %d, upscaling %d via %s, frame generation %d, ray tracing %d, footprints %d, motion blur %d"),
+				Q ? Q->GetTierInUse() : -1, Tier < 0 ? TEXT("auto") : TEXT("fixed"), U->GetShadowQuality(), U->GetViewDistanceQuality(), U->GetVisualEffectQuality(), U->GetTextureQuality(),
+				Up, bDLSS ? TEXT("DLSS") : TEXT("TSR"), FrameGen, GetInt(TEXT("RayTracing"), 1), GetInt(TEXT("Footprints"), 1), GetInt(TEXT("MotionBlur"), 1));
 		}
-		UE_LOG(LogTemp, Display, TEXT("Settings: graphics %d, upscaling %d (%s %.0f%%), ray tracing %d, footprints %d, motion blur %d"),
-			Tier, Up, bDLSS ? TEXT("DLSS") : TEXT("TSR"), Percent[Up], GetInt(TEXT("RayTracing"), 1), GetInt(TEXT("Footprints"), 1), GetInt(TEXT("MotionBlur"), 1));
+	}
+
+	TMap<FString, FString> EngineState(UWorld* World)
+	{
+		TMap<FString, FString> S;
+		for (const TCHAR* Name : { TEXT("sg.ShadowQuality"), TEXT("sg.ViewDistanceQuality"), TEXT("sg.EffectsQuality"), TEXT("sg.TextureQuality"),
+			TEXT("sg.PostProcessQuality"), TEXT("sg.GlobalIlluminationQuality"), TEXT("r.ScreenPercentage"), TEXT("r.NGX.DLSS.Enable"),
+			TEXT("r.Streamline.DLSSG.Enable"), TEXT("r.Streamline.DLSSG.FramesToGenerate"), TEXT("t.Streamline.Reflex.Enable"),
+			TEXT("r.Lumen.HardwareRayTracing"), TEXT("r.MotionBlurQuality"), TEXT("r.Nanite.MaxPixelsPerEdge"), TEXT("t.MaxFPS"), TEXT("r.VSync") })
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name)) { S.Add(Name, C->GetString()); }
+		}
+		S.Add(TEXT("footprints"), FString::FromInt(USnowTrailComponent::FootprintQuality));
+		if (GEngine) { S.Add(TEXT("gamma"), FString::SanitizeFloat(GEngine->DisplayGamma)); }
+		if (const UGameUserSettings* U = GEngine ? GEngine->GetGameUserSettings() : nullptr)
+		{
+			S.Add(TEXT("window"), FString::FromInt(int32(U->GetFullscreenMode())));
+			S.Add(TEXT("resolution"), U->GetScreenResolution().ToString());
+		}
+		if (APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr)
+		{
+			S.Add(TEXT("mouse yaw scale"), FString::SanitizeFloat(PC->InputYawScale_DEPRECATED));
+			S.Add(TEXT("mouse pitch scale"), FString::SanitizeFloat(PC->InputPitchScale_DEPRECATED));
+			if (const APawn* P = PC->GetPawn())
+			{
+				if (const UCameraComponent* Cam = P->FindComponentByClass<UCameraComponent>()) { S.Add(TEXT("fov"), FString::SanitizeFloat(Cam->FieldOfView)); }
+			}
+		}
+		if (World)
+		{
+			if (FAudioDeviceHandle Dev = World->GetAudioDevice())
+			{
+				S.Add(TEXT("volume master"), FString::SanitizeFloat(Dev->GetTransientPrimaryVolume()));
+				for (const TCHAR* Cls : { TEXT("SC_Effects"), TEXT("SC_Ambience"), TEXT("SC_Voices"), TEXT("SC_Interface") })
+				{
+					if (USoundClass* C = LoadObject<USoundClass>(nullptr, *FString::Printf(TEXT("/Game/Audio/Classes/%s.%s"), Cls, Cls), nullptr, LOAD_NoWarn | LOAD_Quiet))
+					{
+						if (const FSoundClassProperties* Props = Dev->GetSoundClassCurrentProperties(C)) { S.Add(FString(TEXT("volume ")) + Cls, FString::SanitizeFloat(Props->Volume)); }
+					}
+				}
+			}
+		}
+		S.Add(TEXT("unfocused volume"), FString::SanitizeFloat(FApp::GetUnfocusedVolumeMultiplier()));
+		S.Add(TEXT("interface scale"), FString::SanitizeFloat(GetDefault<UUserInterfaceSettings>()->ApplicationScale));
+		// read live by the game's own code (the HUD, the storm): their stored values are what matters
+		S.Add(TEXT("[game] units feet"), Imperial() ? TEXT("1") : TEXT("0"));
+		S.Add(TEXT("[game] hud quiet"), HudHidden() ? TEXT("1") : TEXT("0"));
+		S.Add(TEXT("[game] hud style"), FString::FromInt(GetInt(TEXT("HudStyle"), 0)));
+		S.Add(TEXT("[game] soft flashes"), SoftFlashes() ? TEXT("1") : TEXT("0"));
+		S.Add(TEXT("[game] colour vision"), FString::FromInt(ColourVision()));
+		return S;
 	}
 
 	void ApplyDisplay(UWorld* World)
 	{
 		static const float Fps[] = { 30.f, 60.f, 120.f, 0.f };
 		CVar(TEXT("t.MaxFPS"), Fps[FrameCap()]);
+		if (UGameUserSettings* U = GEngine ? GEngine->GetGameUserSettings() : nullptr) { U->SetFrameRateLimit(Fps[FrameCap()]); }
 		if (GEngine)
 		{
 			// brightness as display gamma: 2.2 is neutral, higher lifts the shadows
@@ -287,8 +356,8 @@ namespace YggSettings
 		auto Remove = [](std::initializer_list<const TCHAR*> Keys) { for (const TCHAR* K : Keys) { GConfig->RemoveKey(Sec, K, GGameUserSettingsIni); Cache().Remove(K); } };
 		switch (Tab)
 		{
-		case 0: Remove({ TEXT("Units"), TEXT("Hud"), TEXT("Hints"), TEXT("FieldOfView") }); break;
-		case 1: Remove({ TEXT("Graphics"), TEXT("Upscaling"), TEXT("RayTracing"), TEXT("Footprints"), TEXT("MotionBlur"), TEXT("GfxShadows"), TEXT("GfxViewDistance"), TEXT("GfxEffects"), TEXT("GfxTextures") }); break;
+		case 0: Remove({ TEXT("Units"), TEXT("Hud"), TEXT("HudStyle"), TEXT("Hints"), TEXT("FieldOfView") }); break;
+		case 1: Remove({ TEXT("Graphics"), TEXT("Upscaling"), TEXT("Upscaler"), TEXT("FrameGen"), TEXT("Reflex"), TEXT("RayTracing"), TEXT("Footprints"), TEXT("MotionBlur"), TEXT("GfxShadows"), TEXT("GfxViewDistance"), TEXT("GfxEffects"), TEXT("GfxTextures") }); break;
 		case 2:
 			Remove({ TEXT("FrameCap"), TEXT("FrameLimit"), TEXT("Brightness") });
 			if (UGameUserSettings* U = GEngine ? GEngine->GetGameUserSettings() : nullptr) { U->SetVSyncEnabled(false); U->SaveSettings(); }

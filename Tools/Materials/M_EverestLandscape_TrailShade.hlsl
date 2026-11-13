@@ -40,12 +40,26 @@ float2 edge = abs(uv - 0.5);
 float fade = (1.0 - smoothstep(0.40, 0.48, max(edge.x, edge.y))) * (1.0 - Rock) * (1.0 - th.GlacierHard(Mask, MaskSampler, WP, VN));
 if (fade <= 0.0) return Col;
 float t = 1.0 / Area.z;            // uv per cm
-float e = 4.0;                      // cm between gradient samples
+float e = 2.5;                      // cm between gradient samples (was 4: the walls read soft up close)
 float h0 = th.Height(Trail, TrailSampler, uv, WP.xy, 18.0, 7.0);
 float hx = th.Height(Trail, TrailSampler, uv + float2(e * t, 0), WP.xy + float2(e, 0), 18.0, 7.0);
 float hy = th.Height(Trail, TrailSampler, uv + float2(0, e * t), WP.xy + float2(0, e), 18.0, 7.0);
 float2 g = float2(hx - h0, hy - h0) / e * fade;
-NrmOut = normalize(N - float3(g.x, g.y, 0.0));
-// deep holes fill with cold blue shade (light scattered inside the snow), deepest at the bottom
+// 2026-11-13 (user: the footprints are good, make them more beautiful) - shading only, the shape stays:
+//  - the walls a little crisper in the light (gradient x1.25), the pressed floor packed and fine-grained,
+//  - the pushed-out lip crumbly and a touch brighter (fresh snow turned up), cold shade gathering in the deep corners
+float2 s = Trail.SampleLevel(TrailSampler, uv, 0).rg;
 float depth = saturate(-h0 / 18.0) * fade;
-return Col * lerp(float3(1, 1, 1), float3(0.70, 0.83, 1.0), depth);
+float floorM = smoothstep(0.55, 0.92, s.r) * fade;                      // where the boot pressed the snow flat
+float lip = saturate(s.g * 1.5 - s.r * 1.3) * fade;                    // the snow pushed out beside the hole
+float wall = saturate(length(g) * 1.6) * (1.0 - floorM);                // steep sides
+float2 grain = float2(th.N(WP.xy / 0.9) - th.N(WP.xy / 0.9 + float2(5.3, 0.0)), th.N(WP.xy / 0.9 + float2(0.0, 7.1)) - th.N(WP.xy / 0.9 + float2(2.9, 3.3)));
+float2 crumb = float2(th.N(WP.xy / 2.6 + 11.0) - 0.5, th.N(WP.xy / 2.6 + 23.0) - 0.5);
+float2 detail = grain * 0.10 * floorM + crumb * 0.35 * lip * smoothstep(0.15, 0.6, lip);
+NrmOut = normalize(N - float3(g * 1.25 + detail, 0.0));
+// deep holes fill with cold blue shade (light scattered inside the snow), deepest at the bottom and in the corners
+float3 c = Col * lerp(float3(1, 1, 1), float3(0.70, 0.83, 1.0), depth);
+c *= lerp(1.0, 0.86, wall * depth);                                      // the inner walls hold a little shadow
+c *= 1.0 + 0.05 * lip;                                                   // turned-up snow catches the light
+c = lerp(c, c * float3(0.96, 0.98, 1.0), floorM * 0.5);                  // packed floor: denser, a shade cooler
+return c;

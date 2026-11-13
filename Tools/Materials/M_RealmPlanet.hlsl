@@ -10,7 +10,10 @@ struct RealmFx {
   float VN(float3 p){ float3 i=floor(p), f=frac(p); f=f*f*(3.0-2.0*f);
     return lerp(lerp(lerp(H(i),H(i+float3(1,0,0)),f.x),lerp(H(i+float3(0,1,0)),H(i+float3(1,1,0)),f.x),f.y),
                 lerp(lerp(H(i+float3(0,0,1)),H(i+float3(1,0,1)),f.x),lerp(H(i+float3(0,1,1)),H(i+1.0),f.x),f.y),f.z); }
-  float Fbm(float3 p){ float s=0,a=0.5; for(int o=0;o<6;o++){ s+=a*VN(p); p=p*2.03+float3(1.7,9.2,3.1); a*=0.5; } return s; }
+  // 2026-11-13 performance pass (user: FPS drops when looking at a planet; measured 0.6-0.7 ms per planet at 1440p):
+  // the sixth octave was below a pixel on the disc, so 5 octaves for surfaces and 4 for warps and the relief normal.
+  float Fbm(float3 p){ float s=0,a=0.5; [unroll] for(int o=0;o<5;o++){ s+=a*VN(p); p=p*2.03+float3(1.7,9.2,3.1); a*=0.5; } return s + a*0.25; }
+  float Fbm4(float3 p){ float s=0,a=0.5; [unroll] for(int o=0;o<4;o++){ s+=a*VN(p); p=p*2.03+float3(1.7,9.2,3.1); a*=0.5; } return s + a*0.375; }   // the missing octaves' mean keeps the average (0.492) of the old 6-octave sum
   // distance to the nearest / second nearest cell point (cracks, craters)
   float2 Cell(float3 p){ float3 i=floor(p), f=frac(p); float d1=8, d2=8;
     for(int z=-1;z<=1;z++) for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){
@@ -52,8 +55,8 @@ if (R == 0) {            // Midgard: ocean blue, curling white cloud bands, a fi
   // so lon = atan2(-P.y, P.x); u = lon/2pi + 0.5 puts Greenwich at u 0.5 like the equirect map.
   float lat = asin(clamp(P.z, -1.0, 1.0)), lon = -atan2(P.y, P.x);
   float3 earth = Tex.SampleLevel(TexSampler, float2(lon / 6.2831853 + 0.5, 0.5 - lat / 3.1415927), 0).rgb;
-  float3 q = P * 2.5; float3 w = float3(r.Fbm(q + 1.3), r.Fbm(q + 7.9), r.Fbm(q + 4.4));
-  float3 w2 = float3(r.Fbm(P * 5.0 + w * 3.0), r.Fbm(P * 5.0 + w * 3.0 + 3.3), r.Fbm(P * 5.0 + 6.1));
+  float3 q = P * 2.5; float3 w = float3(r.Fbm4(q + 1.3), r.Fbm4(q + 7.9), r.Fbm4(q + 4.4));
+  float3 w2 = float3(r.Fbm4(P * 5.0 + w * 3.0), r.Fbm4(P * 5.0 + w * 3.0 + 3.3), r.Fbm4(P * 5.0 + 6.1));
   float c = r.Fbm(P * 2.0 + w2 * 1.8);
   // curling bands: thin streaks where the warped field crosses a level, plus a few thicker storm patches
   float streak = 1.0 - smoothstep(0.0, 0.06, abs(c - 0.5));
@@ -122,8 +125,8 @@ else if (R == 4) {       // Alfheim: pale enough to vanish into the day sky; a n
   amb = 0.2; wash = 0.0;
 }
 else if (R == 5) {       // Vanaheim: deep jade gas giant - slow marbled currents folding into each other, one pale storm eye
-  float3 w1 = float3(r.Fbm(P * 1.6), r.Fbm(P * 1.6 + 5.2), r.Fbm(P * 1.6 + 9.7));
-  float3 w2 = float3(r.Fbm(P * 3.1 + w1 * 2.5), r.Fbm(P * 3.1 + w1 * 2.5 + 2.8), r.Fbm(P * 3.1 + 6.6));
+  float3 w1 = float3(r.Fbm4(P * 1.6), r.Fbm4(P * 1.6 + 5.2), r.Fbm4(P * 1.6 + 9.7));
+  float3 w2 = float3(r.Fbm4(P * 3.1 + w1 * 2.5), r.Fbm4(P * 3.1 + w1 * 2.5 + 2.8), r.Fbm4(P * 3.1 + 6.6));
   float lat = asin(clamp(P.z, -1.0, 1.0));
   float flow = r.Fbm(float3(P.xy * 1.2, lat * 5.0) + w2 * 2.4);
   float swirl = sin(lat * 9.0 + flow * 9.0);
@@ -176,12 +179,17 @@ else {                   // 9: Hel's trail - a broken river of light: few bright
 // weight: a solid body, not a disc. Bumped normal from the surface pattern catches the sun at the terminator,
 // limb darkening rounds the sphere, a crisp day/night line, very little fill on the night side.
 // each realm its own relief pattern and scale (seeded by the realm index), so no two share the same shadow blotches
-float3 Q = P * (6.0 + Realm * 1.7) + Realm * 13.1;
-float e = 0.04;
-float3 gN = float3(r.Fbm(Q + float3(e,0,0)) - r.Fbm(Q - float3(e,0,0)),
-                   r.Fbm(Q + float3(0,e,0)) - r.Fbm(Q - float3(0,e,0)),
-                   r.Fbm(Q + float3(0,0,e)) - r.Fbm(Q - float3(0,0,e)));
-float3 Nb = normalize(N - gN * Relief * 0.35);
+float3 Nb = N;
+// only where it shows: lit realms with relief (Hel / Svartalfheim are their own light, Alfheim has none); forward
+// differences (4 noise samples instead of 6), 4 octaves - the bump only matters along the terminator
+if (Relief > 0.001 && amb < 0.99)
+{
+  float3 Q = P * (6.0 + Realm * 1.7) + Realm * 13.1;
+  float e = 0.04;
+  float f0 = r.Fbm4(Q);
+  float3 gN = float3(r.Fbm4(Q + float3(e,0,0)), r.Fbm4(Q + float3(0,e,0)), r.Fbm4(Q + float3(0,0,e))) - f0;
+  Nb = normalize(N - gN * 2.0 * Relief * 0.35);
+}
 // the relief only matters near the terminator; the day side stays clean
 float litB = lerp(smoothstep(-0.02, 0.22, dot(N, L)), smoothstep(-0.02, 0.22, dot(Nb, L)), 1.0 - smoothstep(0.15, 0.5, dot(N, L)));
 float limb = lerp(0.45, 1.0, pow(facing, 0.55));

@@ -143,8 +143,15 @@ def scatter(T, X0, Y0, n0, n1, out):
     """T: build() dict cropped to the tile (rows = y, cols = x, 1 m). Appends [comp, x, y, z, yaw, upx, upy, scale] (cm)."""
     Z, R, gx, gy = T['Z'], T['rock'], T['gx'], T['gy']
     def at(a, x, y):
-        i, j = int(round(y - Y0)), int(round(x - X0))
-        return a[i, j] if 0 <= i < n0 and 0 <= j < n1 else None
+        # bilinear (2026-11-13: nearest-grid heights left stones up to ~35 cm in the air on slopes; Tools/Placement/ground_fix
+        # seats anything placed afterwards)
+        fy, fx = y - Y0, x - X0
+        i, j = int(math.floor(fy)), int(math.floor(fx))
+        if not (0 <= i < n0 - 1 and 0 <= j < n1 - 1):
+            i, j = int(round(fy)), int(round(fx))
+            return a[i, j] if 0 <= i < n0 and 0 <= j < n1 else None
+        u, v = fx - j, fy - i
+        return (a[i, j] * (1 - u) + a[i, j + 1] * u) * (1 - v) + (a[i + 1, j] * (1 - u) + a[i + 1, j + 1] * u) * v
     def ok(x, y, pad):
         if ptree.query([x, y])[0] < 3.0 + pad: return False
         if atree is not None:

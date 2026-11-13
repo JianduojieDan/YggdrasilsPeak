@@ -95,9 +95,16 @@ public:
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Deformation", meta=(ClampMin="1"))
 	float LegRadiusCm = 14.f;
 
-	/** Small burst of powder kicked up by each step (scaled by how soft the snow is). */
+	/** Old step puff (big translucent sprites: costly, read as paper). Off since 2026-11-13; ygg.Snow.Kick 2 brings it back to compare. */
 	UPROPERTY(EditAnywhere, Category="Snow Trail")
 	TObjectPtr<UNiagaraSystem> StepPuff;
+
+	/** Each step on snow flicks a few solid clumps off the boot (SM_SnowClump, instanced, opaque): 3-12 by how soft. */
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Kick")
+	TObjectPtr<UStaticMesh> ClumpMesh;
+
+	UPROPERTY(EditAnywhere, Category="Snow Trail|Kick", meta=(ClampMin="0", ClampMax="256"))
+	int32 MaxClumps = 72;
 
 	/** Most prints alive at once; the oldest is reused. */
 	UPROPERTY(EditAnywhere, Category="Snow Trail", meta=(ClampMin="1", ClampMax="2000"))
@@ -261,6 +268,22 @@ private:
 	void PlayStepFrom(const TArray<TObjectPtr<USoundBase>>& Set, const FVector& Location);
 	struct FPendingStep { double At = 0.0; const TArray<TObjectPtr<USoundBase>>* Set = nullptr; FVector Location = FVector::ZeroVector; };
 	TArray<FPendingStep> PendingSteps;
+
+	/** Snow kicked off the boot: flies, lands on the step's ground plane, melts in (shrinks) and is gone. */
+	struct FClump
+	{
+		FVector P = FVector::ZeroVector, V = FVector::ZeroVector, PlaneAt = FVector::ZeroVector, PlaneN = FVector::UpVector, Spin = FVector::ZeroVector, Squash = FVector::OneVector;
+		FQuat R = FQuat::Identity;
+		float Size = 1.f;        // cm across
+		float Rest = -1.f;       // seconds since it landed (< 0 = still flying)
+	};
+	TArray<FClump> Clumps;
+	UPROPERTY(Transient)
+	TObjectPtr<class UInstancedStaticMeshComponent> ClumpInstances;
+	int32 ClumpSlots = 0;
+	bool bClumpsDirty = false;
+	void KickClumps(const FVector& At, const FVector& Normal, const FVector& WalkDirection, float Softness);
+	void TickClumps(float DeltaTime);
 	void LoadDefaultFootsteps();
 	int32 LastStepVariation = -1;
 	/** Glacier rubble or bare ice (T_GlacierMask, below ~6000 m): no snow to sink into or leave prints in. */

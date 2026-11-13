@@ -41,6 +41,9 @@ public:
 	void ShowTab(int32 Tab) { if (Tabs.Num() > 0) { SetTab(Tab); } else { PendingTab = Tab; } }
 	/** Old entry point, kept for callers: applies every saved setting. */
 	static void ApplySaved(UWorld* World);
+	/** ygg.Settings.Test: opens the menu and steps every row one notch and back through the menu's own change path,
+	 *  logging (SETTINGSTEST) what changed in the engine for each and the frame time; rows that change nothing are flagged. */
+	static void SelfTest(UWorld* World);
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;

@@ -240,7 +240,9 @@ private:
 	struct FPaintState
 	{
 		FSurvivalSnapshot Snapshot;
-		float Temperature = 1.f, Health = 1.f, Stamina = 1.f;
+		float Temperature = 1.f, Health = 1.f, Stamina = 1.f, Satiety = 1.f, Hydration = 1.f;
+		/** Quiet HUD (Settings > Game > HUD): how far the watch has faded in (1 = shown). */
+		float WatchShown = 1.f;
 		bool bExhausted = false, bLowHealth = false;
 		int32 PackKg = 0, PackMax = 0, Food = 0, Water = 0;
 		FString Subtitle;

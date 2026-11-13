@@ -60,10 +60,13 @@ namespace
 		FText Stats;
 	};
 
-	/** The kit, as laid out on the cloth (left to right, row by row) - also the keyboard's order. */
+	/** The kit, as laid out on the tarp (row by row, left to right) - also the keyboard's order.
+	 *  v4 (2026-11-13): a flat lay, the way climbers photograph their gear before an expedition - everything seen from
+	 *  straight above under one lamp (Saved/ItemIcons/render_flat, Tools/UI/render_item_icons.py --flat), square to each
+	 *  other in three rows: the axe, the rope and the oxygen; drink and food; the small things. */
 	const TArray<FName>& KitOrder()
 	{
-		static const TArray<FName> Order = { TEXT("IceAxe"), TEXT("Oxygen"), TEXT("Water"), TEXT("Ration"), TEXT("Rope"), TEXT("Stove"), TEXT("Gas"), TEXT("Compass"), TEXT("Journal") };
+		static const TArray<FName> Order = { TEXT("IceAxe"), TEXT("Rope"), TEXT("Oxygen"), TEXT("Water"), TEXT("Ration"), TEXT("Gas"), TEXT("Stove"), TEXT("Journal"), TEXT("Compass") };
 		return Order;
 	}
 
@@ -72,31 +75,31 @@ namespace
 		static TMap<FName, FPackThingInfo> Infos;
 		if (Infos.Num() == 0)
 		{
-			Infos.Add(TEXT("IceAxe"), { TEXT("T_Kit_IceAxe"), FVector2D(-360.f, -250.f), 430.f, -5.f, 0.04f, NSLOCTEXT("Pack", "AxeT", "Ice axe"),
+			Infos.Add(TEXT("IceAxe"), { TEXT("T_KitFlat_IceAxe"), FVector2D(-500.f, -150.f), 420.f, 0.f, 0.02f, NSLOCTEXT("Pack", "AxeT", "Ice axe"),
 				NSLOCTEXT("Pack", "AxeB", "Balance on the ice, a step cut where the crampons will not hold, the last thing between a slip and a fall."),
 				NSLOCTEXT("Pack", "AxeS", "gear") });
-			Infos.Add(TEXT("Oxygen"), { TEXT("T_Kit_Oxygen"), FVector2D(70.f, -250.f), 330.f, 4.f, 0.07f, NSLOCTEXT("Pack", "O2T", "Oxygen bottle"),
+			Infos.Add(TEXT("Oxygen"), { TEXT("T_KitFlat_Oxygen"), FVector2D(95.f, -250.f), 400.f, 0.f, 0.02f, NSLOCTEXT("Pack", "O2T", "Oxygen bottle"),
 				NSLOCTEXT("Pack", "O2B", "Four litres at three hundred bar. Above the South Col, a bottle is not air - it is time."),
 				NSLOCTEXT("Pack", "O2S", "3 kg each  ·  put on by itself when you run low") });
-			Infos.Add(TEXT("Water"), { TEXT("T_Kit_Water"), FVector2D(-540.f, 40.f), 260.f, -3.f, 0.26f, NSLOCTEXT("Pack", "WaterT", "Thermos"),
+			Infos.Add(TEXT("Water"), { TEXT("T_KitFlat_Water"), FVector2D(-250.f, 40.f), 250.f, 0.f, 0.02f, NSLOCTEXT("Pack", "WaterT", "Thermos"),
 				NSLOCTEXT("Pack", "WaterB", "Snow melted on the stove at the last camp, still a little warm. Up here the air takes water out of you with every breath."),
 				NSLOCTEXT("Pack", "WaterS", "+40 water  ·  1 kg each") });
-			Infos.Add(TEXT("Ration"), { TEXT("T_Kit_Ration"), FVector2D(-270.f, 40.f), 300.f, 2.f, 0.1f, NSLOCTEXT("Pack", "RationT", "Rations"),
+			Infos.Add(TEXT("Ration"), { TEXT("T_KitFlat_Ration"), FVector2D(40.f, 30.f), 360.f, 0.f, 0.02f, NSLOCTEXT("Pack", "RationT", "Rations"),
 				NSLOCTEXT("Pack", "RationB", "Tins from the shop in Namche, a twist of tsampa, dried yak cheese. Mother packed food like this for every trek. It tastes like home and freezes like stone."),
 				NSLOCTEXT("Pack", "RationS", "+35 food  ·  0.6 kg each") });
-			Infos.Add(TEXT("Rope"), { TEXT("T_Kit_Rope"), FVector2D(20.f, 50.f), 270.f, 0.f, 0.12f, NSLOCTEXT("Pack", "RopeT", "Rope and harness"),
+			Infos.Add(TEXT("Rope"), { TEXT("T_KitFlat_Rope"), FVector2D(-250.f, -230.f), 280.f, 0.f, 0.02f, NSLOCTEXT("Pack", "RopeT", "Rope and harness"),
 				NSLOCTEXT("Pack", "RopeB", "Clip into the fixed lines and they hold you. Steeper ground can be climbed while you are on a rope."),
 				NSLOCTEXT("Pack", "RopeS", "gear") });
-			Infos.Add(TEXT("Stove"), { TEXT("T_Kit_Stove"), FVector2D(265.f, 40.f), 230.f, -2.f, 0.24f, NSLOCTEXT("Pack", "StoveT", "Stove"),
+			Infos.Add(TEXT("Stove"), { TEXT("T_KitFlat_Stove"), FVector2D(-500.f, 300.f), 220.f, 0.f, 0.02f, NSLOCTEXT("Pack", "StoveT", "Stove"),
 				NSLOCTEXT("Pack", "StoveB", "Melts snow into water at the camps. Without it there is nothing to drink above the last stream."),
 				NSLOCTEXT("Pack", "StoveS", "gear  ·  part of the 10 kg you always carry") });
-			Infos.Add(TEXT("Gas"), { TEXT("T_Kit_Gas"), FVector2D(-540.f, 300.f), 180.f, 0.f, 0.17f, NSLOCTEXT("Pack", "GasT", "Gas cartridge"),
+			Infos.Add(TEXT("Gas"), { TEXT("T_KitFlat_Gas"), FVector2D(295.f, 40.f), 170.f, 0.f, 0.02f, NSLOCTEXT("Pack", "GasT", "Gas cartridge"),
 				NSLOCTEXT("Pack", "GasB", "The cold makes it weak. Sleep with it inside the bag."),
 				NSLOCTEXT("Pack", "GasS", "gear") });
-			Infos.Add(TEXT("Compass"), { TEXT("T_Kit_Compass"), FVector2D(-275.f, 300.f), 220.f, 8.f, 0.14f, NSLOCTEXT("Pack", "CompassT", "Father's compass"),
+			Infos.Add(TEXT("Compass"), { TEXT("T_KitFlat_Compass"), FVector2D(20.f, 300.f), 200.f, 0.f, 0.02f, NSLOCTEXT("Pack", "CompassT", "Father's compass"),
 				NSLOCTEXT("Pack", "CompassB", "Found in the box of their things. The runes round the dial belong to no language I know. An old compass, nothing more - that is what I keep telling myself."),
 				NSLOCTEXT("Pack", "CompassS", "Q - hold it up") });
-			Infos.Add(TEXT("Journal"), { TEXT("T_Kit_Journal"), FVector2D(-10.f, 305.f), 250.f, -5.f, 0.2f, NSLOCTEXT("Pack", "JournalT", "Mother's journal"),
+			Infos.Add(TEXT("Journal"), { TEXT("T_KitFlat_Journal"), FVector2D(-250.f, 300.f), 240.f, 0.f, 0.02f, NSLOCTEXT("Pack", "JournalT", "Mother's journal"),
 				FText::GetEmpty(), FText::GetEmpty() });
 		}
 		return Infos.Find(Item);
@@ -114,7 +117,7 @@ static FAutoConsoleCommandWithWorld CmdPack(TEXT("ygg.Pack"), TEXT("Opens or clo
 
 // ---------------------------------------------------------------- item
 
-void UBackpackItemWidget::Setup(UBackpackWidget* InOwner, FName InItem, UTexture2D* Texture, float InSize)
+void UBackpackItemWidget::Setup(UBackpackWidget* InOwner, FName InItem, UTexture2D* Texture, float InSize, UTexture2D* OutlineTexture)
 {
 	const FPackThingInfo* I = Info(InItem);
 	ShadowY = I ? I->ShadowY : 0.15f;
@@ -125,17 +128,25 @@ void UBackpackItemWidget::Setup(UBackpackWidget* InOwner, FName InItem, UTexture
 	{
 		UOverlay* Root = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("Thing"));
 		WidgetTree->RootWidget = Root;
-		// its shadow on the cloth (the lamp is up and to the left), the light that finds it when chosen, the thing
-		Shadow = YggUI::Glow(WidgetTree, YggUI::WithA(YggUI::InkC, 0.75f), FVector2D(Size * 0.72f, Size * 0.2f));
+		// v4 flat lay: it lies ON the tarp, so its shadow is its own silhouette, close and crisp, down and to the right
+		// of the lamp (up left); then the light that finds it when chosen, the chalk outline (used up), the thing
+		Shadow = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("Shadow"));
+		if (Texture) { Shadow->SetBrushFromTexture(Texture, false); }
+		Shadow->SetColorAndOpacity(FLinearColor(0.012f, 0.01f, 0.008f, 0.62f));
 		UOverlaySlot* SS = Root->AddChildToOverlay(Shadow);
-		SS->SetHorizontalAlignment(HAlign_Center);
-		SS->SetVerticalAlignment(VAlign_Center);
-		Shadow->SetRenderTranslation(FVector2D(Size * 0.05f, Size * ShadowY));
+		SS->SetHorizontalAlignment(HAlign_Fill);
+		SS->SetVerticalAlignment(VAlign_Fill);
+		Shadow->SetRenderTranslation(FVector2D(Size * 0.016f, Size * (0.008f + ShadowY)));
 		Light = YggUI::Glow(WidgetTree, YggUI::WithA(YggUI::Sun, 0.42f), FVector2D(Size * 1.15f, Size * 0.9f));
 		Light->SetRenderOpacity(0.f);
 		UOverlaySlot* LS = Root->AddChildToOverlay(Light);
 		LS->SetHorizontalAlignment(HAlign_Center);
 		LS->SetVerticalAlignment(VAlign_Center);
+		Outline = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("Outline"));
+		Outline->SetRenderOpacity(0.f);
+		UOverlaySlot* OS = Root->AddChildToOverlay(Outline);
+		OS->SetHorizontalAlignment(HAlign_Fill);
+		OS->SetVerticalAlignment(VAlign_Fill);
 		Image = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("Render"));
 		UOverlaySlot* IS = Root->AddChildToOverlay(Image);
 		IS->SetHorizontalAlignment(HAlign_Fill);
@@ -147,12 +158,17 @@ void UBackpackItemWidget::Setup(UBackpackWidget* InOwner, FName InItem, UTexture
 		CS->SetPadding(FMargin(0.f, 0.f, Size * 0.12f, Size * 0.14f));
 	}
 	if (Texture) { Image->SetBrushFromTexture(Texture, false); }
+	if (OutlineTexture && Outline) { Outline->SetBrushFromTexture(OutlineTexture, false); }
 	Image->SetDesiredSizeOverride(FVector2D(Size, Size));
 }
 
 void UBackpackItemWidget::SetCount(int32 Count, bool bCounted)
 {
 	bEmpty = bCounted && Count <= 0;
+	// used up: the thing and its shadow go, its chalk outline stays on the tarp
+	if (Image) { Image->SetRenderOpacity(bEmpty ? 0.f : 1.f); }
+	if (Shadow) { Shadow->SetRenderOpacity(bEmpty ? 0.f : 1.f); }
+	if (Outline) { Outline->SetRenderOpacity(bEmpty ? 0.85f : 0.f); }
 	if (CountText) { CountText->SetText(FText::FromString(bCounted && Count > 1 ? FString::Printf(TEXT("×%d"), Count) : FString())); }
 }
 
@@ -471,7 +487,7 @@ void UBackpackWidget::RefreshItems(bool bAnimate)
 		{
 			const FPackThingInfo* I = Info(Order[i]);
 			UBackpackItemWidget* W = CreateWidget<UBackpackItemWidget>(this, UBackpackItemWidget::StaticClass());
-			W->Setup(this, Order[i], Tex(I->Texture), I->Size);
+			W->Setup(this, Order[i], Tex(I->Texture), I->Size, Tex(*(FString(I->Texture) + TEXT("_Line"))));
 			W->Home = I->At;
 			W->BaseAngle = I->Angle;
 			W->Delay = bAnimate ? 0.22f + i * 0.045f : -1.f;
@@ -650,16 +666,17 @@ void UBackpackWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
 		W->HoverAlpha = FMath::FInterpTo(W->HoverAlpha, bChosen ? 1.f : 0.f, DeltaTime, 12.f);
 		const float H = W->HoverAlpha;
 		const float Close = bClosing ? 1.f - Fade : 0.f;
-		const float Base = W->bEmpty ? 0.32f : FMath::Lerp(0.82f, 1.f, H);
+		const float Base = W->bEmpty ? 1.f : FMath::Lerp(0.86f, 1.f, H);   // empty: the outline carries its own faintness
 		W->SetRenderOpacity(FMath::Clamp(D * 2.5f, 0.f, 1.f) * (1.f - Close) * Base);
 		W->SetRenderTransform(FWidgetTransform(FVector2D(0.f, (1.f - Down) * -26.f - H * 8.f + Close * 30.f),
 			FVector2D(1.f + H * 0.06f), FVector2D::ZeroVector, W->BaseAngle * (1.f - H * 0.5f)));
 		if (W->Light) { W->Light->SetRenderOpacity(H * Breathe); }
 		if (W->Shadow)
 		{
-			// lifted, the shadow spreads and softens, and falls a touch further from the lamp
-			W->Shadow->SetRenderOpacity(FMath::Lerp(1.f, 0.7f, H));
-			W->Shadow->SetRenderTranslation(FVector2D(W->Size * (0.05f + 0.03f * H), W->Size * (W->ShadowY + 0.04f * H)));
+			// v4 flat lay: the shadow is the thing's own silhouette, close under it; lifted (chosen) it falls a little further
+			// from the lamp and softens; a used-up thing has no shadow, only its chalk outline
+			W->Shadow->SetRenderOpacity(W->bEmpty ? 0.f : FMath::Lerp(1.f, 0.72f, H));
+			W->Shadow->SetRenderTranslation(FVector2D(W->Size * (0.016f + 0.02f * H), W->Size * (0.008f + W->ShadowY + 0.025f * H)));
 		}
 	}
 

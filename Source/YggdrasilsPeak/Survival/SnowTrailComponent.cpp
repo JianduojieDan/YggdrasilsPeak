@@ -22,6 +22,7 @@
 #include "Kismet/KismetRenderingLibrary.h"
 #include "LandscapeProxy.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
@@ -47,6 +48,11 @@ namespace
 		TEXT("ygg.Snow.StepSurface"),
 		0,
 		TEXT("Footstep sound surface: 0 = the real ground, 1 = snow, 2 = ice, 3 = rubble, 4 = ladder."));
+
+	TAutoConsoleVariable<int32> CVarSnowKick(
+		TEXT("ygg.Snow.Kick"),
+		1,
+		TEXT("Snow kicked up by each step: 0 = none, 1 = solid clumps off the boot (2026-11-13), 2 = the old powder puff (Niagara sprites)."));
 
 	TAutoConsoleVariable<float> CVarAutoWalk(
 		TEXT("ygg.Snow.AutoWalk"),
@@ -378,6 +384,8 @@ float USnowTrailComponent::SnowSoftness(const FVector& Location, const FVector& 
 void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	TickClumps(DeltaTime);
 
 	// steps waiting for the boot to land (hard ground, see PickStepSet)
 	if (PendingSteps.Num() > 0)
@@ -843,6 +851,107 @@ void USnowTrailComponent::UpdateSinking(float DeltaTime)
 	}
 }
 
+void USnowTrailComponent::KickClumps(const FVector& At, const FVector& Normal, const FVector& WalkDirection, float Softness)
+{
+	if (MaxClumps <= 0)
+	{
+		return;
+	}
+	if (!ClumpInstances)
+	{
+		if (!ClumpMesh)
+		{
+			ClumpMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/Environment/Snow/SM_SnowClump.SM_SnowClump"));
+		}
+		if (!ClumpMesh)
+		{
+			return;
+		}
+		// world space: the component sits at the origin and never moves; its instances are the clumps
+		ClumpInstances = NewObject<UInstancedStaticMeshComponent>(GetOwner(), TEXT("SnowClumps"));
+		ClumpInstances->SetUsingAbsoluteLocation(true);
+		ClumpInstances->SetUsingAbsoluteRotation(true);
+		ClumpInstances->SetUsingAbsoluteScale(true);
+		ClumpInstances->SetMobility(EComponentMobility::Movable);
+		ClumpInstances->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		ClumpInstances->SetCastShadow(false);
+		ClumpInstances->bVisibleInRayTracing = false;
+		ClumpInstances->SetStaticMesh(ClumpMesh);
+		ClumpInstances->RegisterComponent();
+		ClumpInstances->SetWorldTransform(FTransform::Identity);
+		// fixed slots, parked at zero size when not in use: updated in one batch per frame
+		TArray<FTransform> Parked;
+		Parked.Init(FTransform(FQuat::Identity, FVector::ZeroVector, FVector::ZeroVector), MaxClumps);
+		ClumpInstances->AddInstances(Parked, false, true);
+		ClumpSlots = MaxClumps;
+	}
+	// a step on soft powder flicks a handful off the toe; hard crust only a few crumbs
+	const FVector Fwd = FVector::VectorPlaneProject(WalkDirection, Normal).GetSafeNormal();
+	const FVector Side = FVector::CrossProduct(Normal, Fwd);
+	const int32 N = FMath::RoundToInt(FMath::Lerp(3.f, 12.f, Softness) * FMath::FRandRange(0.7f, 1.2f));
+	static int32 KickCount = 0;
+	if ((KickCount++ % 10) == 0) { UE_LOG(LogTemp, Display, TEXT("SnowKick: step %d, %d clumps (softness %.2f), %d in the air"), KickCount, N, Softness, Clumps.Num()); }
+	for (int32 i = 0; i < N; ++i)
+	{
+		if (Clumps.Num() >= ClumpSlots)
+		{
+			Clumps.RemoveAt(0);
+		}
+		FClump& C = Clumps.AddDefaulted_GetRef();
+		C.PlaneAt = At;
+		C.PlaneN = Normal;
+		C.P = At + Fwd * FMath::FRandRange(6.f, 14.f) + Side * FMath::FRandRange(-5.f, 5.f) + Normal * 2.f;
+		C.V = Fwd * FMath::FRandRange(60.f, 170.f) * FMath::Lerp(0.6f, 1.f, Softness) + Normal * FMath::FRandRange(60.f, 150.f) + Side * FMath::FRandRange(-45.f, 45.f);
+		C.Size = FMath::Lerp(0.5f, 2.6f, FMath::Pow(FMath::FRand(), 2.2f)) * FMath::Lerp(0.8f, 1.15f, Softness);
+		C.Squash = FVector(FMath::FRandRange(0.75f, 1.2f), FMath::FRandRange(0.75f, 1.2f), FMath::FRandRange(0.6f, 1.f));
+		C.R = FQuat(FVector(FMath::FRand(), FMath::FRand(), FMath::FRand()).GetSafeNormal(), FMath::FRandRange(0.f, 6.28f));
+		C.Spin = FVector(FMath::FRandRange(-12.f, 12.f), FMath::FRandRange(-12.f, 12.f), FMath::FRandRange(-12.f, 12.f));
+	}
+}
+
+void USnowTrailComponent::TickClumps(float DeltaTime)
+{
+	if (!ClumpInstances || (Clumps.Num() == 0 && !bClumpsDirty))
+	{
+		return;
+	}
+	const float Dt = FMath::Min(DeltaTime, 0.05f);
+	constexpr float MeltSeconds = 0.55f;
+	for (int32 i = Clumps.Num() - 1; i >= 0; --i)
+	{
+		FClump& C = Clumps[i];
+		if (C.Rest < 0.f)
+		{
+			C.V += FVector(0.f, 0.f, -980.f) * Dt;
+			C.V *= FMath::Max(0.f, 1.f - 1.6f * Dt);                    // air drag on a loose clump
+			C.P += C.V * Dt;
+			C.R = FQuat(C.Spin.GetSafeNormal(), C.Spin.Size() * Dt) * C.R;
+			// landed: on (half into) the step's ground
+			if (FVector::DotProduct(C.P - C.PlaneAt, C.PlaneN) < C.Size * 0.15f && FVector::DotProduct(C.V, C.PlaneN) < 0.f)
+			{
+				C.Rest = 0.f;
+			}
+		}
+		else if ((C.Rest += Dt) > MeltSeconds)
+		{
+			Clumps.RemoveAt(i);
+		}
+	}
+	TArray<FTransform> T;
+	T.Reserve(ClumpSlots);
+	for (const FClump& C : Clumps)
+	{
+		const float Melt = C.Rest < 0.f ? 1.f : FMath::Square(1.f - C.Rest / MeltSeconds);
+		T.Emplace(C.R, C.P - C.PlaneN * (C.Rest < 0.f ? 0.f : C.Size * 0.3f * (C.Rest / MeltSeconds)), C.Squash * (C.Size * Melt / 100.f));
+	}
+	while (T.Num() < ClumpSlots)
+	{
+		T.Emplace(FQuat::Identity, FVector::ZeroVector, FVector::ZeroVector);
+	}
+	ClumpInstances->BatchUpdateInstancesTransforms(0, T, true, true, true);
+	bClumpsDirty = Clumps.Num() > 0;                                   // one more update after the last one goes
+}
+
 void USnowTrailComponent::StampPrint(const FHitResult& Hit, const FVector& WalkDirection, bool bLeft)
 {
 	// rubble and bare glacier ice take no print (the trench shade drew a blue channel across the moraine, 2026-11-11)
@@ -853,11 +962,16 @@ void USnowTrailComponent::StampPrint(const FHitResult& Hit, const FVector& WalkD
 
 	const FVector Normal = Hit.ImpactNormal;
 	const float Softness = SnowSoftness(Hit.ImpactPoint, Normal);
-	if (StepPuff)
+	const int32 Kick = CVarSnowKick.GetValueOnGameThread();
+	if (Kick == 2 && StepPuff)
 	{
-		// Powder kicks up more in soft snow; hard crust only gives off a little dust.
+		// the old puff, kept to compare: powder kicks up more in soft snow; hard crust only gives off a little dust
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), StepPuff, Hit.ImpactPoint + Normal * 3.f, FRotator::ZeroRotator,
 			FVector(FMath::Lerp(0.6f, 1.3f, Softness)), true, true, ENCPoolMethod::AutoRelease);
+	}
+	else if (Kick == 1)
+	{
+		KickClumps(Hit.ImpactPoint, Normal, WalkDirection, Softness);
 	}
 	if (CVarSnowTrails.GetValueOnGameThread() == 0 || !FootprintMaterial)
 	{

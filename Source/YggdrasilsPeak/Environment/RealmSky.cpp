@@ -76,6 +76,14 @@ static TAutoConsoleVariable<float> CVarRealmDemo(TEXT("ygg.Realm.Demo"), 0.f,
 
 static TAutoConsoleVariable<int32> CVarRealmLook(TEXT("ygg.Realm.LookAt"), 0, TEXT("Checking the sky: holds the camera on 1 the sun, 2 the moon, 3 the realm planet."));
 static TAutoConsoleVariable<float> CVarRealmStart(TEXT("ygg.Realm.StartTime"), -1.f, TEXT("Checking the sky: the clock starts here, 0..2400 (set on the command line)."));
+// Measuring (Tools/Art/planet_perf.ps1): "ygg.Realm X" on the command line runs before the sky exists and is lost; this
+// one is read every frame, so the realm is shown as soon as the sky is up and held (the forecast is switched off).
+// Automated screenshots (Tools/Art/realm_shot.ps1 etc.): a HighResShot on the command line fires on the first frame,
+// before the camera has turned or the arrival fade is done; this takes it after N seconds of play instead.
+static TAutoConsoleVariable<int32> CVarShotUI(TEXT("ygg.ShotUI"), 0, TEXT("Testing: 1 = ygg.ShotAfter takes a normal screenshot with the HUD and menus in it."));
+static TAutoConsoleVariable<float> CVarShotAfter(TEXT("ygg.ShotAfter"), 0.f, TEXT("Testing: takes one high-res screenshot this many seconds after play starts (0 = off)."));
+static TAutoConsoleVariable<int32> CVarRealmHidePlanet(TEXT("ygg.Realm.HidePlanet"), 0, TEXT("Measuring: 1 = the realm's weather stays, its planet is not drawn."));
+static TAutoConsoleVariable<FString> CVarRealmForce(TEXT("ygg.Realm.Force"), TEXT(""), TEXT("Measuring: holds this realm (Midgard..Asgard, or none) from the moment the sky exists."));
 
 static TAutoConsoleVariable<float> CVarTimeLapse(TEXT("ygg.Realm.TimeLapse"), 0.f, TEXT("Watching the sky: one full 24 hour day takes this many seconds (15 = a day in 15 s). 0 = normal time."));
 
@@ -1120,6 +1128,32 @@ void ARealmSky::Tick(float DeltaSeconds)
 	const FVector Around = Pawn ? Pawn->GetActorLocation() : PlacedAround;
 	TickTour(DeltaSeconds);
 	TickDemo(DeltaSeconds);
+	if (const float ShotAt = CVarShotAfter.GetValueOnGameThread(); ShotAt > 0.f && GetWorld()->GetTimeSeconds() > ShotAt)
+	{
+		CVarShotAfter->Set(0.f, ECVF_SetByConsole);
+		// HighResShot is the viewport's command: through the player's console, not GEngine->Exec
+		// HighResShot draws the world only; "shot showui" keeps the HUD and menus (ygg.ShotUI 1)
+		if (APlayerController* ShotPC = GetWorld()->GetFirstPlayerController()) { ShotPC->ConsoleCommand(CVarShotUI.GetValueOnGameThread() ? TEXT("shot showui") : TEXT("HighResShot 1")); }
+	}
+	{
+		const FString Force = CVarRealmForce.GetValueOnGameThread();
+		static bool bForcedAll = false;
+		if (Force.Equals(TEXT("all"), ESearchCase::IgnoreCase))
+		{
+			if (!bForcedAll) { bForcedAll = true; SetScheduled(false); bFollowRoute = false; ShowAll(); }
+		}
+		else if (!Force.IsEmpty())
+		{
+			ERealm Want = ERealm::None;
+			for (int32 i = 0; i < NumRealms; ++i) { if (Force.Equals(RealmLabels[i], ESearchCase::IgnoreCase)) { Want = ERealm(i); } }
+			if (Shown != Want || bScheduled)
+			{
+				SetScheduled(false);
+				bFollowRoute = false;
+				ShowRealm(Want);
+			}
+		}
+	}
 	if (const int32 LookAt = CVarRealmLook.GetValueOnGameThread())
 	{
 		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
@@ -1129,8 +1163,16 @@ void ARealmSky::Tick(float DeltaSeconds)
 			if (SkyCached.IsValid()) { SkyCached->GetComponents(Lights); }
 			for (UDirectionalLightComponent* L : Lights) { if (LookAt == 2 && L->GetName() == TEXT("Moon")) { S = L; } }
 			const AActor* Planet = Shown != ERealm::None ? Planets[int32(Shown)].Actor.Get() : nullptr;
-			if (LookAt == 3 && Planet) { PC->SetControlRotation((Planet->GetActorLocation() - Around).Rotation()); }
+			if (LookAt == 4) { PC->SetControlRotation(FRotator(-58.f, PC->GetControlRotation().Yaw, 0.f)); }   // checking the feet: snow kick, prints
+			else if (LookAt == 3 && Planet) { PC->SetControlRotation((Planet->GetActorLocation() - Around).Rotation()); }
 			else if (S) { PC->SetControlRotation((-S->GetForwardVector()).Rotation()); }
+			static double NextLookLog = 0.0;
+			if (FPlatformTime::Seconds() > NextLookLog)
+			{
+				NextLookLog = FPlatformTime::Seconds() + 2.0;
+				UE_LOG(LogTemp, Display, TEXT("RealmSky LookAt %d: shown %d, planet %s, control %s, camera %s"), LookAt, int32(Shown), Planet ? *Planet->GetName() : TEXT("none"),
+					*PC->GetControlRotation().ToString(), PC->PlayerCameraManager ? *PC->PlayerCameraManager->GetCameraRotation().ToString() : TEXT("-"));
+			}
 		}
 	}
 	TickWeather(DeltaSeconds, Around);
@@ -1203,8 +1245,9 @@ void ARealmSky::Tick(float DeltaSeconds)
 			}
 		}
 		UStaticMeshComponent* Mesh = Cast<AStaticMeshActor>(A)->GetStaticMeshComponent();
-		Mesh->SetVisibility(P.Fade > 0.001f);
-		if (Ring && &P == &Planets[int32(ERealm::Asgard)]) { Ring->SetVisibility(P.Fade > 0.001f); }
+		const bool bHidePlanets = CVarRealmHidePlanet.GetValueOnGameThread() != 0;   // measuring: the realm's weather without its planet
+		Mesh->SetVisibility(P.Fade > 0.001f && !bHidePlanets);
+		if (Ring && &P == &Planets[int32(ERealm::Asgard)]) { Ring->SetVisibility(P.Fade > 0.001f && !bHidePlanets); }
 		if (P.Fade > 0.001f && &P != &Planets[AsgardPillar] && &P != &Planets[AlfheimBow])
 		{
 			// Alone in the sky a planet has its own apparent size and place (seen from the ground, sizes must differ hugely);

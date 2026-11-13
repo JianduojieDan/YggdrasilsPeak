@@ -23,7 +23,7 @@ class YGGDRASILSPEAK_API UBackpackItemWidget : public UUserWidget
 
 public:
 
-	void Setup(UBackpackWidget* InOwner, FName InItem, UTexture2D* Texture, float Size);
+	void Setup(UBackpackWidget* InOwner, FName InItem, UTexture2D* Texture, float Size, UTexture2D* OutlineTexture = nullptr);
 	/** How many there are: "×3" under it when more than one; none left = the thing stays, faded. */
 	void SetCount(int32 Count, bool bCounted);
 
@@ -46,6 +46,9 @@ public:
 	TObjectPtr<UImage> Light;
 	UPROPERTY()
 	TObjectPtr<UTextBlock> CountText;
+	/** v4: the chalk outline left on the tarp when it is used up. */
+	UPROPERTY()
+	TObjectPtr<UImage> Outline;
 
 protected:
 

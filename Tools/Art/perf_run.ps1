@@ -1,7 +1,7 @@
 # Standalone -game frame-time measurement at a spot (same method as the 2026-10-21 baseline: ~120-127 FPS at spawn).
 #   powershell -File Tools/Art/perf_run.ps1 <name> <x> <y> <z> <pitch> <yaw> [spindrift 0..1]
 # Captures 600 frames after warm-up with the CSV profiler, prints median / p95 frame time. Run from PowerShell.
-param([string]$Name, [double]$X, [double]$Y, [double]$Z, [double]$P, [double]$W, [double]$Spindrift = -1, [string]$Extra = "")
+param([string]$Name, [double]$X, [double]$Y, [double]$Z, [double]$P, [double]$W, [double]$Spindrift = -1, [string]$Extra = "", [int]$Frames = 600)
 $proj = "F:\UE_project\YggdrasilsPeak"
 # a run can walk past a camp and write the expedition save: keep the player's save and put it back afterwards
 $sav = "$proj\Saved\SaveGames\Expedition.sav"; $savBak = "$env:TEMP\ygg_expedition_keep.sav"
@@ -12,7 +12,7 @@ $cmds = "Ghost, BugItGo $X $Y $Z $P $W 0, ygg.Snow.Spindrift $Spindrift, t.MaxFP
 if ($Extra) { $cmds = "$cmds, $Extra" }
 $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -PassThru -ArgumentList @(
     "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=1920", "-ResY=1080",
-    "-nosplash", "-NoSound", "-log=PerfRun.log", "-csvCaptureFrames=600", "-csvStartFrame=900", "-ExitAfterCsvProfiling",
+    "-nosplash", "-NoSound", "-unattended", "-log=PerfRun.log", "-csvCaptureFrames=$Frames", "-csvStartFrame=900", "-ExitAfterCsvProfiling",
     "-ExecCmds=`"$cmds`"")
 $proc.WaitForExit(420000) | Out-Null
 if (Test-Path $savBak) { Copy-Item $savBak $sav -Force }

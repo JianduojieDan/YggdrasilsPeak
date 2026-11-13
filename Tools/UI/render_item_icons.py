@@ -16,6 +16,18 @@ VIEW = {
     "Backpack": ((0, 0, 0), 0, 8),
 }
 args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+# --flat (2026-11-13, pack v4 flat-lay): every item lying on the tarp, shot straight down under one lamp from the upper
+# left (the shadows all agree, like one photograph of the kit), into Saved/ItemIcons/render_flat
+FLAT = "--flat" in args
+args = [a for a in args if a != "--flat"]
+if FLAT:
+    OUT = f"{ROOT}/Saved/ItemIcons/render_flat"; os.makedirs(OUT, exist_ok=True)
+# lying down: (rotation XYZ so the item rests on the tarp as it would)
+# yaw 0 for every item: they lie square to each other (knolling) and the pack screen turns them by 0/90 degrees
+FLAT_ROT = {"Water": (90, 0, 0), "Oxygen": (90, 0, 0), "Gas": (90, 0, 0), "Ration": (0, 0, 0), "Stove": (0, 0, 0),
+            "IceAxe": (0, 0, 0), "Rope": (0, 0, 0), "Tent": (0, 0, 0), "Compass": (0, 0, 0), "Journal": (0, 0, 0)}
+# items that read better from a little lower than straight down
+FLAT_EL = {"Stove": 62, "Tent": 55}
 names = args or [os.path.splitext(f)[0] for f in os.listdir(SRC) if f.endswith((".glb", ".blend"))]
 
 
@@ -58,6 +70,8 @@ for name in names:
                         tn = m.node_tree.nodes.new("ShaderNodeTexImage"); tn.image = img
                         m.node_tree.links.new(tn.outputs["Color"], bsdf.inputs["Base Color"])
         rot, az, el = VIEW.get(name, ((0, 0, 0), 35, 22))
+        if FLAT:
+            rot, az, el = FLAT_ROT.get(name, (0, 0, 0)), 0, FLAT_EL.get(name, 89.9)
         # parent everything to an empty to rotate the item as a whole
         root = bpy.data.objects.new("root", None); sc.collection.objects.link(root)
         for o in objs:
@@ -78,9 +92,14 @@ for name in names:
         cam_d.clip_end = radius * 20
         # studio: warm key from upper left, cool fill, white rim from behind
         s = radius / 0.3
-        light("key", "SUN", 4.0, (50, 0, -40), (1.0, 0.93, 0.82))
-        light("fill", "SUN", 1.2, (70, 0, 140), (0.75, 0.85, 1.0))
-        light("rim", "SUN", 3.0, (-60, 0, 20), (1.0, 1.0, 1.0))
+        if FLAT:
+            # one warm lamp high at the upper left, a cool skylight: soft shadows falling down-right on every item
+            light("key", "SUN", 4.5, (35, 0, 135), (1.0, 0.9, 0.76))
+            light("fill", "SUN", 0.9, (0, 0, 0), (0.72, 0.82, 1.0))
+        else:
+            light("key", "SUN", 4.0, (50, 0, -40), (1.0, 0.93, 0.82))
+            light("fill", "SUN", 1.2, (70, 0, 140), (0.75, 0.85, 1.0))
+            light("rim", "SUN", 3.0, (-60, 0, 20), (1.0, 1.0, 1.0))
         sc.world = bpy.data.worlds.new("w"); sc.world.color = (0.25, 0.26, 0.28)
         sc.render.engine = "BLENDER_EEVEE"
         sc.render.film_transparent = True

@@ -301,7 +301,7 @@ void UExpeditionComponent::UpdateRope()
 	}
 	else if (!bOnRope)
 	{
-		Say(NSLOCTEXT("Expedition", "RopeOff", "Off the rope. Find the orange line again."), 4.f);
+		Say(NSLOCTEXT("Expedition", "RopeOff", "Off the rope. Find the yellow line again."), 4.f);
 	}
 }
 

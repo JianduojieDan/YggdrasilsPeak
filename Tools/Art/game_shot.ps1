@@ -1,4 +1,4 @@
-﻿# Real in-game screenshot (standalone -game: TSR, Lumen, weather, everything the player sees) from a given spot.
+# Real in-game screenshot (standalone -game: TSR, Lumen, weather, everything the player sees) from a given spot.
 #   powershell -File Tools/Art/game_shot.ps1 <name> <x> <y> <z> <pitch> <yaw> [delayFrames]  -> Saved/Compare/game_<name>.png
 # Run from PowerShell, not git bash (bash mangles the /Game path). Needs the editor open (it places + saves the camera).
 # A fixed camera actor (GameShotCam, Tools/Art/place_shot_cam.py) is put at the spot and the game looks through it
@@ -14,7 +14,7 @@ Get-ChildItem $shots, "$proj\Saved\Screenshots" -Recurse -Filter "HighresScreens
 $cmds = "Ghost, ViewActor $camName, r.HighResScreenshotDelay $Delay, HighResShot 1"
 $proc = Start-Process -FilePath "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -PassThru -ArgumentList @(
     "$proj\YggdrasilsPeak.uproject", "/Game/LevelPrototyping/base_map", "-game", "-windowed", "-ResX=1920", "-ResY=1080",
-    "-nosplash", "-NoSound", "-log=GameShot.log", "-ExecCmds=`"$cmds`"")
+    "-nosplash", "-NoSound", "-unattended", "-log=GameShot.log", "-ExecCmds=`"$cmds`"")
 $found = $null
 for ($i = 0; $i -lt 100 -and -not $found; $i++) {
     Start-Sleep -Seconds 3

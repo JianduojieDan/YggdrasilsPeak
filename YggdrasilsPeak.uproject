@@ -1,55 +1,75 @@
 {
-	"FileVersion": 3,
-	"EngineAssociation": "5.8",
-	"Category": "",
-	"Description": "",
-	"Modules": [
-		{
-			"Name": "YggdrasilsPeak",
-			"Type": "Runtime",
-			"LoadingPhase": "Default",
-			"AdditionalDependencies": [
-				"Engine",
-				"AIModule",
-				"UMG"
-			]
-		}
-	],
-	"Plugins": [
-		{
-			"Name": "ModelingToolsEditorMode",
-			"Enabled": true,
-			"TargetAllowList": [
-				"Editor"
-			]
-		},
-		{
-			"Name": "StateTree",
-			"Enabled": true
-		},
-		{
-			"Name": "GameplayStateTree",
-			"Enabled": true
-		},
-		{
-			"Name": "Terminal",
-			"Enabled": true
-		},
-		{
-			"Name": "EditorToolset",
-			"Enabled": true
-		},
-		{
-			"Name": "AllToolsets",
-			"Enabled": true
-		},
-		{
-			"Name": "ModelContextProtocol",
-			"Enabled": true
-		},
-		{
-			"Name": "ProceduralVegetationEditor",
-			"Enabled": true
-		}
-	]
+    "FileVersion":  3,
+    "EngineAssociation":  "5.8",
+    "Category":  "",
+    "Description":  "",
+    "Modules":  [
+                    {
+                        "Name":  "YggdrasilsPeak",
+                        "Type":  "Runtime",
+                        "LoadingPhase":  "Default",
+                        "AdditionalDependencies":  [
+                                                       "Engine",
+                                                       "AIModule",
+                                                       "UMG"
+                                                   ]
+                    }
+                ],
+    "Plugins":  [
+                    {
+                        "Name":  "ModelingToolsEditorMode",
+                        "Enabled":  true,
+                        "TargetAllowList":  [
+                                                "Editor"
+                                            ]
+                    },
+                    {
+                        "Name":  "StateTree",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "GameplayStateTree",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "Terminal",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "EditorToolset",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "AllToolsets",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "ModelContextProtocol",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "ProceduralVegetationEditor",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "DLSS",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "StreamlineCore",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "StreamlineDLSSG",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "StreamlineReflex",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "StreamlineNGXCommon",
+                        "Enabled":  true
+                    }
+                ]
 }

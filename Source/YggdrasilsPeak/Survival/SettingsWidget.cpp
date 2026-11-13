@@ -34,6 +34,7 @@
 #include "HAL/IConsoleManager.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Containers/Ticker.h"
 
 static FAutoConsoleCommandWithWorldAndArgs CmdSettings(TEXT("ygg.Settings"), TEXT("ygg.Settings [tab 0-5]: opens or closes the settings (same as F2); a tab number opens that tab."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
@@ -83,6 +84,127 @@ namespace
 }
 
 void USettingsWidget::ApplySaved(UWorld* World) { YggSettings::ApplyAll(World); }
+
+// ygg.Later <seconds> <command...>: runs a console command after a while of play (automated shots: open the pack, walk...;
+// -ExecCmds run before the world and the player exist)
+static FAutoConsoleCommandWithWorldAndArgs CmdLater(TEXT("ygg.Later"), TEXT("ygg.Later <seconds> <command ...>: runs the command after that many seconds."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (Args.Num() < 2 || !World) { return; }
+		const float Delay = FCString::Atof(*Args[0]);
+		FString Cmd;
+		for (int32 i = 1; i < Args.Num(); ++i) { Cmd += (i > 1 ? TEXT(" ") : TEXT("")) + Args[i]; }
+		TWeakObjectPtr<UWorld> W = World;
+		TSharedRef<float> Left = MakeShared<float>(Delay);
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([W, Cmd, Left](float Dt) -> bool
+		{
+			if ((*Left -= Dt) > 0.f) { return true; }
+			if (UWorld* Wd = W.Get())
+			{
+				if (APlayerController* PC = Wd->GetFirstPlayerController()) { PC->ConsoleCommand(Cmd); }
+			}
+			return false;
+		}));
+	}));
+
+static FAutoConsoleCommandWithWorld CmdSettingsTest(TEXT("ygg.Settings.Test"),
+	TEXT("Steps every settings row one notch and back through the menu and logs what changed in the engine (SETTINGSTEST)."),
+	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World) { USettingsWidget::SelfTest(World); }));
+
+void USettingsWidget::SelfTest(UWorld* World)
+{
+	struct FState
+	{
+		TWeakObjectPtr<UWorld> World;
+		TWeakObjectPtr<USettingsWidget> W;
+		int32 Tab = 0, Row = 0, Phase = 0, Dir = 1;
+		float Clock = 0.f, Wait = 6.f, FrameSum = 0.f;
+		int32 Frames = 0, Tested = 0;
+		float MsBefore = 0.f;
+		TMap<FString, FString> Before;
+		FString ValueBefore;
+		TArray<FString> NoEffect;
+	};
+	TSharedRef<FState> S = MakeShared<FState>();
+	S->World = World;
+	UE_LOG(LogTemp, Display, TEXT("SETTINGSTEST: starting in 6 s"));
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([S](float Dt) -> bool
+	{
+		UWorld* Wd = S->World.Get();
+		if (!Wd) { return false; }
+		S->FrameSum += Dt; ++S->Frames;
+		if ((S->Wait -= Dt) > 0.f) { return true; }
+		APlayerController* PC = Wd->GetFirstPlayerController();
+		if (!S->W.IsValid())
+		{
+			if (!PC) { S->Wait = 1.f; return true; }
+			USettingsWidget::Open(PC, nullptr, false);
+			TArray<UUserWidget*> Found;
+			UWidgetBlueprintLibrary::GetAllWidgetsOfClass(PC, Found, USettingsWidget::StaticClass(), false);
+			if (Found.Num() == 0) { UE_LOG(LogTemp, Warning, TEXT("SETTINGSTEST: the settings did not open")); return false; }
+			S->W = Cast<USettingsWidget>(Found[0]);
+			S->Wait = 1.f;
+			return true;
+		}
+		USettingsWidget* W = S->W.Get();
+		if (W->Tabs.Num() == 0) { S->Wait = 0.5f; return true; }
+		// next testable row
+		while (W->Tabs.IsValidIndex(S->Tab) && (!W->Tabs[S->Tab].Rows.IsValidIndex(S->Row) || W->Tabs[S->Tab].Rows[S->Row].Kind == EKind::Key))
+		{
+			if (!W->Tabs[S->Tab].Rows.IsValidIndex(S->Row)) { ++S->Tab; S->Row = 0; } else { ++S->Row; }
+		}
+		if (!W->Tabs.IsValidIndex(S->Tab))
+		{
+			UE_LOG(LogTemp, Display, TEXT("SETTINGSTEST done: %d rows, %d with no engine effect: %s"), S->Tested, S->NoEffect.Num(), *FString::Join(S->NoEffect, TEXT(", ")));
+			W->Close();
+			return false;
+		}
+		FRow& R = W->Tabs[S->Tab].Rows[S->Row];
+		auto ValueText = [&R]()
+		{
+			if (R.Kind == EKind::Choice && R.Get) { const int32 V = R.Get(); return R.Choices.IsValidIndex(V) ? R.Choices[V] : FString::FromInt(V); }
+			if (R.Kind == EKind::Slider && R.GetF) { return R.Fmt ? R.Fmt(R.GetF()) : FString::SanitizeFloat(R.GetF()); }
+			if (R.Kind == EKind::Cycle && R.Get) { return R.Fmt ? R.Fmt(float(R.Get())) : FString::FromInt(R.Get()); }
+			return FString();
+		};
+		if (S->Phase == 0)
+		{
+			W->SetTab(S->Tab);
+			W->RowIndex = S->Row;
+			S->Before = YggSettings::EngineState(Wd);
+			S->ValueBefore = ValueText();
+			S->MsBefore = S->Frames > 0 ? 1000.f * S->FrameSum / S->Frames : 0.f;
+			// a slider already at its top is stepped down (and back up) instead
+			S->Dir = (R.Kind == EKind::Slider && R.GetF && R.GetF() >= R.Max - 0.001f) ? -1 : +1;
+			W->Change(S->Dir);
+			S->FrameSum = 0.f; S->Frames = 0;
+			S->Phase = 1; S->Wait = 1.5f;
+			return true;
+		}
+		if (S->Phase == 1)
+		{
+			const TMap<FString, FString> After = YggSettings::EngineState(Wd);
+			TArray<FString> Diff;
+			for (const TPair<FString, FString>& P : After)
+			{
+				const FString* B = S->Before.Find(P.Key);
+				if (!B || *B != P.Value) { Diff.Add(FString::Printf(TEXT("%s %s->%s"), *P.Key, B ? **B : TEXT("-"), *P.Value)); }
+			}
+			const float Ms = S->Frames > 0 ? 1000.f * S->FrameSum / S->Frames : 0.f;
+			const FString Name = FString::Printf(TEXT("[%s] %s"), *W->Tabs[S->Tab].Name, *R.Label);
+			UE_LOG(LogTemp, Display, TEXT("SETTINGSTEST %s: %s -> %s | %s | frame %.1f -> %.1f ms"), *Name, *S->ValueBefore, *ValueText(),
+				Diff.Num() ? *FString::Join(Diff, TEXT(", ")) : TEXT("NO ENGINE CHANGE"), S->MsBefore, Ms);
+			if (Diff.Num() == 0) { S->NoEffect.Add(Name); }
+			++S->Tested;
+			W->RowIndex = S->Row;
+			W->Change(-S->Dir);                                 // and back
+			S->FrameSum = 0.f; S->Frames = 0;
+			S->Phase = 0; S->Wait = 1.0f; ++S->Row;
+			return true;
+		}
+		return true;
+	}));
+}
 
 void USettingsWidget::Toggle(APlayerController* PC)
 {
@@ -205,7 +327,8 @@ void USettingsWidget::DefineTabs()
 		Game.Rows.Add(R);
 	}
 	Game.Rows.Add(IntRow(TEXT("UNITS"), TEXT("Height in metres or in feet, on the HUD and in the menus."), { TEXT("Metres"), TEXT("Feet") }, TEXT("Units"), 0, 0, nullptr));
-	Game.Rows.Add(IntRow(TEXT("HUD"), TEXT("Hidden keeps only the warnings and the messages: the mountain and nothing else."), { TEXT("Shown"), TEXT("Hidden") }, TEXT("Hud"), 0, 0, nullptr));
+	Game.Rows.Add(IntRow(TEXT("HUD"), TEXT("Everything shows every reading. Quiet keeps the screen empty until your body needs you - then only that."), { TEXT("Everything"), TEXT("Quiet") }, TEXT("Hud"), 0, 0, nullptr));
+	Game.Rows.Add(IntRow(TEXT("HUD STYLE"), TEXT("The watch: rings around the altitude, bottom left, like an altimeter on your wrist. The strip: one quiet line at the bottom of the view."), { TEXT("Watch"), TEXT("Strip") }, TEXT("HudStyle"), 0, 0, nullptr));
 	Tabs.Add(Game);
 
 	// ---- GRAPHICS
@@ -216,11 +339,26 @@ void USettingsWidget::DefineTabs()
 		const TArray<FString> Levels = { TEXT("Preset"), TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Epic") };
 		Gfx.Rows.Add(IntRow(TEXT("SHADOWS"), TEXT("How sharp and how far the shadows reach. Preset follows Quality; the biggest cost after the light itself."), Levels, TEXT("GfxShadows"), 0, 0, [W]() { ApplyGraphics(W()); }));
 		Gfx.Rows.Add(IntRow(TEXT("VIEW DISTANCE"), TEXT("How far the small things - rocks, tents, flags - are drawn. Preset follows Quality."), Levels, TEXT("GfxViewDistance"), 0, 0, [W]() { ApplyGraphics(W()); }));
-		Gfx.Rows.Add(IntRow(TEXT("EFFECTS"), TEXT("Snow, spindrift, storms and the realms' lights. Preset follows Quality."), Levels, TEXT("GfxEffects"), 0, 0, [W]() { ApplyGraphics(W()); }));
+		Gfx.Rows.Add(IntRow(TEXT("EFFECTS"), TEXT("Snow, spindrift, storms and the realms' lights; on Epic the trees near you sway in the wind (costs a little). Preset follows Quality."), Levels, TEXT("GfxEffects"), 0, 0, [W]() { ApplyGraphics(W()); }));
 		Gfx.Rows.Add(IntRow(TEXT("TEXTURES"), TEXT("Sharper surfaces up close, more video memory. Preset follows Quality."), Levels, TEXT("GfxTextures"), 0, 0, [W]() { ApplyGraphics(W()); }));
 	}
-	Gfx.Rows.Add(IntRow(TEXT("UPSCALING"), bDLSS ? TEXT("NVIDIA DLSS renders fewer pixels and rebuilds the image.") : TEXT("TSR renders fewer pixels and rebuilds the image: the biggest saving."),
+	Gfx.Rows.Add(IntRow(TEXT("UPSCALING"), bDLSS ? TEXT("Renders fewer pixels and rebuilds the image. Auto follows the frame rate; Native with DLSS is DLAA, the sharpest.") : TEXT("TSR renders fewer pixels and rebuilds the image: the biggest saving. Auto follows the frame rate."),
 		{ TEXT("Auto"), TEXT("Native"), TEXT("Quality"), TEXT("Balanced"), TEXT("Performance") }, TEXT("Upscaling"), 0, 0, [W]() { ApplyGraphics(W()); }));
+	if (bDLSS)
+	{
+		Gfx.Rows.Add(IntRow(TEXT("UPSCALER"), TEXT("NVIDIA DLSS rebuilds the picture with the graphics card's AI cores; TSR is Unreal's own."),
+			{ TEXT("DLSS"), TEXT("TSR") }, TEXT("Upscaler"), 0, 0, [W]() { ApplyGraphics(W()); }));
+		if (HasFrameGeneration())
+		{
+			Gfx.Rows.Add(IntRow(TEXT("FRAME GENERATION"), TEXT("DLSS adds frames between the rendered ones: much smoother, a little more delay. Needs the DLSS upscaler; RTX 40 and 50 cards."),
+				{ TEXT("Off"), TEXT("2×"), TEXT("3×"), TEXT("4×") }, TEXT("FrameGen"), 0, 0, [W]() { ApplyGraphics(W()); }));
+		}
+		if (IConsoleManager::Get().FindConsoleVariable(TEXT("t.Streamline.Reflex.Enable")))
+		{
+			Gfx.Rows.Add(IntRow(TEXT("LOW LATENCY"), TEXT("NVIDIA Reflex: the view answers the mouse sooner. Always on with frame generation."),
+				{ TEXT("Off"), TEXT("On") }, TEXT("Reflex"), 1, 0, [W]() { ApplyGraphics(W()); }));
+		}
+	}
 	Gfx.Rows.Add(IntRow(TEXT("RAY-TRACED LIGHT"), TEXT("Off is a little flatter and much lighter on the graphics card."), { TEXT("Off"), TEXT("On") }, TEXT("RayTracing"), 1, 0, [W]() { ApplyGraphics(W()); }));
 	Gfx.Rows.Add(IntRow(TEXT("FOOTPRINTS"), TEXT("Off saves the most. High draws the prints twice as sharp."), { TEXT("Off"), TEXT("Normal"), TEXT("High") }, TEXT("Footprints"), 1, 0, [W]() { ApplyGraphics(W()); }));
 	Gfx.Rows.Add(IntRow(TEXT("MOTION BLUR"), TEXT("The smear of fast turns."), { TEXT("Off"), TEXT("On") }, TEXT("MotionBlur"), 1, 0, [W]() { ApplyGraphics(W()); }));
