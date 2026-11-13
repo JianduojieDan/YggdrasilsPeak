@@ -328,7 +328,6 @@ void USettingsWidget::DefineTabs()
 	}
 	Game.Rows.Add(IntRow(TEXT("UNITS"), TEXT("Height in metres or in feet, on the HUD and in the menus."), { TEXT("Metres"), TEXT("Feet") }, TEXT("Units"), 0, 0, nullptr));
 	Game.Rows.Add(IntRow(TEXT("HUD"), TEXT("Everything shows every reading. Quiet keeps the screen empty until your body needs you - then only that."), { TEXT("Everything"), TEXT("Quiet") }, TEXT("Hud"), 0, 0, nullptr));
-	Game.Rows.Add(IntRow(TEXT("HUD STYLE"), TEXT("The watch: rings around the altitude, bottom left, like an altimeter on your wrist. The strip: one quiet line at the bottom of the view."), { TEXT("Watch"), TEXT("Strip") }, TEXT("HudStyle"), 0, 0, nullptr));
 	Tabs.Add(Game);
 
 	// ---- GRAPHICS

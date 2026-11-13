@@ -4,13 +4,13 @@ param([string[]]$Only = @())
 $proj = "F:\UE_project\YggdrasilsPeak"
 Set-Location $proj
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })   # "a,b" arrives as one string through -File
-$def = "Graphics=-1;Upscaling=2;Upscaler=0;RayTracing=1;Hud=0;HudStyle=0"
+$def = "Graphics=-1;Upscaling=2;Upscaler=0;RayTracing=1;Hud=0"
 $shots = @(
     # name, x, y, z, pitch, yaw, -Set, -Sg, extra, wait
     @("snow_old",   338700, 2468650, -69000, -32, 200, "Graphics=0;Upscaling=4;Upscaler=1", 0, "", 14),
     @("snow_new",   338700, 2468650, -69000, -32, 200, $def, 2, "", 14),
     @("hud_watch",  338533, 2468724, -68990, -6, 200, $def, 2, "", 14),
-    @("hud_strip",  338533, 2468724, -68990, -6, 200, "$def;HudStyle=1", 2, "", 14),
+    @("hud_storm",  338533, 2468724, -68990, -6, 200, $def, 2, "ygg.Realm.StartTime 1000, ygg.Realm.Force Jotunheim", 14),
     @("hud_quiet",  338533, 2468724, -68990, -6, 200, "$def;Hud=1", 2, "", 14),
     @("pack",       338533, 2468724, -68990, -6, 200, $def, 2, "ygg.Later 8 ygg.Pack", 13),
     @("trees_4800", 154111, 2041970, -19700, 0, 120, $def, 2, "", 28),

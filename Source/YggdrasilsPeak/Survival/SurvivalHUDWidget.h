@@ -241,8 +241,12 @@ private:
 	{
 		FSurvivalSnapshot Snapshot;
 		float Temperature = 1.f, Health = 1.f, Stamina = 1.f, Satiety = 1.f, Hydration = 1.f;
-		/** Quiet HUD (Settings > Game > HUD): how far the watch has faded in (1 = shown). */
+		/** Quiet HUD (Settings > Game > HUD): how far the readouts have faded in (1 = shown). */
 		float WatchShown = 1.f;
+		/** The route's camps for the altimeter's route line: name and height (m), low to high. */
+		struct FCampMark { FString Name; float Elev = 0.f; };
+		TArray<FCampMark> Camps;
+		float CampsAge = 99.f;
 		bool bExhausted = false, bLowHealth = false;
 		int32 PackKg = 0, PackMax = 0, Food = 0, Water = 0;
 		FString Subtitle;
