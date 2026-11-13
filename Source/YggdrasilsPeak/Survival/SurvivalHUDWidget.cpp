@@ -955,16 +955,28 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 		const FPen T{ G, Out, Layer, AirShown };
 		const float E = Paint.Extreme, Hot = Paint.AirC > 0.f ? 1.f : 0.f;
 		const float FY = 60.f * S;
-		const FLinearColor TC = FMath::Lerp(White, Red, FMath::SmoothStep(0.f, 0.35f, E));
+		// heat is red; deep cold is a dark purple on a breath of frost (user: "+60 and -100 are two completely different
+		// scenarios... when it is minus 100 we should use the cold color, maybe dark purple")
+		const FLinearColor Violet = FLinearColor::FromSRGBColor(FColor(104, 54, 206));
+		const FLinearColor Accent = Hot > 0.f ? Red : Violet;
+		const FLinearColor TC = FMath::Lerp(White, Accent, FMath::SmoothStep(0.f, 0.35f, E));
 		const FSlateFontInfo TF = Roboto(TEXT("Light"), FMath::Lerp(26.f, 46.f, FMath::SmoothStep(0.f, 1.f, E)));
 		const int32 Deg = FMath::RoundToInt(Paint.AirC);
 		const FString TStr = FString::Printf(TEXT("%s%d°"), Deg < 0 ? TEXT("−") : TEXT(""), FMath::Abs(Deg));
 		const float TW = T.Width(TStr, TF);
 		if (E > 0.05f)
 		{
-			// a soft dark under the number (red on a red Emberfall sky still stands out), then a breath of red light
-			T.Glow(FVector2f(RX - TW - 30.f * S, FY - 56.f * S), FVector2f(TW + 60.f * S, 84.f * S), FLinearColor(0.f, 0.01f, 0.03f, 0.42f * E));
-			T.Glow(FVector2f(RX - TW - 12.f * S, FY - 40.f * S), FVector2f(TW + 24.f * S, 50.f * S), WithA(Red, 0.22f * E * (0.6f + 0.4f * Pulse)));
+			if (Hot > 0.f)
+			{
+				// a soft dark under the number (red on a red Emberfall sky still stands out), then a breath of red light
+				T.Glow(FVector2f(RX - TW - 30.f * S, FY - 56.f * S), FVector2f(TW + 60.f * S, 84.f * S), FLinearColor(0.f, 0.01f, 0.03f, 0.42f * E));
+				T.Glow(FVector2f(RX - TW - 12.f * S, FY - 40.f * S), FVector2f(TW + 24.f * S, 50.f * S), WithA(Red, 0.22f * E * (0.6f + 0.4f * Pulse)));
+			}
+			else
+			{
+				// frost: a pale glow that breathes, so the dark purple reads on a dark storm sky
+				T.Glow(FVector2f(RX - TW - 34.f * S, FY - 60.f * S), FVector2f(TW + 68.f * S, 92.f * S), FLinearColor(0.84f, 0.88f, 1.f, 0.4f * E * (0.85f + 0.15f * Pulse)));
+			}
 		}
 		T.TextSOnBase(TStr, RX - TW, FY, TF, TC, FMath::Lerp(0.6f, 0.95f, E));
 		float X = RX - TW - 16.f * S;
@@ -981,7 +993,7 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 			const FSlateFontInfo CapF = Roboto(TEXT("Medium"), 13.f, 220);
 			const FString Cap = Hot > 0.f ? TEXT("EXTREME HEAT") : TEXT("EXTREME COLD");
 			WeatherBottom = FY + 26.f * S;
-			T.TextSRightOnBase(Cap, RX, WeatherBottom, CapF, WithA(Red, FMath::Clamp((E - 0.45f) * 4.f, 0.f, 1.f) * (0.85f + 0.15f * Pulse)), 0.95f);
+			T.TextSRightOnBase(Cap, RX, WeatherBottom, CapF, WithA(Accent, FMath::Clamp((E - 0.45f) * 4.f, 0.f, 1.f) * (0.85f + 0.15f * Pulse)), 0.95f);
 		}
 	}
 	// what comes next, once the wheel has told it: under the weather, small
