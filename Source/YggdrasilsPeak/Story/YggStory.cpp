@@ -341,17 +341,52 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 		return;
 	}
 	const FVector Me = GetActorLocation();
-	// never stand under the drawn ground (a tile whose collision was still cooking when this person landed)
-	GroundCheck -= DeltaSeconds;
-	if (GroundCheck <= 0.f)
+	// never stand under the drawn ground (a tile whose collision was still cooking when this person landed), and never
+	// fall through the world: off the trail's collision corridor (or before a tile has cooked) there is nothing under
+	// a person - the porters dropped 120 m out of sight (2026-11-15). Falling > 0.4 s: look far; no ground within
+	// 30 m below -> hover (no gravity) until it appears; ground above the feet -> stand on it.
 	{
-		GroundCheck = 0.5f;
+		UCharacterMovementComponent* CM = GetCharacterMovement();
 		const float Half = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-		const FVector Feet = Me - FVector(0.f, 0.f, Half);
-		FVector G;
-		if (StoryGround(GetWorld(), Feet, 220.f, 10.f, G, this) && G.Z > Feet.Z + 15.f)
+		FallTime = CM && CM->IsFalling() ? FallTime + DeltaSeconds : 0.f;
+		GroundCheck -= DeltaSeconds;
+		const bool bLost = FallTime > 0.4f || bHover;
+		if (GroundCheck <= 0.f || FallTime > 0.4f)
 		{
-			SetActorLocation(G + FVector(0.f, 0.f, Half + 2.f), false, nullptr, ETeleportType::TeleportPhysics);
+			GroundCheck = 0.5f;
+			const FVector Feet = Me - FVector(0.f, 0.f, Half);
+			FVector G;
+			bool bGround = StoryGround(GetWorld(), Feet, bLost ? 6000.f : 220.f, bLost ? 3000.f : 10.f, G, this);
+			if (!bGround && bLost)      // any solid surface will do once a person is lost (not only terrain tiles)
+			{
+				FHitResult H;
+				FCollisionQueryParams Q(SCENE_QUERY_STAT(StoryNPCGround), true, this);
+				if (GetWorld()->LineTraceSingleByChannel(H, Feet + FVector(0.f, 0.f, 300.f), Feet - FVector(0.f, 0.f, 3000.f), ECC_Visibility, Q)
+					&& !Cast<APawn>(H.GetActor())) { G = H.ImpactPoint; bGround = true; }
+			}
+			if (bGround && (G.Z > Feet.Z + 15.f || bHover))
+			{
+				SetActorLocation(G + FVector(0.f, 0.f, Half + 2.f), false, nullptr, ETeleportType::TeleportPhysics);
+				if (CM) { CM->Velocity = FVector::ZeroVector; CM->GravityScale = 1.f; if (bHover) { CM->SetMovementMode(MOVE_Walking); } }
+				bHover = false;
+			}
+			else if (CM && FallTime > 0.4f && !bGround && !bHover)
+			{
+				bHover = true; HoverFrom = Me;
+				CM->SetMovementMode(MOVE_Flying); CM->Velocity = FVector::ZeroVector; CM->GravityScale = 1.f;
+			}
+		}
+		if (bHover && CM)
+		{
+			float Z = HoverFrom.Z;
+			const float Span = FVector::Dist2D(HoverFrom, Goal);
+			if ((Mode == EMode::GoTo || Mode == EMode::Lead) && Span > 1.f)
+			{
+				const float T = FMath::Clamp(1.f - FVector::Dist2D(Me, Goal) / Span, 0.f, 1.f);
+				Z = FMath::Lerp(HoverFrom.Z, Goal.Z + Half + 2.f, T);     // places are surface heights
+			}
+			SetActorLocation(FVector(Me.X, Me.Y, Z), false, nullptr, ETeleportType::TeleportPhysics);
+			CM->Velocity.Z = 0.f;
 		}
 	}
 	FVector Target = Me;
@@ -395,12 +430,23 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 		const FVector Dir = (Target - Me).GetSafeNormal2D();
 		AddMovementInput(Dir, FMath::Clamp(Scale, 0.2f, 1.f));
 		GetCharacterMovement()->MaxWalkSpeed = 190.f * FMath::Max(1.f, Scale) * GetActorScale3D().X;
+		GetCharacterMovement()->MaxFlySpeed = GetCharacterMovement()->MaxWalkSpeed;     // hovering (no ground) walks at the same pace
 		// stuck against a rock: hop round it
 		StuckTime = FVector::Dist2D(Me, LastPos) < 15.f * DeltaSeconds * 10.f ? StuckTime + DeltaSeconds : 0.f;
 		if (StuckTime > 1.5f)
 		{
+			// land the hop on top of whatever is under the spot (a person spawned a little inside a coarse collision
+			// surface could never move: a checked teleport out of an overlap fails - the porters stood frozen)
 			const FVector Side = FVector::CrossProduct(FVector::UpVector, Dir) * 140.f;
-			TeleportTo(Me + Side + Dir * 120.f + FVector(0.f, 0.f, 60.f), Dir.Rotation());
+			FVector To = Me + Side + Dir * 120.f;
+			FHitResult H;
+			FCollisionQueryParams Q(SCENE_QUERY_STAT(StoryNPCHop), true, this);
+			if (GetWorld()->LineTraceSingleByChannel(H, To + FVector(0.f, 0.f, 600.f), To - FVector(0.f, 0.f, 600.f), ECC_Visibility, Q) && !Cast<APawn>(H.GetActor()))
+			{
+				To = H.ImpactPoint + FVector(0.f, 0.f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.f);
+			}
+			else { To += FVector(0.f, 0.f, 60.f); }
+			TeleportTo(To, Dir.Rotation(), false, true);
 			StuckTime = 0.f;
 		}
 	}
@@ -990,6 +1036,9 @@ float UYggStorySubsystem::DoAction(FRun& Run, const TSharedPtr<FJsonObject>& A)
 				FActorSpawnParameters SP;
 				SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 				N = World->SpawnActor<AYggStoryNPC>(AYggStoryNPC::StaticClass(), Spot, Face, SP);
+				// the spawn's overlap fix-up can shove a person far sideways (the porters landed 42 m off the trail,
+				// off the collision corridor, and fell out of the world): put them back on their spot
+				if (N && FVector::Dist2D(N->GetActorLocation(), Spot) > 150.f) { N->TeleportTo(Spot, Face, false, true); }
 				if (N) { People.Add(FName(*Id), N); N->Id = FName(*Id); }
 			}
 			else

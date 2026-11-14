@@ -62,6 +62,9 @@ public:
 private:
 	float StuckTime = 0.f;
 	float GroundCheck = 0.f;
+	float FallTime = 0.f;      // seconds in the air: past 0.4 s look far for the ground, hover if there is none
+	bool bHover = false;       // no collision under this person: walk on without gravity at the height between start and goal
+	FVector HoverFrom = FVector::ZeroVector;
 	FVector LastPos = FVector::ZeroVector;
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<USceneComponent>> LookParts;
