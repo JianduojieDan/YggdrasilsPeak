@@ -251,6 +251,6 @@ float term=0.0; // route tiles are 1 m triangles: the 17 m terminator hack only 
 Normal=hx.SN(Normal-sunL*max(dot(Normal,sunL),0.0)*term,n);
 Roughness=lerp(sRough,rockM.g,rm);
 AO=lerp(lerp(1.0,0.9,hollow)*lerp(1.0,0.78,cav)*lerp(1.0,0.8,rpC),rockM.r,rm);
-RockMask=rm;
+RockMask=max(rm,saturate(TileRock)); // rubble counts as rock: no trail trench/banks on moraine (2026-11-14)
 SnowOut=sCol*lerp(0.96,1.03,lf); // fed to UDS so its weather-snow layer looks like ours
 return max(col,0.0);

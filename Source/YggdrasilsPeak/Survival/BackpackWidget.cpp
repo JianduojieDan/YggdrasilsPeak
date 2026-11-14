@@ -29,6 +29,9 @@
 #include "Rendering/SlateRenderer.h"
 #include "Styling/CoreStyle.h"
 
+static TAutoConsoleVariable<int32> CVarPackFont(TEXT("ygg.Pack.Font"), 3,
+	TEXT("Pack screen lettering (3 = the author's pick, 2026-11-14): 0 = Roboto, 1 = Alegreya (the menus' serif), 2 = journal (Alegreya headings, Caveat hand-written text), 3 = Cinzel headings, Cormorant Garamond text."));
+
 namespace
 {
 	// HUD v8's colours (SurvivalHUDWidget, Tools/UI/hud_v8_mockup.py): one white, one red for danger, a blue-black shadow
@@ -250,10 +253,47 @@ namespace
 		return F;
 	}
 
-	/** Roboto at the mockup's pixel size (Slate sizes are points: px * 0.75), in quarter points so sizes stay few. */
-	FSlateFontInfo PackFont(const TCHAR* Face, float Px, float S, int32 Track = 0)
+	/** The voices on the pack screen, so each lettering can give them different faces. */
+	enum class EPackType : uint8 { Head, Body, Caps, Number };
+
+	int32 PackFontMode() { return FMath::Clamp(CVarPackFont.GetValueOnGameThread(), 0, 3); }
+
+	/** One face as a font, made once and kept for the session (the HUD's way, YggUI::MakeFace). A face that does not
+	 *  load is tried once, not on every frame. */
+	UFont* PackFace(int32 Which)
 	{
-		FSlateFontInfo F = FCoreStyle::GetDefaultFontStyle(FName(Face), FMath::Max(5.f, FMath::RoundToFloat(Px * 0.75f * S * 4.f) * 0.25f));
+		static const TCHAR* const Paths[4] = {
+			TEXT("/Game/UI/Fonts/FF_Alegreya.FF_Alegreya"), TEXT("/Game/UI/Fonts/FF_Caveat.FF_Caveat"),
+			TEXT("/Game/UI/Fonts/FF_Cinzel.FF_Cinzel"), TEXT("/Game/UI/Fonts/FF_CormorantGaramond.FF_CormorantGaramond") };
+		static TStrongObjectPtr<UFont> Made[4];
+		static bool bTried[4] = { false, false, false, false };
+		if (Which < 0 || Which > 3) { return nullptr; }
+		if (!bTried[Which])
+		{
+			bTried[Which] = true;
+			if (UFont* F = YggUI::MakeFace(GetTransientPackage(), Paths[Which])) { Made[Which].Reset(F); }
+		}
+		return Made[Which].Get();
+	}
+
+	/** The mockup's pixel size (Slate sizes are points: px * 0.75), in quarter points so sizes stay few. Face = the
+	 *  Roboto weight (lettering 0); the other letterings pick a face by voice, scaled so each reads about as large as
+	 *  Roboto did (their x-heights differ). */
+	FSlateFontInfo PackFont(EPackType Type, const TCHAR* Face, float Px, float S, int32 Track = 0)
+	{
+		int32 Which = -1;
+		float K = 1.f;
+		switch (PackFontMode())
+		{
+		case 1: Which = 0; K = 1.08f; break;
+		case 2: if (Type == EPackType::Body) { Which = 1; K = 1.32f; } else { Which = 0; K = 1.08f; } break;
+		case 3: if (Type == EPackType::Head || Type == EPackType::Caps) { Which = 2; K = 0.9f; } else { Which = 3; K = 1.16f; } break;
+		default: break;
+		}
+		UFont* Font = PackFace(Which);
+		if (!Font) { K = 1.f; }   // a face that did not load falls back to Roboto at Roboto's size (review 2026-11-14)
+		const float Size = FMath::Max(5.f, FMath::RoundToFloat(Px * K * 0.75f * S * 4.f) * 0.25f);
+		FSlateFontInfo F = Font ? FSlateFontInfo(Font, Size, TEXT("Regular")) : FCoreStyle::GetDefaultFontStyle(FName(Face), Size);
 		F.LetterSpacing = Track;
 		return F;
 	}
@@ -1121,16 +1161,16 @@ int32 UBackpackWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allo
 	const FPackPen P{ G, OutDrawElements, Layer, ContentAlpha };
 	const float Slide = (1.f - ContentAlpha) * 14.f * S;      // the list comes in from the left, the page from the right
 	const float LineH = FMath::Max(1.f, 2.f * S);
-	const FSlateFontInfo CapF = PackFont(TEXT("Medium"), 11.f, S, PackCapsTrack);
-	const FSlateFontInfo SmallF = PackFont(TEXT("Regular"), 15.f, S);
+	const FSlateFontInfo CapF = PackFont(EPackType::Caps, TEXT("Medium"), 11.f, S, PackCapsTrack);
+	const FSlateFontInfo SmallF = PackFont(EPackType::Body, TEXT("Regular"), 15.f, S);
 	const FLinearColor Soft = YggUI::WithA(PackWhite, PackSoft);
 
 	// ---- left: "Pack", then the rows under their group's caps: line icon, name, count, weight, a fine line under each
 	static const FString TitleText = NSLOCTEXT("Pack", "Header", "Pack").ToString();
 	const float LX = F.X(150.f) - Slide;
-	P.Text(TitleText, LX - 3.f * S, F.Y(190.f), PackFont(TEXT("Light"), 54.f, S), YggUI::WithA(PackWhite, 0.98f));
-	const FSlateFontInfo NameF = PackFont(TEXT("Regular"), 20.f, S);
-	const FSlateFontInfo CountF = PackFont(TEXT("Light"), 26.f, S);
+	P.Text(TitleText, LX - 3.f * S, F.Y(190.f), PackFont(EPackType::Head, TEXT("Light"), 54.f, S), YggUI::WithA(PackWhite, 0.98f));
+	const FSlateFontInfo NameF = PackFont(EPackType::Head, TEXT("Regular"), 20.f, S);
+	const FSlateFontInfo CountF = PackFont(EPackType::Number, TEXT("Light"), 26.f, S);
 	const float RW = 640.f * S;
 	for (int32 i = 0; i < Rows.Num(); ++i)
 	{
@@ -1160,13 +1200,13 @@ int32 UBackpackWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allo
 	static const FString PackCaps = NSLOCTEXT("PackScreen", "PackCaps", "Pack").ToUpper().ToString();
 	const float DX = F.X(1000.f) + Slide;
 	P.Text(PackCaps, DX, F.Y(192.f), CapF, Soft);
-	const float NumEnd = P.Text(PackLine, DX - 2.f * S, F.Y(238.f), PackFont(TEXT("Light"), 44.f, S), YggUI::WithA(PackWhite, 0.98f));
-	P.Text(PackMaxLine, NumEnd + 6.f * S, F.Y(238.f), PackFont(TEXT("Light"), 20.f, S), Soft);
+	const float NumEnd = P.Text(PackLine, DX - 2.f * S, F.Y(238.f), PackFont(EPackType::Number, TEXT("Light"), 44.f, S), YggUI::WithA(PackWhite, 0.98f));
+	P.Text(PackMaxLine, NumEnd + 6.f * S, F.Y(238.f), PackFont(EPackType::Number, TEXT("Light"), 20.f, S), Soft);
 	const float BarW = 420.f * S, BarY = F.Y(250.f);
 	P.Rect(FVector2f(DX, BarY), FVector2f(BarW, LineH), YggUI::WithA(PackWhite, 0.3f));
 	P.Rect(FVector2f(DX, BarY), FVector2f(BarW * FMath::Clamp(ShownLoadKg / MaxKg, 0.f, 1.02f), LineH), YggUI::WithA(PackWhite, 0.95f));
 	P.Rect(FVector2f(DX + BarW * FMath::Clamp(ComfortKg / MaxKg, 0.f, 1.f), BarY - 4.f * S), FVector2f(LineH, 10.f * S), YggUI::WithA(PackWhite, 0.6f));
-	P.Text(PackNote, DX, F.Y(274.f), PackFont(TEXT("Regular"), 14.f, S), Soft);
+	P.Text(PackNote, DX, F.Y(274.f), PackFont(EPackType::Body, TEXT("Regular"), 14.f, S), Soft);
 
 	// ---- right: the chosen thing's page (it comes in again each time the choice changes) - its picture, group, name,
 	// what it gives, how many are left, its weight, the words, what the keys do with it
@@ -1179,9 +1219,9 @@ int32 UBackpackWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allo
 	}
 	float Y = 614.f;
 	Q.Text(Page.Group, PX, F.Y(Y), CapF, Soft);
-	Q.Text(Page.Title, PX - 2.f * S, F.Y(Y + 48.f), PackFont(TEXT("Light"), 46.f, S), YggUI::WithA(PackWhite, 0.98f));
+	Q.Text(Page.Title, PX - 2.f * S, F.Y(Y + 48.f), PackFont(EPackType::Head, TEXT("Light"), 46.f, S), YggUI::WithA(PackWhite, 0.98f));
 	Y += 92.f;
-	const FSlateFontInfo ReadF = PackFont(TEXT("Light"), 30.f, S);
+	const FSlateFontInfo ReadF = PackFont(EPackType::Number, TEXT("Light"), 30.f, S);
 	float RX = PX;
 	if (!Page.EffectValue.IsEmpty())
 	{
@@ -1200,13 +1240,15 @@ int32 UBackpackWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allo
 	}
 	Q.Text(Page.Weight, RX, F.Y(Y), SmallF, Soft);
 	Y += 40.f;
-	const FSlateFontInfo BodyF = PackFont(TEXT("Regular"), 18.f, S);
-	if (BodyLinesSerial != BodySerial || BodyLinesScale != S)
+	const FSlateFontInfo BodyF = PackFont(EPackType::Body, TEXT("Regular"), 18.f, S);
+	static int32 WrappedFontMode = -1;   // the wrap depends on the lettering too (ygg.Pack.Font can change while open)
+	if (BodyLinesSerial != BodySerial || BodyLinesScale != S || WrappedFontMode != PackFontMode())
 	{
 		// as many lines as leave room for the action and a message above the keys
 		PackWrap(Page.Body, BodyF, 600.f * S, Page.Danger.IsEmpty() ? 7 : 5, BodyLines);
 		BodyLinesSerial = BodySerial;
 		BodyLinesScale = S;
+		WrappedFontMode = PackFontMode();
 	}
 	for (const FString& Line : BodyLines)
 	{
@@ -1217,19 +1259,19 @@ int32 UBackpackWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Allo
 	{
 		// red only here: a dot, "None left", and where to find more
 		Q.Bead(FVector2f(PX + 4.f * S, F.Y(Y + 18.f)), 3.5f * S, PackRed);
-		const float HintX = Q.Text(Page.Danger, PX + 16.f * S, F.Y(Y + 23.f), PackFont(TEXT("Medium"), 16.f, S), PackRed) + 10.f * S;
-		Q.Text(Page.DangerHint, HintX, F.Y(Y + 23.f), PackFont(TEXT("Regular"), 16.f, S), YggUI::WithA(PackWhite, 0.88f));
+		const float HintX = Q.Text(Page.Danger, PX + 16.f * S, F.Y(Y + 23.f), PackFont(EPackType::Body, TEXT("Medium"), 16.f, S), PackRed) + 10.f * S;
+		Q.Text(Page.DangerHint, HintX, F.Y(Y + 23.f), PackFont(EPackType::Body, TEXT("Regular"), 16.f, S), YggUI::WithA(PackWhite, 0.88f));
 		Y += 40.f;
 	}
 	if (!Page.Action.IsEmpty())
 	{
 		Y += 30.f;
-		const float HintX = Q.Text(Page.Action, PX, F.Y(Y), PackFont(TEXT("Regular"), 17.f, S), YggUI::WithA(PackWhite, 0.95f)) + 18.f * S;
+		const float HintX = Q.Text(Page.Action, PX, F.Y(Y), PackFont(EPackType::Body, TEXT("Regular"), 17.f, S), YggUI::WithA(PackWhite, 0.95f)) + 18.f * S;
 		Q.Text(Page.ActionHint, HintX, F.Y(Y), SmallF, Soft);
 	}
 	if (MessageTime > 0.f && !MessageText.IsEmpty())
 	{
-		P.Text(MessageText, PX, F.Y(Y + 44.f), PackFont(TEXT("Regular"), 16.f, S), YggUI::WithA(PackWhite, 0.88f * FMath::Clamp(MessageTime / 0.4f, 0.f, 1.f)));
+		P.Text(MessageText, PX, F.Y(Y + 44.f), PackFont(EPackType::Body, TEXT("Regular"), 16.f, S), YggUI::WithA(PackWhite, 0.88f * FMath::Clamp(MessageTime / 0.4f, 0.f, 1.f)));
 	}
 
 	// ---- what the keys do, bottom right of the screen itself

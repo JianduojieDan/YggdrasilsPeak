@@ -297,6 +297,8 @@ namespace YggUI
 	{
 		SerifFont();
 		YggAssets::Kept<UFontFace>(TEXT("/Game/UI/Fonts/FF_Caveat.FF_Caveat"));
+		YggAssets::Kept<UFontFace>(TEXT("/Game/UI/Fonts/FF_Cinzel.FF_Cinzel"));             // the pack's lettering (ygg.Pack.Font 3)
+		YggAssets::Kept<UFontFace>(TEXT("/Game/UI/Fonts/FF_CormorantGaramond.FF_CormorantGaramond"));
 		YggAssets::Kept<UMaterialInterface>(TEXT("/Game/UI/Materials/M_UI_CloudVeil.M_UI_CloudVeil"), LOAD_NoWarn | LOAD_Quiet);
 		YggAssets::Kept<UMaterialInterface>(TEXT("/Game/UI/Materials/M_PP_Fate.M_PP_Fate"), LOAD_NoWarn | LOAD_Quiet);
 	}

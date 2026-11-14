@@ -301,6 +301,25 @@ private:
 	/** Redraws TrailSoftMap from TrailMap. */
 	void SoftenTrailMap();
 
+	/** The pits are material displacement, which the virtual shadow map cache does not count as movement, so cached sun
+	 *  shadow pages kept the shadows of old or filled-in pits (dark blocks cut along page edges, play-test 2026-11-14).
+	 *  An invisible box (translucent, so it draws no shadow) steps across the trail area one cell a frame; each move
+	 *  makes the cache redraw the pages under its old and new place, so every pit's shadow is at most ~1-2 s old. */
+	void RefreshTrailShadows();
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UStaticMeshComponent> ShadowRefresher;
+
+	/** The refresher's cube and see-through material (referenced here so they are cooked). */
+	UPROPERTY()
+	TObjectPtr<class UStaticMesh> RefresherMesh;
+
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> RefresherMaterial;
+
+	int32 RefreshCell = 0;
+	float ShadowRefreshLinger = 0.f;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UTextureRenderTarget2D> TrailScratch;
 

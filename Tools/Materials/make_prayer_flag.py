@@ -24,7 +24,7 @@ mel.connect_material_expressions(dv, "", fr, ""); mel.connect_material_expressio
 mel.connect_material_expressions(uv, "", c, "UV"); mel.connect_material_expressions(col, "", c, "Col"); mel.connect_material_expressions(mk, "", c, "Rand")
 rgb = mel.create_material_expression(m, unreal.MaterialExpressionComponentMask, -200, 0)
 for k in "rgb": rgb.set_editor_property(k, True)
-a = mel.create_material_expression(m, unreal.MaterialExpressionComponentMask, -200, 100); a.set_editor_property("a", True)
+a = mel.create_material_expression(m, unreal.MaterialExpressionComponentMask, -200, 100); [a.set_editor_property(k, k == "a") for k in ("r", "g", "b", "a")]  # alpha ONLY (r+g+a fed the red channel into the mask: holes, 2026-11-14)
 mel.connect_material_expressions(c, "", rgb, ""); mel.connect_material_expressions(c, "", a, "")
 mel.connect_material_property(rgb, "", unreal.MaterialProperty.MP_BASE_COLOR); mel.connect_material_property(a, "", unreal.MaterialProperty.MP_OPACITY_MASK)
 r = mel.create_material_expression(m, unreal.MaterialExpressionConstant, -200, 200); r.set_editor_property("r", 0.85)

@@ -2,7 +2,9 @@
 
 #include "Environment/YggQualitySubsystem.h"
 
+#include "Camera/PlayerCameraManager.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
@@ -22,6 +24,12 @@ namespace
 	bool ShouldAdapt() { return !GIsEditor; }   // the automatic steps never run in the editor; the choices apply everywhere
 	float FixedPercent(int32 Up) { static const float P[] = { 75.f, 100.f, 67.f, 58.f, 50.f }; return P[FMath::Clamp(Up, 0, 4)]; }
 	void SetCVar(const TCHAR* Name, float V) { if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name)) { C->Set(V, ECVF_SetByConsole); } }
+
+	TAutoConsoleVariable<float> CVarLookUpDicing(
+		TEXT("ygg.Quality.LookUpDicing"),
+		20.f,
+		TEXT("Nanite dicing rate (micro-triangle size, px) while the camera looks steeply up: the tier's own rate up to 20 deg pitch, ")
+		TEXT("this one from 50 deg (never finer than the tier's). 0 = off (the tier's rate always)."));
 }
 
 UYggQualitySubsystem* UYggQualitySubsystem::Get(UWorld* World)
@@ -163,8 +171,52 @@ void UYggQualitySubsystem::SetAuto()
 	Configure(-1, Upscaling);
 }
 
+void UYggQualitySubsystem::UpdateLookUpDicing()
+{
+	// 2026-11-14, the user's "FPS drops when I look up": the ground under and behind the camera still passes Nanite's
+	// patch culling (the tile material may push it up to 2 m, so its bounds reach the camera), and a patch at the near
+	// plane gets the most tessellation there is (NaniteTessellation.ush GetTessFactors: edge length / near plane).
+	// Standing at the user's spot (Dingboche, pitch 77, High): 9.4 of 15.6 GPU ms for triangles nobody sees, and some
+	// of them land in the sky as white streaks. Looking up, almost no terrain is on screen, so the micro-triangles grow
+	// with the pitch: dicing 16 instead of 8 there measured 2.4 ms (15.6 -> 8.0 ms frame).
+	IConsoleVariable* Dicing = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Nanite.DicingRate"));
+	if (!Dicing)
+	{
+		return;
+	}
+	const float Current = Dicing->GetFloat();
+	if (BaseDicing < 0.f || (LastSetDicing >= 0.f && !FMath::IsNearlyEqual(Current, LastSetDicing)))
+	{
+		BaseDicing = Current;   // first look, or the tier / console changed it: that is the new base
+		LastSetDicing = -1.f;
+	}
+	const float Up = CVarLookUpDicing.GetValueOnGameThread();
+	float Want = BaseDicing;
+	if (Up > 0.f)
+	{
+		const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+		const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+		if (PC && PC->PlayerCameraManager)
+		{
+			const float Pitch = float(FRotator::NormalizeAxis(PC->PlayerCameraManager->GetCameraRotation().Pitch));
+			Want = FMath::Lerp(BaseDicing, FMath::Max(BaseDicing, Up), FMath::SmoothStep(20.f, 50.f, Pitch));
+		}
+	}
+	else if (LastSetDicing < 0.f)
+	{
+		return;   // off and nothing of ours to undo: leave the cvar alone (tests set it by hand)
+	}
+	Want = FMath::RoundToFloat(Want * 4.f) * 0.25f;   // quarter-pixel steps: most frames change nothing
+	if (!FMath::IsNearlyEqual(Current, Want))
+	{
+		Dicing->Set(Want, ECVF_SetByConsole);
+	}
+	LastSetDicing = Up > 0.f ? Want : -1.f;
+}
+
 void UYggQualitySubsystem::Tick(float DeltaTime)
 {
+	UpdateLookUpDicing();
 	if (!ShouldAdapt() || (!IsAutoTier() && !IsAutoPercent())) { return; }
 	const UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
 	if (!World) { return; }

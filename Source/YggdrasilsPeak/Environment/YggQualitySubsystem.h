@@ -51,6 +51,10 @@ public:
 private:
 	void ApplyTier(int32 Tier);
 	void ApplyPercent();
+	/** Coarser displacement tessellation while the camera looks steeply up (ygg.Quality.LookUpDicing). */
+	void UpdateLookUpDicing();
+	float BaseDicing = -1.f;      // the dicing rate set by the tier or the console (-1 = not read yet)
+	float LastSetDicing = -1.f;   // what UpdateLookUpDicing last wrote (anything else = someone changed the base)
 	bool IsAutoTier() const { return ChosenTier < 0; }
 	bool IsAutoPercent() const { return Upscaling == 0; }
 

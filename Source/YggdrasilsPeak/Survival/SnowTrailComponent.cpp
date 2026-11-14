@@ -30,6 +30,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
+#include "UObject/ConstructorHelpers.h"
 
 namespace
 {
@@ -44,6 +45,11 @@ namespace
 		TEXT("ygg.Snow.Deform"),
 		1,
 		TEXT("1 = legs push a real trench into the snow (trail map + landscape displacement), 0 = off."));
+
+	TAutoConsoleVariable<int32> CVarShadowRefresh(
+		TEXT("ygg.Snow.ShadowRefresh"),
+		0,
+		TEXT("Off by default (2026-11-14: the blocky shadows the author saw were broken prayer flags, not the cache). 1 = keep the sun's cached shadow up to date over the trail (an invisible box steps across the trail area, one of 8x8 cells a frame); 0 = off (old pits' shadows linger as dark blocks)."));
 
 	// The in-game sound tour (snd) sets this so every step sounds like one surface wherever you walk.
 	TAutoConsoleVariable<int32> CVarStepSurface(
@@ -65,6 +71,11 @@ namespace
 		TEXT("ygg.Snow.AutoYaw"),
 		-999.f,
 		TEXT("Testing, with ygg.Snow.AutoWalk: the heading (world yaw, degrees) to walk; -999 = keep the current one."));
+
+	TAutoConsoleVariable<float> CVarAutoPitch(
+		TEXT("ygg.Snow.AutoPitch"),
+		-999.f,
+		TEXT("Testing: holds the view pitch (degrees, e.g. -60 to look at your feet), walking or not; -999 = off. With ygg.Snow.AutoYaw the heading is held too."));
 
 	TAutoConsoleVariable<int32> CVarStepLog(
 		TEXT("ygg.Snow.StepLog"),
@@ -134,6 +145,11 @@ USnowTrailComponent::USnowTrailComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 	// After animation, so the foot bones are this frame's pose.
 	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeFinder(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> ClearFinder(TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Translucent.Widget3DPassThrough_Translucent"));
+	RefresherMesh = CubeFinder.Object;
+	RefresherMaterial = ClearFinder.Object;
 }
 
 void USnowTrailComponent::BeginPlay()
@@ -231,7 +247,94 @@ void USnowTrailComponent::BeginPlay()
 		TrailCentre = FVector2D(GetOwner()->GetActorLocation());
 		bTrailReady = true;
 		PublishTrailArea(CVarSnowDeform.GetValueOnGameThread() != 0);
+
+		if (RefresherMesh && RefresherMaterial)
+		{
+			// Never seen: no main pass, no depth, see-through material (draws nothing into the shadow map either), but it
+			// counts as a shadow caster, which is what makes the cache redraw the pages it moves over.
+			ShadowRefresher = NewObject<UStaticMeshComponent>(GetOwner(), TEXT("TrailShadowRefresher"));
+			ShadowRefresher->SetUsingAbsoluteLocation(true);
+			ShadowRefresher->SetUsingAbsoluteRotation(true);
+			ShadowRefresher->SetUsingAbsoluteScale(true);
+			ShadowRefresher->SetMobility(EComponentMobility::Movable);
+			ShadowRefresher->SetStaticMesh(RefresherMesh);
+			ShadowRefresher->SetMaterial(0, RefresherMaterial);
+			ShadowRefresher->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			ShadowRefresher->SetGenerateOverlapEvents(false);
+			ShadowRefresher->SetCanEverAffectNavigation(false);
+			ShadowRefresher->CastShadow = true;
+			ShadowRefresher->bCastDynamicShadow = true;
+			ShadowRefresher->bRenderInMainPass = false;
+			ShadowRefresher->bRenderInDepthPass = false;
+			ShadowRefresher->bReceivesDecals = false;
+			ShadowRefresher->bVisibleInReflectionCaptures = false;
+			ShadowRefresher->bVisibleInRealTimeSkyCaptures = false;
+			ShadowRefresher->bVisibleInRayTracing = false;
+			ShadowRefresher->bAffectDistanceFieldLighting = false;
+			ShadowRefresher->bAffectDynamicIndirectLighting = false;
+			ShadowRefresher->SetWorldLocation(GetOwner()->GetActorLocation() - FVector(0.f, 0.f, 100000.f));
+			ShadowRefresher->SetMobility(EComponentMobility::Static);
+			ShadowRefresher->RegisterComponent();
+		}
 	}
+}
+
+void USnowTrailComponent::RefreshTrailShadows()
+{
+	if (!ShadowRefresher)
+	{
+		return;
+	}
+	const bool bOn = CVarShadowRefresh.GetValueOnGameThread() != 0;
+	if (ShadowRefresher->IsVisible() != bOn)
+	{
+		ShadowRefresher->SetVisibility(bOn);
+	}
+	if (!bOn)
+	{
+		return;
+	}
+	// 8 x 8 cells over the trail area (6.4 m each, 3.2 m on High footprints), one a frame: all of it every 64 frames.
+	constexpr int32 Cells = 8;
+	const int32 Cell = RefreshCell;
+	RefreshCell = (RefreshCell + 1) % (Cells * Cells);
+	const float Side = TrailAreaCm / float(Cells);
+	const FVector2D Centre = TrailCentre + FVector2D((float(Cell % Cells) + 0.5f) * Side, (float(Cell / Cells) + 0.5f) * Side) - FVector2D(TrailAreaCm * 0.5f);
+
+	// The box only needs to span the snow surface in that cell (pits go 18 cm down, banks 7 cm up; the drawn surface
+	// can sit a little off the collision): the ground's height range from five traces, plus a margin.
+	const double Z = GetOwner()->GetActorLocation().Z;
+	double Lo = TNumericLimits<double>::Max();
+	double Hi = TNumericLimits<double>::Lowest();
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(TrailShadowRefresh), false, GetOwner());
+	static const FVector2D Probes[5] = { FVector2D(0.0, 0.0), FVector2D(-0.5, -0.5), FVector2D(0.5, -0.5), FVector2D(-0.5, 0.5), FVector2D(0.5, 0.5) };
+	for (const FVector2D& Probe : Probes)
+	{
+		const FVector At(Centre + Probe * Side, Z);
+		FHitResult Hit;
+		if (GetWorld()->LineTraceSingleByChannel(Hit, At + FVector(0.f, 0.f, 5000.f), At - FVector(0.f, 0.f, 5000.f), ECC_Visibility, Params))
+		{
+			Lo = FMath::Min(Lo, Hit.ImpactPoint.Z);
+			Hi = FMath::Max(Hi, Hit.ImpactPoint.Z);
+		}
+	}
+	if (Lo > Hi)
+	{
+		return;   // no ground under this cell within 50 m: nothing to refresh
+	}
+	Lo -= 60.0;
+	Hi += 40.0;
+	// The terrain is static, so its shadow sits in the cache's STATIC pages, and an invalidation only reaches the pages
+	// of the kind its primitive is cached as (VirtualShadowMapCacheInvalidation.ush: static -> INVALIDATE_STATIC, moving ->
+	// INVALIDATE_DYNAMIC). A moving box therefore never touched the pits' shadows (the first fix, play-test 2026-11-14).
+	// So the box hops as a STATIC primitive: removed and added again at the next cell (both invalidate their bounds).
+	// The engine cube is 100 cm, centred.
+	ShadowRefresher->UnregisterComponent();
+	ShadowRefresher->SetMobility(EComponentMobility::Movable);
+	ShadowRefresher->SetWorldTransform(FTransform(FQuat::Identity, FVector(Centre, 0.5 * (Lo + Hi)),
+		FVector(Side * 1.1f / 100.f, Side * 1.1f / 100.f, float(Hi - Lo) / 100.f)));
+	ShadowRefresher->SetMobility(EComponentMobility::Static);
+	ShadowRefresher->RegisterComponent();
 }
 
 void USnowTrailComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -318,6 +421,12 @@ void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 	}
 	const bool bEnabled = CVarSnowDeform.GetValueOnGameThread() != 0 && FootprintQuality > 0;
 	PublishTrailArea(bEnabled);
+	// keeps going a few seconds after the trail is switched off, so the pits' shadows go with the pits
+	ShadowRefreshLinger = bEnabled ? 3.f : ShadowRefreshLinger - DeltaTime;
+	if (ShadowRefreshLinger > 0.f)
+	{
+		RefreshTrailShadows();
+	}
 	if (!bEnabled)
 	{
 		return;
@@ -436,6 +545,15 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 				if (AController* C = Pawn->GetController()) { C->SetControlRotation(FRotator(0.f, Yaw, 0.f)); }
 			}
 			Pawn->AddMovementInput(Dir, FMath::Min(Auto, 1.f));
+		}
+	}
+	if (const float Pitch = CVarAutoPitch.GetValueOnGameThread(); Pitch > -900.f)
+	{
+		if (const APawn* Pawn = Cast<APawn>(GetOwner()); Pawn && Pawn->GetController())
+		{
+			const float Yaw = CVarAutoYaw.GetValueOnGameThread();
+			const FRotator Now = Pawn->GetController()->GetControlRotation();
+			Pawn->GetController()->SetControlRotation(FRotator(Pitch, Yaw > -900.f ? Yaw : Now.Yaw, 0.f));
 		}
 	}
 

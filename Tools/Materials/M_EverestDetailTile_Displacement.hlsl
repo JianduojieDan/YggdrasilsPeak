@@ -87,7 +87,7 @@ float rockH=0,snowH=0;
 }
 float hb=slopeM*1.6-0.3+(rockH-snowH)*0.6;
 float rm=smoothstep(0.35,0.65,hb);
-RockMask=rm; // vertex-safe copy of the rock mask (no ddx) for UDS snow masking
+RockMask=max(rm,saturate(TileRock)); // rubble counts as rock: no trail trench/banks on moraine (2026-11-14) // vertex-safe copy of the rock mask (no ddx) for UDS snow masking
 // rock: full relief up and down around the ground (as the user liked); snow: none (SnowDisplacementCm 0 - snow bumps caused sky streaks + FPS drop)
 // rock relief biased upward (0.35 instead of 0.5): collision is the flat heightmap, so deep dips made the player float above rock
 float d=lerp((snowH-0.5)*DispSnow,(rockH-0.35)*DispRock,rm);
