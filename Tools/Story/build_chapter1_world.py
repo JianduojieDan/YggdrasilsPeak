@@ -184,36 +184,36 @@ print("room spread", round(spread), "at", rx, ry)
 L_, W_, H_, T_ = 600.0, 460.0, 240.0, 40.0
 iL, iW = L_ - 2 * T_, W_ - 2 * T_
 # floor, footing, ceiling
-box(O, RY, 0, 0, -160, L_ + 60, W_ + 60, 320, "Stone")
+box(O, RY, 0, 0, -160, L_ + 60, W_ + 60, 320, "PBR_Wall")
 for i in range(5):
-    box(O, RY, L_ / 2 + 55 + i * 42, 0, -i * 34 - 17 - 160 + 160 - 0, 44, 160, 34 + i * 0, "Stone")   # steps down from the door
-box(O, RY, 0, 0, 5, iL, iW, 10, "WoodDark")
-box(O, RY, 0, 0, H_ + 6, iL, iW, 12, "WoodDark")
+    box(O, RY, L_ / 2 + 55 + i * 42, 0, -i * 34 - 17 - 160 + 160 - 0, 44, 160, 34 + i * 0, "PBR_Wall")   # steps down from the door
+box(O, RY, 0, 0, 5, iL, iW, 10, "PBR_Floor")
+box(O, RY, 0, 0, H_ + 6, iL, iW, 12, "PBR_Wood")
 for bx in (-180, -60, 60, 180):
-    box(O, RY, bx, 0, H_ - 8, 18, iW, 16, "Wood")
+    box(O, RY, bx, 0, H_ - 8, 18, iW, 16, "PBR_Wood")
 # back wall (-x), side walls, front wall with a door, a window in the +y wall
-box(O, RY, -(L_ - T_) / 2, 0, H_ / 2, T_, W_, H_, "Stone")
-box(O, RY, 0, -(W_ - T_) / 2, H_ / 2, L_, T_, H_, "Stone")
+box(O, RY, -(L_ - T_) / 2, 0, H_ / 2, T_, W_, H_, "PBR_Wall")
+box(O, RY, 0, -(W_ - T_) / 2, H_ / 2, L_, T_, H_, "PBR_Wall")
 wx, ww, wz, wh = 80.0, 90.0, 100.0, 70.0    # window centre x, width, sill, height
 yw = (W_ - T_) / 2
 for (x0, x1) in ((-L_ / 2, wx - ww / 2), (wx + ww / 2, L_ / 2)):
-    box(O, RY, (x0 + x1) / 2, yw, H_ / 2, x1 - x0, T_, H_, "Stone")
-box(O, RY, wx, yw, wz / 2, ww, T_, wz, "Stone")
-box(O, RY, wx, yw, (wz + wh + H_) / 2, ww, T_, H_ - wz - wh, "Stone")
-box(O, RY, wx, yw - T_ / 2 + 4, wz + wh / 2, ww + 8, 6, 8, "Wood"); box(O, RY, wx, yw - T_ / 2 + 4, wz, ww + 10, 10, 6, "Wood")
+    box(O, RY, (x0 + x1) / 2, yw, H_ / 2, x1 - x0, T_, H_, "PBR_Wall")
+box(O, RY, wx, yw, wz / 2, ww, T_, wz, "PBR_Wall")
+box(O, RY, wx, yw, (wz + wh + H_) / 2, ww, T_, H_ - wz - wh, "PBR_Wall")
+box(O, RY, wx, yw - T_ / 2 + 4, wz + wh / 2, ww + 8, 6, 8, "PBR_Wood"); box(O, RY, wx, yw - T_ / 2 + 4, wz, ww + 10, 10, 6, "PBR_Wood")
 dw, dh = 100.0, 190.0
 xf = (L_ - T_) / 2
 for (y0, y1) in ((-W_ / 2, -dw / 2), (dw / 2, W_ / 2)):
-    box(O, RY, xf, (y0 + y1) / 2, H_ / 2, T_, y1 - y0, H_, "Stone")
-box(O, RY, xf, 0, (dh + H_) / 2, T_, dw, H_ - dh, "Stone")
-box(O, RY, xf + T_ / 2 + 3, 0, dh + 4, 8, dw + 20, 10, "Wood")                     # lintel
+    box(O, RY, xf, (y0 + y1) / 2, H_ / 2, T_, y1 - y0, H_, "PBR_Wall")
+box(O, RY, xf, 0, (dh + H_) / 2, T_, dw, H_ - dh, "PBR_Wall")
+box(O, RY, xf + T_ / 2 + 3, 0, dh + 4, 8, dw + 20, 10, "PBR_Wood")                     # lintel
 # roof: blue tin, shallow gable along x, eaves over the walls; gable ends filled with timber
 pitch = 14.0; half = W_ / 2 + 40
 rise = math.tan(math.radians(pitch)) * half
 for sgn in (-1, 1):
-    box(O, RY, 0, sgn * half / 2, H_ + 20 + rise / 2, L_ + 70, half / math.cos(math.radians(pitch)) + 6, 5, "TinBlue", roll=-sgn * pitch)
+    box(O, RY, 0, sgn * half / 2, H_ + 20 + rise / 2, L_ + 70, half / math.cos(math.radians(pitch)) + 6, 5, "PBR_Roof", roll=-sgn * pitch)
 for sgn in (-1, 1):
-    box(O, RY, sgn * (L_ / 2 - 6), 0, H_ + 14 + rise * 0.35, 10, W_ - 40, rise * 0.7, "WoodDark")
+    box(O, RY, sgn * (L_ / 2 - 6), 0, H_ + 14 + rise * 0.35, 10, W_ - 40, rise * 0.7, "PBR_Wood")
 # stove, pipe, kettle, the ember glow
 SX, SY = -95.0, 95.0
 cyl(O, RY, SX, SY, 0, 62, 62, "Iron"); cyl(O, RY, SX, SY, 62, 66, 4, "Iron")
@@ -224,13 +224,13 @@ box(O, RY, 20, -20, 11, 180, 120, 2, "Rug")
 light(unreal.PointLight, local(O, RY, SX + 60, SY, 45), R(0, 0, 0), 420.0, (255, 140, 70, 255), 700, ("roomlight",))
 # benches with rugs, low tables
 for sgn in (-1, 1):
-    box(O, RY, 10 + (60 if sgn > 0 else 0), sgn * (iW / 2 - 32), 21, iL - 120 - (120 if sgn > 0 else 0), 64, 42, "Wood")
+    box(O, RY, 10 + (60 if sgn > 0 else 0), sgn * (iW / 2 - 32), 21, iL - 120 - (120 if sgn > 0 else 0), 64, 42, "PBR_Wood")
     box(O, RY, 10 + (60 if sgn > 0 else 0), sgn * (iW / 2 - 32), 44, iL - 140 - (120 if sgn > 0 else 0), 58, 4, "Rug")
-    box(O, RY, 40, sgn * (iW / 2 - 100), 22, 110, 55, 44, "WoodDark")
+    box(O, RY, 40, sgn * (iW / 2 - 100), 22, 110, 55, 44, "PBR_Wood")
 # altar cabinet on the back wall, butter lamps, thangka, the photo wall, a khata over the middle photo
 AX = -(iL / 2) + 24
-box(O, RY, AX, 0, 60, 46, 220, 120, "Wood")
-box(O, RY, AX + 2, 0, 121, 50, 226, 4, "WoodDark")
+box(O, RY, AX, 0, 60, 46, 220, 120, "PBR_Wood")
+box(O, RY, AX + 2, 0, 121, 50, 226, 4, "PBR_Wood")
 for i, y in enumerate((-60, -30, 0, 30, 60)):
     cyl(O, RY, AX + 8, y, 123, 7, 6, "Copper"); cyl(O, RY, AX + 8, y, 129, 2.4, 3.5, "Flame", shadow=False)
 light(unreal.PointLight, local(O, RY, AX + 40, 0, 140), R(0, 0, 0), 90.0, (255, 170, 90, 255), 360, ("roomlight",))
@@ -240,7 +240,7 @@ spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, -78, 160), R(90, 0, RY - 90), (0.42, 
 spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, 78, 160), R(90, 0, RY - 90), (0.42, 0.32, 1), MI("Photo_BaseCamp"), ("photo_wall",), "Story/Ch1/Room", collide=False)
 spawn(KHATA, local(O, RY, -(iL / 2) + 9, 0, 236), R(0, 0, RY + 90), (0.55, 0.55, 0.55), MI("Silk"), (), "Story/Ch1/Room", collide=False)
 # copper pots on a wall shelf (+y wall, by the back), a water drum, the father's duffel and photo on the bench
-box(O, RY, -150, iW / 2 - 16, 160, 150, 30, 4, "WoodDark")
+box(O, RY, -150, iW / 2 - 16, 160, 150, 30, 4, "PBR_Wood")
 for i, (x, d, h) in enumerate(((-205, 30, 26), (-175, 24, 20), (-150, 34, 30), (-122, 20, 16), (-100, 26, 22))):
     cyl(O, RY, x, iW / 2 - 18, 162, d, h, "Copper")
 cyl(O, RY, 150, iW / 2 - 40, 0, 50, 70, "Copper")
@@ -254,7 +254,7 @@ ppv = EAS.spawn_actor_from_class(unreal.PostProcessVolume, local(O, RY, 0, 0, H_
 ppv.set_actor_scale3d(V(iL / 200.0, iW / 200.0, H_ / 200.0))
 ppv.set_editor_property("priority", 20.0); ppv.set_editor_property("blend_radius", 60.0); ppv.set_editor_property("unbound", False)
 ps = ppv.get_editor_property("settings")
-for k, v in (("override_auto_exposure_bias", True), ("auto_exposure_bias", -1.3), ("override_white_temp", True), ("white_temp", 4300.0),
+for k, v in (("override_auto_exposure_bias", True), ("auto_exposure_bias", -1.3), ("override_white_temp", True), ("white_temp", 7600.0),
              ("override_indirect_lighting_intensity", True), ("indirect_lighting_intensity", 0.35),
              ("override_color_saturation", True), ("color_saturation", unreal.Vector4(0.9, 0.9, 0.9, 1.0))):
     try: ps.set_editor_property(k, v)
@@ -263,7 +263,7 @@ ppv.set_editor_property("settings", ps)
 ppv.tags = ["Ch1"]; ppv.set_folder_path("Story/Ch1/Room")
 # prayer flags from the roof corner to a pole by the door
 pole = local(O, RY, L_ / 2 + 380, W_ / 2 + 120, 0); pg, pn = ground(pole.x, pole.y, O.z)
-spawn(CYL, pg + V(0, 0, 230), R(0, 0, 0), (0.08, 0.08, 4.6), MI("WoodDark"), (), "Story/Ch1/Room")
+spawn(CYL, pg + V(0, 0, 230), R(0, 0, 0), (0.08, 0.08, 4.6), MI("PBR_Wood"), (), "Story/Ch1/Room")
 flag_line(local(O, RY, L_ / 2, W_ / 2, H_ + 20), pg + V(0, 0, 440), 14, folder="Story/Ch1/Room")
 place("room_start", local(O, RY, 175, -120, 10), RY + 168)
 place("room_photos", local(O, RY, -(iL / 2), 0, 165), 0)
