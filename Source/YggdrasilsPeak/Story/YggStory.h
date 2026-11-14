@@ -54,11 +54,17 @@ public:
 	bool bFacePlayer = true;
 
 	void Dress(const FLinearColor& Tint, float Scale, bool bHood);
+	/** MetaHuman look from Content/Story/Cast.ygs: the body (walks with ABP_Unarmed_MH), face, grooms and the Blender
+	 *  garment following the body. False when the person is not in the cast file yet (then Dress() is used). */
+	bool DressAs(const FString& Look, float Scale);
 	bool ReachedGoal(float Radius = 120.f) const;
 
 private:
 	float StuckTime = 0.f;
+	float GroundCheck = 0.f;
 	FVector LastPos = FVector::ZeroVector;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<USceneComponent>> LookParts;
 };
 
 /** Words, choices, titles, the journal page and the black veil, drawn in the HUD's language (no boxes, veils, serif). */

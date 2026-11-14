@@ -12,6 +12,8 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Dom/JsonObject.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
@@ -37,6 +39,33 @@ namespace
 {
 	const TCHAR* const NPCMeshPath = TEXT("/Game/Characters/Climber_Rigged/SKM_Climber_Rigged.SKM_Climber_Rigged");
 	const TCHAR* const NPCAnimPath = TEXT("/Game/Characters/Climber_Rigged/Anims/ABP_Unarmed_Climber.ABP_Unarmed_Climber_C");
+
+	/** Landscape or a detail tile: what people stand on (props, tents and rooms are never "ground" here). */
+	bool IsStoryTerrain(const FHitResult& H)
+	{
+		const AActor* A = H.GetActor();
+		if (A && A->GetClass()->GetName().Contains(TEXT("Landscape"))) { return true; }
+		const UStaticMeshComponent* C = Cast<UStaticMeshComponent>(H.GetComponent());
+		return C && C->GetStaticMesh() && C->GetStaticMesh()->GetPathName().Contains(TEXT("/DetailTiles/"));
+	}
+
+	/** The drawn ground under a point. At the camps the detail tiles lie ~1 m ABOVE the landscape, so the first terrain
+	 *  hit from above wins; anything else in the way (tents, props, people) is stepped through. */
+	bool StoryGround(UWorld* World, const FVector& At, float Up, float Down, FVector& Out, const AActor* Ignore)
+	{
+		if (!World) { return false; }
+		FCollisionQueryParams Q(SCENE_QUERY_STAT(StoryGround), true, Ignore);
+		FVector From = At + FVector(0.f, 0.f, Up);
+		const FVector To = At - FVector(0.f, 0.f, Down);
+		for (int32 i = 0; i < 6; ++i)
+		{
+			FHitResult H;
+			if (!World->LineTraceSingleByChannel(H, From, To, ECC_Visibility, Q)) { return false; }
+			if (IsStoryTerrain(H)) { Out = H.ImpactPoint; return true; }
+			if (H.GetActor()) { Q.AddIgnoredActor(H.GetActor()); } else { From = H.ImpactPoint - FVector(0.f, 0.f, 2.f); }
+		}
+		return false;
+	}
 
 	float Ease(float T) { T = FMath::Clamp(T, 0.f, 1.f); return T * T * (3.f - 2.f * T); }
 	/** 0 -> 1 in the first fifth, holds, 1 -> 0 in the last fifth: words, titles, flashes. */
@@ -188,6 +217,116 @@ void AYggStoryNPC::Dress(const FLinearColor& Tint, float Scale, bool bHood)
 	GetCharacterMovement()->MaxWalkSpeed = 190.f * FMath::Lerp(0.85f, 1.f, Scale);
 }
 
+namespace
+{
+	/** Content/Story/Cast.ygs, written by Tools/Story/mh_cast (editor): person -> body, face, grooms, garment. */
+	TSharedPtr<FJsonObject> StoryCast()
+	{
+		static TSharedPtr<FJsonObject> Cast;
+		static bool bTried = false;
+		if (!bTried)
+		{
+			bTried = true;
+			FString Text;
+			if (FFileHelper::LoadFileToString(Text, *(FPaths::ProjectContentDir() / TEXT("Story/Cast.ygs"))))
+			{
+				TSharedRef<TJsonReader<>> R = TJsonReaderFactory<>::Create(Text);
+				FJsonSerializer::Deserialize(R, Cast);
+			}
+		}
+		return Cast;
+	}
+
+	/** "/Game/A/B" -> "/Game/A/B.B" so LoadObject finds the asset inside its package. */
+	FString ObjectPath(const FString& P)
+	{
+		if (P.IsEmpty() || P.Contains(TEXT("."))) { return P; }
+		return P + TEXT(".") + FPaths::GetBaseFilename(P);
+	}
+}
+
+bool AYggStoryNPC::DressAs(const FString& Look, float Scale)
+{
+	const TSharedPtr<FJsonObject> Cast = StoryCast();
+	const TSharedPtr<FJsonObject>* Person = nullptr;
+	if (!Cast.IsValid() || !Cast->TryGetObjectField(Look, Person))
+	{
+		return false;
+	}
+	USkeletalMesh* Body = LoadObject<USkeletalMesh>(nullptr, *ObjectPath((*Person)->GetStringField(TEXT("body"))));
+	UClass* Walk = LoadClass<UAnimInstance>(nullptr, TEXT("/Game/Story/MetaHumans/Common/Anims/ABP_Unarmed_MH.ABP_Unarmed_MH_C"));
+	if (!Body || !Walk)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Story: no MetaHuman body/walk for '%s' - using the climber look"), *Look);
+		return false;
+	}
+	for (USceneComponent* C : LookParts)
+	{
+		if (C) { C->DestroyComponent(); }
+	}
+	LookParts.Reset();
+
+	// the body runs the walk itself (its own post-process ABP adds the correctives), so everything that follows it
+	// with the leader pose gets the real MetaHuman bones - garments share the body's skeleton exactly
+	USkeletalMeshComponent* M = GetMesh();
+	M->EmptyOverrideMaterials();
+	M->SetSkeletalMesh(Body);
+	M->SetAnimInstanceClass(Walk);
+	M->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
+	auto AddMesh = [this](const FString& Path, USceneComponent* Parent, const TCHAR* Name) -> USkeletalMeshComponent*
+	{
+		USkeletalMesh* Mesh = Path.IsEmpty() ? nullptr : LoadObject<USkeletalMesh>(nullptr, *ObjectPath(Path));
+		if (!Mesh) { return nullptr; }
+		USkeletalMeshComponent* C = NewObject<USkeletalMeshComponent>(this, Name);
+		C->SetupAttachment(Parent);
+		C->SetSkeletalMesh(Mesh);
+		C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		C->RegisterComponent();
+		LookParts.Add(C);
+		return C;
+	};
+	USkeletalMeshComponent* Face = AddMesh((*Person)->GetStringField(TEXT("face")), M, TEXT("Face"));
+	if (Face)
+	{
+		// ABP_Face copies the body pose from its attach parent, then runs the facial rig
+		if (UClass* FaceAnim = LoadClass<UAnimInstance>(nullptr, TEXT("/Game/Story/MetaHumans/Common/Face/ABP_Face.ABP_Face_C")))
+		{
+			Face->SetAnimInstanceClass(FaceAnim);
+		}
+		Face->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	}
+	if (USkeletalMeshComponent* Garment = AddMesh((*Person)->GetStringField(TEXT("garment")), M, TEXT("Garment")))
+	{
+		Garment->SetLeaderPoseComponent(M);
+	}
+	// hair cards, eyebrows, lashes, beard: GroomComponents set up by reflection (no HairStrandsCore link dependency)
+	UClass* GroomClass = FindObject<UClass>(nullptr, TEXT("/Script/HairStrandsCore.GroomComponent"));
+	const TArray<TSharedPtr<FJsonValue>>* Grooms = nullptr;
+	if (GroomClass && Face && (*Person)->TryGetArrayField(TEXT("grooms"), Grooms))
+	{
+		for (const TSharedPtr<FJsonValue>& V : *Grooms)
+		{
+			const TSharedPtr<FJsonObject> G = V->AsObject();
+			UObject* Asset = G ? LoadObject<UObject>(nullptr, *ObjectPath(G->GetStringField(TEXT("groom")))) : nullptr;
+			if (!Asset) { continue; }
+			UObject* Binding = LoadObject<UObject>(nullptr, *ObjectPath(G->GetStringField(TEXT("binding"))));
+			USceneComponent* C = NewObject<USceneComponent>(this, GroomClass, *(TEXT("Groom_") + G->GetStringField(TEXT("slot"))));
+			if (FObjectPropertyBase* P = FindFProperty<FObjectPropertyBase>(GroomClass, TEXT("GroomAsset"))) { P->SetObjectPropertyValue_InContainer(C, Asset); }
+			if (Binding)
+			{
+				if (FObjectPropertyBase* P = FindFProperty<FObjectPropertyBase>(GroomClass, TEXT("BindingAsset"))) { P->SetObjectPropertyValue_InContainer(C, Binding); }
+			}
+			C->SetupAttachment(Face);
+			C->RegisterComponent();
+			LookParts.Add(C);
+		}
+	}
+	SetActorScale3D(FVector(Scale));
+	GetCharacterMovement()->MaxWalkSpeed = 190.f * FMath::Lerp(0.85f, 1.f, Scale);
+	return true;
+}
+
 bool AYggStoryNPC::ReachedGoal(float Radius) const
 {
 	return FVector::Dist2D(GetActorLocation(), Goal) < Radius;
@@ -202,6 +341,19 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 		return;
 	}
 	const FVector Me = GetActorLocation();
+	// never stand under the drawn ground (a tile whose collision was still cooking when this person landed)
+	GroundCheck -= DeltaSeconds;
+	if (GroundCheck <= 0.f)
+	{
+		GroundCheck = 0.5f;
+		const float Half = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+		const FVector Feet = Me - FVector(0.f, 0.f, Half);
+		FVector G;
+		if (StoryGround(GetWorld(), Feet, 220.f, 10.f, G, this) && G.Z > Feet.Z + 15.f)
+		{
+			SetActorLocation(G + FVector(0.f, 0.f, Half + 2.f), false, nullptr, ETeleportType::TeleportPhysics);
+		}
+	}
 	FVector Target = Me;
 	bool bMove = false;
 	float Scale = Speed;
@@ -831,7 +983,8 @@ float UYggStorySubsystem::DoAction(FRun& Run, const TSharedPtr<FJsonObject>& A)
 		if (A->HasField(TEXT("npc")) && Where(Str(A, TEXT("at")), At, &Rot))
 		{
 			const FRotator Face(0.f, Num(A, TEXT("yaw"), Rot.Yaw), 0.f);
-			const FVector Spot = At + FVector(0.f, 0.f, 100.f);
+			FVector G;
+			const FVector Spot = StoryGround(World, At, 400.f, 400.f, G, nullptr) ? G + FVector(0.f, 0.f, 95.f) : At + FVector(0.f, 0.f, 100.f);
 			if (!N)
 			{
 				FActorSpawnParameters SP;
@@ -848,7 +1001,11 @@ float UYggStorySubsystem::DoAction(FRun& Run, const TSharedPtr<FJsonObject>& A)
 				const TArray<TSharedPtr<FJsonValue>>* Tint;
 				FLinearColor Col(1.f, 1.f, 1.f);
 				if (A->TryGetArrayField(TEXT("tint"), Tint) && Tint->Num() >= 3) { Col = FLinearColor((*Tint)[0]->AsNumber(), (*Tint)[1]->AsNumber(), (*Tint)[2]->AsNumber()); }
-				N->Dress(Col, Num(A, TEXT("scale"), 1.f), Bool(A, TEXT("hood"), false));
+				const FString Look = Str(A, TEXT("look"), TEXT(""));
+				if (Look.IsEmpty() || !N->DressAs(Look, Num(A, TEXT("scale"), 1.f)))
+				{
+					N->Dress(Col, Num(A, TEXT("scale"), 1.f), Bool(A, TEXT("hood"), false));
+				}
 				const float Sink = Num(A, TEXT("sink"), 0.f);
 				if (Sink > 0.f) { N->GetMesh()->AddRelativeLocation(FVector(0.f, 0.f, -Sink)); }
 			}

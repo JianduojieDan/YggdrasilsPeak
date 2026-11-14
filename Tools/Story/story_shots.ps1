@@ -13,6 +13,8 @@ $runs = [ordered]@{
     "people"   = @{ at = (At "marek_spot" 0); cmds = "ygg.Later 2 ygg.Story.Jump team, ygg.Later 4 ygg.Snow.AutoPitch -8, ygg.Later 4 ygg.Snow.AutoYaw 200"; wait = 10 }
     "plumeview"= @{ at = @(($P.kneel_spot[0]), ($P.kneel_spot[1]), ($P.kneel_spot[2] + 170), 26, -22.8); cmds = "ygg.Realm.StartTime 1735, ygg.Later 4 ygg.Story.Param plume Glow 1"; wait = 12 }
     "team"     = @{ at = @(($P.nima_spot[0] - 700), ($P.nima_spot[1]), ($P.nima_spot[2] + 130), -4, 0); cmds = "ygg.Later 2 ygg.Story.Jump team"; wait = 8 }
+    "nimaclose"= @{ at = @(($P.nima_spot[0] - 230), ($P.nima_spot[1]), ($P.nima_spot[2] + 150), -6, 0); cmds = "ygg.Later 2 ygg.Story.Jump team"; wait = 11 }
+    "auntclose"= @{ at = @(($P.aunt_spot[0] - 260), ($P.aunt_spot[1] + 60), ($P.aunt_spot[2] + 150), -6, -10); cmds = "ygg.Later 2 ygg.Story.Jump dolma_calls"; wait = 6 }
     "roomunlit"= @{ at = (At "room_start" -5); cmds = "ygg.Later 2 ygg.Story.Jump dawn, ygg.Later 8 viewmode unlit"; wait = 13 }
     "page"     = @{ at = (At "night_tent" 0); cmds = "ygg.Realm.StartTime 2030, ygg.Later 3 ygg.Story.Jump night"; wait = 46 }
 }

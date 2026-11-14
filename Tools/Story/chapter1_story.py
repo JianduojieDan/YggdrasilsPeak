@@ -68,7 +68,7 @@ beat("duffel", {"after": "dawn", "delay": 6, "near": "room_duffel", "r": 170},
      {"flag": "read_photo"})
 beat("dolma_calls", {"after": "dawn", "delay": 25, "flag": "read_photo"},
      {"npc": "dolma", "at": "dolma_spot", "tint": [0.55, 0.12, 0.08], "scale": 0.62},
-     {"npc": "aunt", "at": "aunt_spot", "tint": [0.3, 0.06, 0.12]},
+     {"npc": "aunt", "look": "pema", "at": "aunt_spot", "tint": [0.3, 0.06, 0.12]},
      {"say": "Sangye-dai! Sangye-dai, they are waiting for you!", "who": "Dolma", "t": 4, "wait": False},
      {"look": "room_door", "strength": 0.45, "t": 1.6})
 beat("dolma_calls_late", {"after": "dawn", "delay": 150, "noflag": "read_photo"},
@@ -95,10 +95,10 @@ beat("farewell", {"after": "dolma_calls", "near": "dolma", "r": 420},
 
 # ------------------------------------------------------------------ the job: Nima, the team, the load, the compass
 beat("team", {"after": "dawn", "delay": 2},
-     {"npc": "nima", "at": "nima_spot", "tint": [0.12, 0.14, 0.17]},
-     {"npc": "marek", "at": "marek_spot", "tint": [0.2, 0.22, 0.08]},
-     {"npc": "elena", "at": "elena_spot", "tint": [0.55, 0.14, 0.05]},
-     {"npc": "jiwoo", "at": "jiwoo_spot", "tint": [0.05, 0.18, 0.3]})
+     {"npc": "nima", "look": "nima", "at": "nima_spot", "tint": [0.12, 0.14, 0.17]},
+     {"npc": "marek", "look": "marek", "at": "marek_spot", "tint": [0.2, 0.22, 0.08]},
+     {"npc": "elena", "look": "elena", "at": "elena_spot", "tint": [0.55, 0.14, 0.05]},
+     {"npc": "jiwoo", "look": "jiwoo", "at": "jiwoo_spot", "tint": [0.05, 0.18, 0.3]})
 beat("job", {"after": "farewell", "delay": 2},
      {"npc_mode": "nima", "mode": "idle", "face": True},
      {"look": "nima", "strength": 0.6, "t": 1.4},
@@ -155,7 +155,7 @@ beat("why", {"after": "elena", "delay": 25},
      {"wait": 3, "if": "quiet"},
      {"say": "Your father was quiet too.", "who": "Nima", "if": "quiet"})
 beat("porters_come", {"after": "job", "near": "ev_porters", "r": 2200},
-     {"npc": "porter1", "at": "porter_start", "tint": [0.22, 0.15, 0.08], "mode": "goto", "to": "porter_end", "speed": 1.0},
+     {"npc": "porter1", "look": "porter_a", "at": "porter_start", "tint": [0.22, 0.15, 0.08], "mode": "goto", "to": "porter_end", "speed": 1.0},
      {"wait": 1.2},
      {"npc": "porter2", "at": "porter_start", "tint": [0.15, 0.12, 0.1], "mode": "goto", "to": "porter_end", "speed": 1.0},
      {"say": "Porters coming down. Big loads.", "who": "Nima", "t": 3})
