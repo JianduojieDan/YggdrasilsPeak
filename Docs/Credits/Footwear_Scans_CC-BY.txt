@@ -1,0 +1,38 @@
+Footwear scans used on the Chapter 1 cast (Chomolungma). Downloaded 2026-11-14 without login.
+Every model below is licensed Creative Commons Attribution 4.0 (CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
+Changes made for the game (all of them): mesh welded, extra pieces removed, decimated to ~9k triangles, re-oriented,
+scaled and reshaped to each character's foot, skinned to the foot/ball bones, mirrored for the right foot,
+texture copied (Tools/Blender/garments.py, make_scan_boots).
+Trademarks are NOT licensed by CC BY ("Patent and trademark rights are not licensed under this Public License"):
+brand logos/wordmarks visible on the scans should be painted out before a commercial release.
+
+1. garmont_hiking_boot  (worn by Nima, and the father)
+   "Garmont Hiking Boot" by tyjajack, CC BY 4.0
+   https://sketchfab.com/3d-models/garmont-hiking-boot-c46df86e358f489cacd09020cfdf7515
+   via Objaverse 1.0 (Allen Institute for AI, Hugging Face): glbs/000-132/c46df86e358f489cacd09020cfdf7515.glb
+
+2. salomon_x_raise  (worn by Marek)
+   "Salomon X RAISE (hiking)" by inciprocal.com, CC BY 4.0
+   https://sketchfab.com/3d-models/salomon-x-raise-hiking-e876d6429ed847c884f45d66e9be2d3c
+   via Objaverse 1.0: glbs/000-000/e876d6429ed847c884f45d66e9be2d3c.glb
+
+3. salomon_outline_mid  (worn by Elena)
+   "Salomon OUTline GTX Boot" by inciprocal.com, CC BY 4.0
+   https://sketchfab.com/3d-models/salomon-outline-gtx-boot-5e24610ab910434b8e40b2a83199e98d
+   via Objaverse 1.0: glbs/000-073/5e24610ab910434b8e40b2a83199e98d.glb
+
+4. adidas_terrex_fast_r  (worn by Ji-woo)
+   "TERREX FAST R", Google Scanned Objects, Copyright 2020 Google LLC, CC BY 4.0
+   https://fuel.gazebosim.org/1.0/GoogleResearch/models/TERREX_FAST_R
+
+5. reebok_dmx_rainwalker  (worn by the porter)
+   "Reebok DMX MAX PLUS RAINWALKER", Google Scanned Objects, Copyright 2020 Google LLC, CC BY 4.0
+   https://fuel.gazebosim.org/1.0/GoogleResearch/models/Reebok_DMX_MAX_PLUS_RAINWALKER
+
+6. striper_sneaker_white  (worn by Aunt Pema)
+   "Men's Striper Sneaker in White", Google Scanned Objects, Copyright 2020 Google LLC, CC BY 4.0
+   https://fuel.gazebosim.org/1.0/GoogleResearch/models/Mens_Striper_Sneaker_in_White_rnp8HUli59Y
+
+Game credits line (suggested):
+  Footwear 3D scans: tyjajack, inciprocal.com (Sketchfab, via Objaverse) and Google Scanned Objects (Google LLC),
+  CC BY 4.0, modified.

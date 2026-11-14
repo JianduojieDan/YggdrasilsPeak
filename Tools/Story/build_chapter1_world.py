@@ -29,6 +29,17 @@ PLUME = unreal.load_asset(f"{MD}/M_StoryPlume")
 for a in EAS.get_all_level_actors():
     if a.actor_has_tag("Ch1"):
         EAS.destroy_actor(a)
+_probe = None
+try:
+    import json as _json
+    _probe = _json.load(open("F:/UE_project/YggdrasilsPeak/Content/Story/Chapter1_places.ygs")).get("nima_spot")
+except Exception: pass
+if _probe:   # refuse to trace before the detail tiles have collision (they cook after the map loads): everything landed 1 m low once
+    _h = unreal.SystemLibrary.line_trace_single(W, V(_probe[0], _probe[1], _probe[2] + 3000), V(_probe[0], _probe[1], _probe[2] - 3000),
+                                                unreal.TraceTypeQuery.ECC_VISIBILITY, True, [], unreal.DrawDebugTrace.NONE, True)
+    _c = _h.to_tuple()[10] if _h else None
+    if not (isinstance(_c, unreal.StaticMeshComponent) and _c.static_mesh and "/DetailTiles/" in _c.static_mesh.get_path_name()):
+        raise SystemExit("detail tile collision not ready yet (the camp probe hit " + (str(_c.get_name()) if _c else "nothing") + ") - run again in a few seconds")
 places = {}
 
 def is_terrain(actor, comp):
@@ -59,7 +70,10 @@ def spawn(mesh, loc, rot=R(0, 0, 0), scale=(1, 1, 1), mats=None, tags=(), folder
     if not collide: c.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
     a.tags = ["Ch1"] + list(tags)
     a.set_folder_path(folder)
-    if hidden: a.set_actor_hidden_in_game(True)
+    if hidden:   # collision only: the actor flag alone did not stick (the boxes drew over the house), so hide the component too
+        a.set_actor_hidden_in_game(True)
+        c.set_visibility(False, False); c.set_hidden_in_game(True, False)
+        c.set_editor_property("cast_shadow", False)
     return a
 
 def light(cls, loc, rot, intensity, color, radius, tags=(), shadows=True, folder="Story/Ch1"):
@@ -79,8 +93,33 @@ def local(o, yaw, x, y, z):
     c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
     return V(o.x + x * c - y * s, o.y + x * s + y * c, o.z + z)
 
-def box(o, yaw, x, y, z, sx, sy, sz, mi, folder="Story/Ch1/Room", extra_yaw=0.0, pitch=0.0, roll=0.0, tags=()):
-    return spawn(CUBE, local(o, yaw, x, y, z), R(roll, pitch, yaw + extra_yaw), (sx / 100.0, sy / 100.0, sz / 100.0), MI(mi), tags, folder)
+def box(o, yaw, x, y, z, sx, sy, sz, mi, folder="Story/Ch1/Room", extra_yaw=0.0, pitch=0.0, roll=0.0, tags=(), hidden=False):
+    m = HMI(mi[2:]) if mi.startswith("H:") else MI(mi)
+    return spawn(CUBE, local(o, yaw, x, y, z), R(roll, pitch, yaw + extra_yaw), (sx / 100.0, sy / 100.0, sz / 100.0), m, tags, folder, hidden=hidden)
+
+def invisible_material():
+    """Masked material whose opacity mask is 0: draws nothing in any view mode (the hidden flag alone still let the
+    collision boxes draw over the house in -game runs, 2026-11-14)."""
+    path = "/Game/Story/House/M_InvisibleCollision"
+    m = unreal.load_asset(path)
+    if m: return m
+    at_ = unreal.AssetToolsHelpers.get_asset_tools(); mel_ = unreal.MaterialEditingLibrary
+    m = at_.create_asset("M_InvisibleCollision", "/Game/Story/House", unreal.Material, unreal.MaterialFactoryNew())
+    m.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED); m.set_editor_property("used_with_nanite", True)
+    zero = mel_.create_material_expression(m, unreal.MaterialExpressionConstant, -300, 0); zero.set_editor_property("r", 0.0)
+    mel_.connect_material_property(zero, "", unreal.MaterialProperty.MP_OPACITY_MASK)
+    mel_.recompile_material(m); unreal.EditorAssetLibrary.save_loaded_asset(m, False)
+    return m
+
+INVISIBLE = invisible_material()
+
+def shell(o, yaw, x, y, z, sx, sy, sz, mi, folder="Story/Ch1/Room", extra_yaw=0.0, pitch=0.0, roll=0.0, tags=()):
+    """The room's walls/floor/roof as invisible collision: the Blender Sherpa house (Tools/Blender/sherpa_house) is what is seen."""
+    return spawn(CUBE, local(o, yaw, x, y, z), R(roll, pitch, yaw + extra_yaw), (sx / 100.0, sy / 100.0, sz / 100.0), INVISIBLE, tags, folder,
+                 shadow=False, hidden=True)
+
+HD = "/Game/Story/House"
+HMI = lambda k: unreal.load_asset(f"{HD}/Materials/MI_H_{k}")
 
 def cyl(o, yaw, x, y, z, d, h, mi, folder="Story/Ch1/Room", pitch=0.0, tags=(), shadow=True):
     return spawn(CYL, local(o, yaw, x, y, z), R(0, pitch, yaw), (d / 100.0, d / 100.0, h / 100.0), MI(mi), tags, folder, shadow=shadow)
@@ -178,42 +217,47 @@ def clear_snow_props(center, radius):
 avoid.append(V(mx, my, 1000))
 spread, rx, ry, rzmin, rzmax = flattest(CAMP, 1800, 4200, (330, 260), avoid, 140)
 print("snow props cleared at the room", clear_snow_props(V(rx, ry, rzmax), 700))
-O = V(rx, ry, rzmax + 165)                 # on a stone plinth: the visible detail tile lies ~1-1.5 m above the landscape collision here                  # floor clear of the drawn snow (it lies ~30-60 cm above its collision here)
+O = V(rx, ry, rzmax + 30)                  # floor a step above the drawn ground (traces now reach the detail tiles: see the check at the top)
 RY = math.degrees(math.atan2(CAMP.y - ry, CAMP.x - rx))   # the door (+x) looks at the camp
 print("room spread", round(spread), "at", rx, ry)
 L_, W_, H_, T_ = 600.0, 460.0, 240.0, 40.0
 iL, iW = L_ - 2 * T_, W_ - 2 * T_
 # floor, footing, ceiling
-box(O, RY, 0, 0, -160, L_ + 60, W_ + 60, 320, "PBR_Wall")
-for i in range(5):
-    box(O, RY, L_ / 2 + 55 + i * 42, 0, -i * 34 - 17 - 160 + 160 - 0, 44, 160, 34 + i * 0, "PBR_Wall")   # steps down from the door
-box(O, RY, 0, 0, 5, iL, iW, 10, "PBR_Floor")
-box(O, RY, 0, 0, H_ + 6, iL, iW, 12, "PBR_Wood")
+shell(O, RY, 0, 0, -160, L_, W_, 320, "PBR_Wall")
+shell(O, RY, L_ / 2 + 32, 0, -12, 55, 130, 20, "PBR_Wall")                 # the two stone steps at the door
+shell(O, RY, L_ / 2 + 78, 5, -36, 60, 150, 22, "PBR_Wall")
+shell(O, RY, 0, 0, 5, iL, iW, 10, "PBR_Floor")
+shell(O, RY, 0, 0, H_ + 6, iL, iW, 12, "PBR_Wood")
 for bx in (-180, -60, 60, 180):
-    box(O, RY, bx, 0, H_ - 8, 18, iW, 16, "PBR_Wood")
+    shell(O, RY, bx, 0, H_ - 8, 18, iW, 16, "PBR_Wood")
 # back wall (-x), side walls, front wall with a door, a window in the +y wall
-box(O, RY, -(L_ - T_) / 2, 0, H_ / 2, T_, W_, H_, "PBR_Wall")
-box(O, RY, 0, -(W_ - T_) / 2, H_ / 2, L_, T_, H_, "PBR_Wall")
+shell(O, RY, -(L_ - T_) / 2, 0, H_ / 2, T_, W_, H_, "PBR_Wall")
+shell(O, RY, 0, -(W_ - T_) / 2, H_ / 2, L_, T_, H_, "PBR_Wall")
 wx, ww, wz, wh = 80.0, 90.0, 100.0, 70.0    # window centre x, width, sill, height
 yw = (W_ - T_) / 2
 for (x0, x1) in ((-L_ / 2, wx - ww / 2), (wx + ww / 2, L_ / 2)):
-    box(O, RY, (x0 + x1) / 2, yw, H_ / 2, x1 - x0, T_, H_, "PBR_Wall")
-box(O, RY, wx, yw, wz / 2, ww, T_, wz, "PBR_Wall")
-box(O, RY, wx, yw, (wz + wh + H_) / 2, ww, T_, H_ - wz - wh, "PBR_Wall")
-box(O, RY, wx, yw - T_ / 2 + 4, wz + wh / 2, ww + 8, 6, 8, "PBR_Wood"); box(O, RY, wx, yw - T_ / 2 + 4, wz, ww + 10, 10, 6, "PBR_Wood")
+    shell(O, RY, (x0 + x1) / 2, yw, H_ / 2, x1 - x0, T_, H_, "PBR_Wall")
+shell(O, RY, wx, yw, wz / 2, ww, T_, wz, "PBR_Wall")
+shell(O, RY, wx, yw, (wz + wh + H_) / 2, ww, T_, H_ - wz - wh, "PBR_Wall")
+shell(O, RY, wx, yw - T_ / 2 + 4, wz + wh / 2, ww + 8, 6, 8, "PBR_Wood"); shell(O, RY, wx, yw - T_ / 2 + 4, wz, ww + 10, 10, 6, "PBR_Wood")
 dw, dh = 100.0, 190.0
 xf = (L_ - T_) / 2
 for (y0, y1) in ((-W_ / 2, -dw / 2), (dw / 2, W_ / 2)):
-    box(O, RY, xf, (y0 + y1) / 2, H_ / 2, T_, y1 - y0, H_, "PBR_Wall")
-box(O, RY, xf, 0, (dh + H_) / 2, T_, dw, H_ - dh, "PBR_Wall")
-box(O, RY, xf + T_ / 2 + 3, 0, dh + 4, 8, dw + 20, 10, "PBR_Wood")                     # lintel
+    shell(O, RY, xf, (y0 + y1) / 2, H_ / 2, T_, y1 - y0, H_, "PBR_Wall")
+shell(O, RY, xf, 0, (dh + H_) / 2, T_, dw, H_ - dh, "PBR_Wall")
+shell(O, RY, xf + T_ / 2 + 3, 0, dh + 4, 8, dw + 20, 10, "PBR_Wood")                     # lintel
 # roof: blue tin, shallow gable along x, eaves over the walls; gable ends filled with timber
 pitch = 14.0; half = W_ / 2 + 40
 rise = math.tan(math.radians(pitch)) * half
 for sgn in (-1, 1):
-    box(O, RY, 0, sgn * half / 2, H_ + 20 + rise / 2, L_ + 70, half / math.cos(math.radians(pitch)) + 6, 5, "PBR_Roof", roll=-sgn * pitch)
+    shell(O, RY, 0, sgn * half / 2, H_ + 20 + rise / 2, L_ + 70, half / math.cos(math.radians(pitch)) + 6, 5, "PBR_Roof", roll=-sgn * pitch)
 for sgn in (-1, 1):
-    box(O, RY, sgn * (L_ / 2 - 6), 0, H_ + 14 + rise * 0.35, 10, W_ - 40, rise * 0.7, "PBR_Wood")
+    shell(O, RY, sgn * (L_ / 2 - 6), 0, H_ + 14 + rise * 0.35, 10, W_ - 40, rise * 0.7, "PBR_Wood")
+# the house itself: dry-stone walls, blue frames, board roof, plastered kitchen (visual; the shell above collides)
+for part in ("Stones", "Core", "Timber", "Frames", "Roof", "RoofStones", "Interior", "Yard"):
+    hm = unreal.load_asset(f"{HD}/SM_House_{part}")
+    if hm: spawn(hm, local(O, RY, 0, 0, 0), R(0, 0, RY), (1, 1, 1), None, ("house",), "Story/Ch1/Room", collide=False)
+    else: print("missing house part", part)
 # ---- furniture and things: downloaded Poly Haven models (CC0), placed like a Khumbu kitchen
 PHD = "/Game/Story/PH"
 def ph(i, name=None):
@@ -227,29 +271,54 @@ def put(i, x, y, z, yaw=0.0, s=1.0, name=None, tags=(), folder="Story/Ch1/Room")
 def put_set(i, parts, x, y, z, yaw=0.0, s=1.0):
     for n in parts: put(i, x, y, z, yaw, s, n)
 SX, SY = -95.0, 95.0
-put("barrel_stove", SX, SY, 0, 90)
-cyl(O, RY, SX - 10, SY, 95, 13, H_ + 70 - 95, "Iron")                       # chimney through the roof
-put("brass_pot_02", SX + 6, SY - 4, 92, 30)
-light(unreal.PointLight, local(O, RY, SX + 55, SY, 40), R(0, 0, 0), 420.0, (255, 140, 70, 255), 700, ("roomlight",))
-box(O, RY, 20, -20, 11, 200, 130, 2, "Rug")
+spawn(unreal.load_asset(f"{HD}/SM_MudStove"), local(O, RY, SX, SY, 0), R(0, 0, RY), (1, 1, 1), None, ("stove",), "Story/Ch1/Room")
+put("brass_pot_02", SX, SY + 18, 59, 20)                                            # the copper pot on the fire
+put("metal_jug", SX - 2, SY - 17, 59, 140)                                          # the tea kettle
+for k, (cx, cy) in enumerate(((-238, 100), (-236, 126))):
+    spawn(unreal.load_asset(f"{HD}/SM_Dongmo"), local(O, RY, cx, cy, 0), R(0, 0, RY + k * 70), (1, 1, 1.0 - 0.12 * k), None, (), "Story/Ch1/Room")
+_fire = light(unreal.PointLight, local(O, RY, SX + 80, SY, 22), R(0, 0, 0), 320.0, (255, 140, 70, 255), 700, ("roomlight",))
+# a fire mouth is a big soft source: a point-sized one threw the hood's shadow up the wall as hard pale wedges
+try: _fire.light_component.set_editor_property("source_radius", 32.0); _fire.light_component.set_editor_property("soft_source_radius", 45.0)
+except Exception as e: print("soft fire light", e)
+spawn(unreal.load_asset(f"{HD}/SM_TibetanRug"), local(O, RY, 20, -20, 11), R(0, 0, RY + 0), (2.0, 1.3, 1), None, (), "Story/Ch1/Room", collide=False)
 # the family altar: painted cabinet on the back wall, seven water offerings, butter lamps, the thangka and photos above
 AX = -(iL / 2) + 30
 put_set("painted_wooden_cabinet", ["painted_wooden_cabinet", "painted_wooden_cabinet_door_01", "painted_wooden_cabinet_door_02",
         "painted_wooden_cabinet_drawer_01", "painted_wooden_cabinet_drawer_02"], AX, 0, 0, -90)
+# an altar cabinet is lacquered deep red (chipped white read as a bathroom cabinet): tinted children of its glTF
+# materials - white paint -> red, the bare wood -> dark red-brown
+def _altar_red():
+    mel = unreal.MaterialEditingLibrary; at_ = unreal.AssetToolsHelpers.get_asset_tools(); dst = "/Game/Story/PH/painted_wooden_cabinet"
+    for a in unreal.EditorLevelLibrary.get_all_level_actors():
+        if not isinstance(a, unreal.StaticMeshActor) or "Ch1" not in [str(t) for t in a.tags]: continue
+        smc = a.static_mesh_component; m = smc.static_mesh
+        if not m or not m.get_name().startswith("painted_wooden_cabinet") or m.get_name().startswith("painted_wooden_cabinet_02"): continue
+        for k in range(smc.get_num_materials()):
+            base = smc.get_material(k)
+            if base is None: continue
+            if base.get_name().endswith("_AltarRed"): continue
+            nm = base.get_name() + "_AltarRed"
+            mi = unreal.load_asset(f"{dst}/{nm}") or at_.create_asset(nm, dst, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+            mel.set_material_instance_parent(mi, base)
+            for pn in ("BaseColorFactor", "Base Color Factor", "BaseColor"):
+                mel.set_material_instance_vector_parameter_value(mi, pn, unreal.LinearColor(0.44, 0.065, 0.035, 1.0))
+            unreal.EditorAssetLibrary.save_loaded_asset(mi, False); smc.set_material(k, mi)
+try: _altar_red()
+except Exception as e: print("altar red", e)
 for k, y in enumerate((-45, -30, -15, 0, 15, 30, 45)):
     put("brass_goblets", AX + 6, y, 118, k * 40, 0.5, "brass_goblet_03")
 put("brass_diya_lantern", AX + 12, -55, 118, 0, 0.9); put("brass_diya_lantern", AX + 12, 55, 118, 0, 0.9)
 light(unreal.PointLight, local(O, RY, AX + 40, 0, 150), R(0, 0, 0), 90.0, (255, 170, 90, 255), 360, ("roomlight",))
 spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, 0, 190), R(90, 0, RY - 90), (0.56, 0.86, 1), MI("Thangka_Shakyamuni"), (), "Story/Ch1/Room", collide=False)
 spawn(PLANE, local(O, RY, 150, -(iW / 2) + 1.5, 160), R(90, 0, RY), (0.5, 0.8, 1), MI("Thangka_MountMeru"), (), "Story/Ch1/Room", collide=False)
-box(O, RY, SX + 26, SY, 30, 3, 22, 14, "Ember", tags=("ember",))                        # the stove's glowing door
+box(O, RY, SX + 63, SY, 20, 2, 20, 12, "Ember", tags=("ember",))                         # the glow in the stove's fire mouth
 spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, -82, 165), R(90, 0, RY - 90), (0.42, 0.32, 1), MI("Photo_Khumbu"), ("photo_wall",), "Story/Ch1/Room", collide=False)
 spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, 82, 165), R(90, 0, RY - 90), (0.42, 0.32, 1), MI("Photo_BaseCamp"), ("photo_wall",), "Story/Ch1/Room", collide=False)
 spawn(KHATA, local(O, RY, -(iL / 2) + 9, 0, 240), R(0, 0, RY + 90), (0.5, 0.5, 0.5), MI("Silk"), (), "Story/Ch1/Room", collide=False)
 # benches with rugs along the -y wall, low tables with thermoses and tea things
 for bx in (-30, 95):
     put("painted_wooden_bench", bx, -(iW / 2 - 28), 0, 0)
-box(O, RY, 32, -(iW / 2 - 30), 45, 230, 46, 4, "Rug")
+spawn(unreal.load_asset(f"{HD}/SM_TibetanRug"), local(O, RY, 32, -(iW / 2 - 30), 47), R(0, 0, RY + 0), (2.3, 0.48, 1), None, (), "Story/Ch1/Room", collide=False)
 put("chinese_tea_table", 40, -(iW / 2 - 105), 0, 0, 0.75)
 put("plastic_thermos", 30, -(iW / 2 - 100), 38, 20); put("modified_thermos", 52, -(iW / 2 - 112), 38, 70)
 put("carved_wooden_plate", 45, -(iW / 2 - 95), 38); put("jug_01", 62, -(iW / 2 - 92), 38, 120)
@@ -269,8 +338,8 @@ for k, i in enumerate(row):
 for k, i in enumerate(["brass_goblets", "brass_vase_04", "brass_pan_01", "brass_vase_03", "brass_goblets", "brass_vase_04", "brass_pan_01"]):
     put(i, -140 + k * 45, -(iW / 2 - 15), 124, k * 51, 0.85, "brass_goblet_03" if i == "brass_goblets" else None)
 for bx in (-60, 10, 80, 140):
-    box(O, RY, bx, -(iW / 2 - 40), 52, 52, 40, 9, "Rug", extra_yaw=4)            # cushions on the benches
-box(O, RY, -60, 30, 11, 150, 100, 2, "Rug", extra_yaw=-8)
+    box(O, RY, bx, -(iW / 2 - 40), 52, 52, 40, 9, "H:house_rug", extra_yaw=4)    # cushions on the benches (rug weave)
+spawn(unreal.load_asset(f"{HD}/SM_TibetanRug"), local(O, RY, -60, 30, 11.5), R(0, 0, RY + -8), (1.5, 1.0, 1), None, (), "Story/Ch1/Room", collide=False)
 # by the door: the water pot, an enamel pot on a stool, a hanging lantern
 put("ceramic_pot", xf - 70, iW / 2 - 50, 0, 30, 0.8)
 put("painted_wooden_stool", SX + 70, SY + 40, 0, 30)
@@ -281,15 +350,18 @@ light(unreal.PointLight, local(O, RY, 20, 0, H_ - 75), R(0, 0, 0), 60.0, (255, 1
 cyl(O, RY, 120, -(iW / 2 - 32), 48 + 20, 40, 78, "TentOrange", pitch=90.0, tags=("duffel",))
 spawn(PLANE, local(O, RY, 70, -(iW / 2 - 40), 49), R(0, 0, RY + 12), (0.14, 0.105, 1), MI("Photo_Icefall"), ("photo_father",), "Story/Ch1/Room", collide=False)
 # dawn through the window, a soft fill so the room reads
-light(unreal.SpotLight, local(O, RY, wx, yw + 260, wz + 150), R(0, -40, RY - 90), 90.0, (255, 220, 185, 255), 700, ("roomlight",))
+_win = light(unreal.SpotLight, local(O, RY, wx, yw + 260, wz + 150), R(0, -40, RY - 90), 45.0, (255, 220, 185, 255), 700, ("roomlight",))
+# big source = soft-edged patch (at 45/60 the window threw hard bright wedges up the kitchen wall, 2026-11-14)
+try: _win.light_component.set_editor_property("source_radius", 110.0); _win.light_component.set_editor_property("soft_source_radius", 160.0)
+except Exception as e: print("soft window light", e)
 light(unreal.PointLight, local(O, RY, 0, 0, H_ - 40), R(0, 0, 0), 25.0, (255, 210, 170, 255), 520, ("roomlight",), shadows=False)
 # inside only: a warm, dim, smoky room (sky light floods in through the door and window otherwise)
 ppv = EAS.spawn_actor_from_class(unreal.PostProcessVolume, local(O, RY, 0, 0, H_ / 2), R(0, 0, RY))
 ppv.set_actor_scale3d(V(iL / 200.0, iW / 200.0, H_ / 200.0))
 ppv.set_editor_property("priority", 20.0); ppv.set_editor_property("blend_radius", 60.0); ppv.set_editor_property("unbound", False)
 ps = ppv.get_editor_property("settings")
-for k, v in (("override_auto_exposure_bias", True), ("auto_exposure_bias", -2.0), ("override_white_temp", True), ("white_temp", 7600.0),
-             ("override_indirect_lighting_intensity", True), ("indirect_lighting_intensity", 0.2), ("override_color_gain", True), ("color_gain", unreal.Vector4(1.28, 1.02, 0.74, 1.0)),
+for k, v in (("override_auto_exposure_bias", True), ("auto_exposure_bias", -1.6), ("override_white_temp", True), ("white_temp", 8200.0),
+             ("override_indirect_lighting_intensity", True), ("indirect_lighting_intensity", 0.2), ("override_color_gain", True), ("color_gain", unreal.Vector4(1.3, 1.0, 0.7, 1.0)),
              ("override_color_saturation", True), ("color_saturation", unreal.Vector4(0.9, 0.9, 0.9, 1.0))):
     try: ps.set_editor_property(k, v)
     except Exception as e: print("ppv", k, e)
@@ -408,3 +480,4 @@ for a in EAS.get_all_level_actors():
 json.dump(places, open(f"{ROOT}/Content/Story/Chapter1_places.ygs", "w"), indent=1)
 unreal.EditorLevelLibrary.save_current_level()
 print("places", len(places))
+print("REGENERATE THE STORY: run Tools/Story/chapter1_story with python -I (Chapter1.ygs embeds a copy of these places)")

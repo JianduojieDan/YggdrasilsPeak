@@ -36,27 +36,34 @@ FAB = {"nylon": ("stretch_poplin", 0.18, 0.42), "softshell": ("jersey_melange", 
 
 OUTFITS = {
     # Nima, the old sirdar: mustard down jacket with black yoke, maroon knit hat, dark softshell trousers, leather boots
-    "nima": dict(boots=("leather", (0.30, 0.18, 0.10)), pants=dict(style="softshell", main=(0.07, 0.07, 0.08)),
+    "nima": dict(boots=("scan", "garmont_hiking_boot"), pants=dict(style="softshell", main=(0.07, 0.07, 0.08)),
                  jacket=dict(style="down", main=(0.80, 0.42, 0.05), panel=(0.025, 0.025, 0.03), trim=(0.02, 0.02, 0.025)),
-                 hat=dict(style="beanie", main=(0.36, 0.04, 0.05), pom=True)),
+                 hat=dict(style="beanie", main=(0.36, 0.04, 0.05), pom=True, glasses=True)),
     # Aunt Pema: maroon wool chuba, brocade edge, red sash, striped pangden apron, dark red head scarf
-    "pema": dict(boots=("leather", (0.16, 0.10, 0.07)), chuba=dict(main=(0.20, 0.07, 0.06), trim=(0.85, 0.62, 0.22), sash=(0.62, 0.10, 0.05)),
-                 apron=True, hat=dict(style="scarf", main=(0.40, 0.07, 0.09))),
+    # Aunt Pema (married, ~50, at home): plain dark sleeveless angi, red silk-brocade blouse (collar shows), dark knit
+    # cardigan over it, striped front pangden + back apron (married women), sash + silver buckle, bright head scarf,
+    # white sneakers (Pangboche 2009 photo in the notes)
+    "pema": dict(boots=("scan", "striper_sneaker_white"), chuba=dict(main=(0.022, 0.02, 0.02), top=(0.05, 0.034, 0.04),
+                 blouse=(0.30, 0.03, 0.045), sash=(0.30, 0.05, 0.04)), apron=True, back_apron=True,
+                 hat=dict(style="scarf", main=(0.45, 0.06, 0.2))),
     # clients
-    "marek": dict(boots=("mountain", (0.85, 0.55, 0.04)), pants=dict(style="softshell", main=(0.10, 0.10, 0.11)),
+    "marek": dict(boots=("scan", "salomon_x_raise"), pants=dict(style="softshell", main=(0.10, 0.10, 0.11)),
                   jacket=dict(style="shell", main=(0.16, 0.18, 0.07), trim=(0.02, 0.02, 0.025)), hat=dict(style="beanie", main=(0.12, 0.12, 0.13), pom=False)),
-    "elena": dict(boots=("mountain", (0.20, 0.20, 0.22)), pants=dict(style="softshell", main=(0.13, 0.12, 0.12)),
+    "elena": dict(boots=("scan", "salomon_outline_mid"), pants=dict(style="softshell", main=(0.13, 0.12, 0.12)),
                   jacket=dict(style="shell", main=(0.62, 0.16, 0.04), trim=(0.02, 0.02, 0.025))),
-    "jiwoo": dict(boots=("mountain", (0.85, 0.55, 0.04)), pants=dict(style="softshell", main=(0.08, 0.08, 0.09)),
+    "jiwoo": dict(boots=("scan", "adidas_terrex_fast_r"), pants=dict(style="softshell", main=(0.08, 0.08, 0.09)),
                   jacket=dict(style="down", main=(0.05, 0.11, 0.28), panel=(0.02, 0.02, 0.03), trim=(0.02, 0.02, 0.025)),
                   hat=dict(style="beanie", main=(0.75, 0.74, 0.70), pom=True)),
     # porters
-    "porter_a": dict(boots=("trainer", (0.22, 0.22, 0.24)), pants=dict(style="softshell", main=(0.16, 0.15, 0.13)),
-                     jacket=dict(style="fleece", main=(0.33, 0.05, 0.06), trim=(0.04, 0.04, 0.045)), hat=dict(style="beanie", main=(0.08, 0.10, 0.18), pom=False)),
+    # trekking porter (Pheriche, Nov 2022 photo): cheap black puffer, olive cargo trousers rolled to mid-calf, dark socks,
+    # black low trainers, dark beanie
+    "porter_a": dict(boots=("scan", "reebok_dmx_rainwalker"), pants=dict(style="softshell", main=(0.09, 0.085, 0.05), rolled=True),
+                     jacket=dict(style="down", main=(0.02, 0.02, 0.022), panel=(0.02, 0.02, 0.022), trim=(0.01, 0.01, 0.012)),
+                     hat=dict(style="beanie", main=(0.03, 0.03, 0.035), pom=False)),
     "porter_b": dict(boots=("trainer", (0.30, 0.24, 0.18)), pants=dict(style="softshell", main=(0.20, 0.20, 0.21)),
                      jacket=dict(style="fleece", main=(0.22, 0.24, 0.10), trim=(0.04, 0.04, 0.045)), hat=dict(style="beanie", main=(0.30, 0.30, 0.31), pom=True)),
     # Mingma Sherpa, the father: red 8000 m down suit
-    "father": dict(boots=("mountain", (0.85, 0.55, 0.04)), pants=dict(style="down", main=(0.62, 0.04, 0.03)),
+    "father": dict(boots=("scan", "garmont_hiking_boot"), pants=dict(style="down", main=(0.62, 0.04, 0.03)),
                    jacket=dict(style="down", main=(0.62, 0.04, 0.03), panel=(0.62, 0.04, 0.03), trim=(0.02, 0.02, 0.025)),
                    hat=dict(style="beanie", main=(0.05, 0.05, 0.06), pom=False)),
 }
@@ -67,7 +74,7 @@ SLOTS = {}          # material name -> dict(fabric, tint, ...)
 def slot(piece, role, fabric, tint):
     name = f"{OUTFIT}_{piece}_{role}"
     if name not in SLOTS:
-        tex, tile, rough = FAB[fabric]
+        tex, tile, rough = (fabric, 1.0, 0.8) if fabric.startswith("@scan:") else FAB[fabric]
         SLOTS[name] = dict(fabric=tex, tile_m=tile, rough=rough, tint=[round(c, 4) for c in tint])
         mat(name, tint, rough=rough)
     return bpy.data.materials[name]
@@ -252,6 +259,24 @@ def inflate(o, fn):
     moves = [(v.co.copy(), v.normal.copy()) for v in me.vertices]
     for i, (c, n) in enumerate(moves): me.vertices[i].co = c + n * fn(i, c, n)
     me.update()
+
+
+def wrap_over(o, objs, gap, cy, only=None):
+    """Lay o OVER objs radially (axis = vertical line x=0, y=cy): a ray from outside in finds the outermost surface at
+    each vertex's height and angle; vertices inside it + gap move out. Robust for rings (sash, apron) where nearest-
+    surface push_out grabs the inner face of a two-sided robe."""
+    tree = bvh_of(objs); me = o.data; n = 0
+    for v in me.vertices:
+        if only and not only(v.index, v.co): continue
+        d = Vector((v.co.x, v.co.y - cy, 0.0)); L = d.length
+        if L < 1e-4: continue
+        d /= L
+        R0 = L + 0.08                       # start just outside: from 1 m the A-pose arms (at waist height) were hit
+        hit = tree.ray_cast(Vector((d.x * R0, cy + d.y * R0, v.co.z)), -d, R0)
+        if hit[0] is None: continue
+        R = Vector((hit[0].x, hit[0].y - cy, 0.0)).length
+        if L < R + gap: v.co.x = d.x * (R + gap); v.co.y = cy + d.y * (R + gap); n += 1
+    me.update(); return n
 
 
 def push_out(o, tree, gap, only=None):
@@ -458,6 +483,181 @@ def weights_from_body(o):
             if w > 0.001: vg(o, name).add([v.index], w, 'REPLACE')
 
 
+BOOTS_SRC = os.path.join(ROOT, "Downloads", "boots_2026-11-14")
+
+
+def make_scan_boots(name):
+    """Real footwear: a downloaded scan (Downloads/boots_2026-11-14/<name>, CC BY - see CREDITS there) fitted to THIS
+    body's feet: largest piece kept, decimated, its own up/toe found from the shape, scaled to the foot length plus toe
+    room, checked so no foot vertex pokes through, skinned to foot/ball (bends at the ball), mirrored to the right foot.
+    The user saw the earlier procedural boots as round flower pots (2026-11-14): no heel, no toe spring, no laces."""
+    folder = os.path.join(BOOTS_SRC, name)
+    before = set(bpy.data.objects)
+    glb = os.path.join(folder, "model.glb"); obj = os.path.join(folder, "meshes", "model.obj")
+    if os.path.exists(glb): bpy.ops.import_scene.gltf(filepath=glb)
+    else: bpy.ops.wm.obj_import(filepath=obj)
+    new = [o for o in bpy.data.objects if o not in before]
+    meshes = [o for o in new if o.type == 'MESH']
+    for o in new:
+        if o.type != 'MESH': o.parent = None
+    for o in meshes:
+        mw = o.matrix_world.copy(); o.parent = None; o.matrix_world = mw
+    activate(meshes[0])
+    for o in meshes: o.select_set(True)
+    bpy.ops.object.join(); src = bpy.context.active_object
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    for o in new:                                          # empties/joined leftovers (joined meshes are already gone)
+        try:
+            if o != src: bpy.data.objects.remove(o)
+        except ReferenceError: pass
+    # texture: the scan's own base colour (embedded in a glb, a png next to an obj)
+    tex = None
+    for m in src.data.materials:
+        if m and m.use_nodes:
+            for n in m.node_tree.nodes:
+                if n.type == 'TEX_IMAGE' and n.image and (tex is None or n.image.size[0] > tex.size[0]):
+                    lk = [l for l in m.node_tree.links if l.from_node == n and l.to_socket.name == "Base Color"]
+                    if lk or tex is None: tex = n.image
+    tex_path = os.path.join(DEST, f"T_scan_{name}.png")
+    gso_tex = os.path.join(folder, "materials", "textures", "texture.png")
+    if os.path.exists(gso_tex):                          # Google Scanned Objects: the texture is a file next to the OBJ
+        import shutil; shutil.copyfile(gso_tex, tex_path); tex = None
+    if tex is not None:
+        if tex.packed_file or not os.path.exists(bpy.path.abspath(tex.filepath)):
+            tex.filepath_raw = tex_path; tex.file_format = 'PNG'; tex.save()
+        else:
+            import shutil; shutil.copyfile(bpy.path.abspath(tex.filepath), tex_path)
+    # weld the scan's seams, then keep ONE shoe: the largest welded piece, plus small parts (laces, eyelets, the sole
+    # if separate) that lie inside its bounds. Pairs, ground patches and stray fragments are dropped.
+    bm = bmesh.new(); bm.from_mesh(src.data)
+    lo = Vector((min(v.co.x for v in bm.verts), min(v.co.y for v in bm.verts), min(v.co.z for v in bm.verts)))
+    hi = Vector((max(v.co.x for v in bm.verts), max(v.co.y for v in bm.verts), max(v.co.z for v in bm.verts)))
+    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=(hi - lo).length * 0.0005)
+    bm.faces.ensure_lookup_table()
+    seen, islands = set(), []
+    for f in bm.faces:
+        if f in seen: continue
+        st, isl = [f], []
+        while st:
+            g = st.pop()
+            if g in seen: continue
+            seen.add(g); isl.append(g)
+            for e in g.edges:
+                for h in e.link_faces:
+                    if h not in seen: st.append(h)
+        islands.append(isl)
+    islands.sort(key=lambda isl: -len(isl))
+    main = islands[0]; keep = set(main)
+    mv = {v for g in main for v in g.verts}
+    blo = Vector((min(v.co.x for v in mv), min(v.co.y for v in mv), min(v.co.z for v in mv)))
+    bhi = Vector((max(v.co.x for v in mv), max(v.co.y for v in mv), max(v.co.z for v in mv)))
+    pad = (bhi - blo) * 0.03
+    for isl in islands[1:]:
+        c = sum((g.calc_center_median() for g in isl), Vector()) / len(isl)
+        if all(blo[i] - pad[i] <= c[i] <= bhi[i] + pad[i] for i in range(3)): keep |= set(isl)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f not in keep], context='FACES')
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context='VERTS')
+    bm.to_mesh(src.data); bm.free(); src.data.update()
+    n_tris = sum(len(p.vertices) - 2 for p in src.data.polygons)
+    if n_tris > 9000:
+        md = src.modifiers.new("dec", 'DECIMATE'); md.ratio = 9000.0 / n_tris; activate(src); bpy.ops.object.modifier_apply(modifier="dec")
+    # the shoe's own frame: PCA -> length (largest), height, width (smallest); up = the side whose extreme points
+    # are bunched (the ankle opening), not spread along the whole length (the sole); toe = away from the opening
+    import numpy as np
+    P = np.array([v.co[:] for v in src.data.vertices]); C = P.mean(0)
+    w_, V_ = np.linalg.eigh(np.cov((P - C).T)); order = np.argsort(w_)[::-1]
+    ax_len, ax_up, ax_w = V_[:, order[0]], V_[:, order[1]], V_[:, order[2]]
+    def spread(sign):
+        h = (P - C) @ (ax_up * sign); idx = h > np.quantile(h, 0.95)
+        return np.ptp((P[idx] - C) @ ax_len), ((P[idx] - C) @ ax_len).mean()
+    sp_pos, m_pos = spread(1); sp_neg, m_neg = spread(-1)
+    up = ax_up if sp_pos < sp_neg else -ax_up
+    top_along = m_pos if sp_pos < sp_neg else m_neg
+    fwd_s = -ax_len if top_along > 0 else ax_len          # toe is away from the ankle opening
+    side_s = np.cross(up, fwd_s)
+    R_src = np.array([side_s, fwd_s, up])                  # rows: world x(side), y(fwd), z(up) in shoe coordinates
+    Q = (P - C) @ R_src.T                                  # shoe points in its own frame: x side, y toe-ward, z up
+    for i, v in enumerate(src.data.vertices): v.co = Vector(Q[i].tolist())
+    src.data.update()
+    Q = np.array([v.co[:] for v in src.data.vertices])
+    # level the sole: the main axis tilts with a tall shaft, so pitch (about x) until the heel area and the ball area
+    # touch the ground at the same height, then roll (about y) until the inner and outer edges do
+    def level(Qa, axis_rot, a_idx, b_idx, lim):
+        best = (1e9, 0.0, np.eye(3))
+        for deg in np.arange(-lim, lim + 0.25, 0.5):
+            t = np.radians(deg); c, s_ = np.cos(t), np.sin(t)
+            if axis_rot == "x": R_ = np.array([[1, 0, 0], [0, c, -s_], [0, s_, c]])
+            else: R_ = np.array([[c, 0, s_], [0, 1, 0], [-s_, 0, c]])
+            Qr = Qa @ R_.T
+            coord = Qr[:, 1] if axis_rot == "x" else Qr[:, 0]
+            lo_, hi_ = coord.min(), coord.max(); u = (coord - lo_) / (hi_ - lo_)
+            za = np.quantile(Qr[(u > a_idx[0]) & (u < a_idx[1]), 2], 0.03); zb = np.quantile(Qr[(u > b_idx[0]) & (u < b_idx[1]), 2], 0.03)
+            score = abs(za - zb)
+            if score < best[0]: best = (score, deg, R_)
+        return Qa @ best[2].T, best[1]
+    Q, pitch_deg = level(Q, "x", (0.04, 0.22), (0.55, 0.78), 25)  # heel strip vs ball strip (toe spring stays free)
+    Q, roll_deg = level(Q, "y", (0.05, 0.3), (0.7, 0.95), 12)     # inner edge vs outer edge (a real sole is near level)
+    for i, v in enumerate(src.data.vertices): v.co = Vector(Q[i].tolist())
+    src.data.update()
+    print("LEVEL", name, "pitch", pitch_deg, "roll", roll_deg)
+    shoe_len = np.ptp(Q[:, 1]); shoe_w = np.ptp(Q[:, 0]); shoe_h = np.ptp(Q[:, 2])
+    pieces = []
+    for sd in ("l", "r"):
+        fv = np.array([v.co[:] for v in body.data.vertices if BPART[v.index] == "foot" and v.co.x * SIDE[sd] > 0])
+        fwd = Vector((B[f"ball_{sd}"].x - B[f"foot_{sd}"].x, B[f"ball_{sd}"].y - B[f"foot_{sd}"].y, 0)).normalized()
+        side = Vector((fwd.y, -fwd.x, 0)) * (1 if sd == "l" else -1)     # outward
+        along = fv[:, :2] @ np.array([fwd.x, fwd.y]); across = fv[:, :2] @ np.array([side.x, side.y])
+        foot_len = np.ptp(along); foot_w = np.ptp(across); heel = along.min(); mid_across = (across.max() + across.min()) / 2
+        scale = (foot_len + 0.05) / shoe_len                             # toe room + heel cup (a boot is ~2.5 cm longer than the foot)
+        sx = max(scale, (foot_w + 0.018) / shoe_w)                       # never narrower than the foot + padding
+        o = src.copy(); o.data = src.data.copy(); bpy.context.collection.objects.link(o); o.name = f"boot_{sd}"
+        lo_y = Q[:, 1].min(); lo_z = Q[:, 2].min(); cx = (Q[:, 0].max() + Q[:, 0].min()) / 2
+        for v in o.data.vertices:
+            x = (v.co.x - cx) * sx * (1 if sd == "l" else -1); y = (v.co.y - lo_y) * scale; z = (v.co.z - lo_z) * scale
+            base = fwd * (heel - 0.02) + side * mid_across      # the heel sits ~2 cm inside the heel cup
+            v.co = Vector((base.x, base.y, 0)) + fwd * y + side * x * (1 if sd == "l" else -1) + Vector((0, 0, z - 0.022))   # the foot stands on the insole, ~2 cm up: the sole sinks into the snow
+        if sd == "r":                                                    # mirrored: flip winding so normals face out
+            bm = bmesh.new(); bm.from_mesh(o.data); bmesh.ops.reverse_faces(bm, faces=bm.faces[:]); bm.to_mesh(o.data); bm.free()
+        o.data.update()
+        # no foot vertex may poke through: grow the shoe about its centre until the foot is inside
+        bpy.context.view_layer.update()
+        tree = BVHTree.FromObject(o, bpy.context.evaluated_depsgraph_get())
+        top = max(v.co.z for v in o.data.vertices)
+        test = [Vector(c) for c in fv if c[2] < top - 0.02]
+        # the scanned collar rim is ragged (spikes would pierce the trouser hem): trim at the typical collar height
+        zs_ = np.array([v.co.z for v in o.data.vertices]); collar = float(np.percentile(zs_, 96))
+        cut(o, (0, 0, collar), (0, 0, 1))
+        # the instep (laces/tongue) is where a foot of another shape meets the scan: lift only the boot surface there
+        # (ahead of the ball the whole shoe may move: the sole's toe spring would otherwise lift off the flat MetaHuman toes)
+        ball_ = B[f"ball_{sd}"]
+        push_out(o, bvh_of([body]), 0.005, only=lambda i, c: c.z > 0.02 or (c - ball_).dot(fwd) > -0.01)
+        bpy.context.view_layer.update(); tree = BVHTree.FromObject(o, bpy.context.evaluated_depsgraph_get())
+        worst, wpos = 0.0, None
+        for c in test:
+            hit = tree.find_nearest(c)
+            if hit[0] is not None:
+                d = (c - hit[0]).dot(hit[1])
+                if d > worst: worst, wpos = d, c
+        npoke = sum(1 for c in test if (lambda h: h[0] is not None and (c - h[0]).dot(h[1]) > 0.003)(tree.find_nearest(c)))
+        if wpos is not None:
+            rel = wpos - B[f"foot_{sd}"]
+            print("POKE", sd, "count", npoke, "of", len(test), "worst at along", round(rel.dot(fwd), 3), "side", round(rel.dot(side), 3), "z", round(wpos.z, 3))
+        print("BOOT", name, sd, "foot", round(foot_len, 3), "x", round(foot_w, 3), "shoe scale", round(scale, 3), "worst poke", round(worst, 4))
+        # skin: rigid to the foot, the toe box blends to the ball joint (the shoe bends where a real one creases)
+        ball = B[f"ball_{sd}"]
+        for g in GROUPS: o.vertex_groups.new(name=g)
+        for v in o.data.vertices:
+            t = smoothstep(-0.035, 0.03, (v.co - ball).dot(fwd))
+            vg(o, f"foot_{sd}").add([v.index], 1.0 - t, 'REPLACE')
+            if t > 0: vg(o, f"ball_{sd}").add([v.index], t, 'REPLACE')
+        o.data.materials.clear(); o.data.materials.append(slot("boots", "scan", "@scan:" + name, (1, 1, 1)))
+        for p_ in o.data.polygons: p_.material_index = 0; p_.use_smooth = True
+        set_vcol(o, [1.0] * len(o.data.vertices))
+        PIECES.append(o); LAYERS.append(o); pieces.append(o)
+    bpy.data.objects.remove(src)
+    return float(np.percentile([v.co.z for o in pieces for v in o.data.vertices], 97))
+
+
 def make_boots(kind, tint):
     """Boots as a stack of convex cross-sections of the foot/leg (like a boot last): one rounded toe box, flat sole,
     rubber rand, lace strip on the instep, padded collar."""
@@ -529,6 +729,14 @@ def make_pants(spec, boot_top):
     style = spec["style"]
     waist = Z_PELVIS + 0.115
     hem = boot_top - 0.03
+    if spec.get("rolled"):                   # rolled to mid-calf: dark socks show between the cuff and the trainers
+        hem = Z_KNEE - 0.16
+        so = shell("socks", lambda i, c, p: p in ("calf", "foot") and Z_ANKLE - 0.02 < c.z < hem + 0.06)
+        cut(so, (0, 0, hem + 0.04), (0, 0, 1)); cut(so, (0, 0, Z_ANKLE - 0.01), (0, 0, -1))
+        decimate_to(so, 0.02); subdivide(so); inflate(so, lambda i, c, n: 0.004); laplace(so, 3, 0.4)
+        push_out(so, bvh_of([body]), 0.003)
+        assign_mats(so, [slot("pants", "socks", "knit", (0.03, 0.03, 0.035))], lambda i, c: 0)
+        set_vcol(so, [0.85] * len(so.data.vertices)); uv_metres(so); PIECES.append(so); LAYERS.append(so)
     o = shell("pants", lambda i, c, p: (p in ("pelvis", "thigh", "calf") or (p == "other" and abs(c.x) < 0.22)) and hem - 0.04 < c.z < waist + 0.04)
     cut(o, (0, 0, waist), (0, 0, 1)); cut(o, (0, 0, hem), (0, 0, -1))
     decimate_to(o, 0.03); subdivide(o)
@@ -545,6 +753,8 @@ def make_pants(spec, boot_top):
         inflate(o, lambda i, c, n: 0.004 * math.sin(c.z * 2 * math.pi / 0.032) * (gaussian(c.z, Z_KNEE, 0.05) + gaussian(c.z, hem + 0.04, 0.04)))
         ao = [1.0 - 0.18 * (gaussian(v.co.z, Z_KNEE, 0.05) + gaussian(v.co.z, hem + 0.04, 0.04)) * (0.5 + 0.5 * math.sin(v.co.z * 2 * math.pi / 0.032)) for v in o.data.vertices]
     push_out(o, bvh_of(LAYERS), 0.006)
+    laplace(o, 3, 0.45)                      # the scanned shoe collars are ragged: settle the hem over them
+    push_out(o, bvh_of(LAYERS), 0.004)
     main = slot("pants", "main", "nylon" if style == "down" else "softshell", spec["main"])
     belt = slot("pants", "belt", "webbing", (0.03, 0.03, 0.03))
     assign_mats(o, [main, belt], lambda i, c: 1 if c.z > waist - 0.035 else 0)
@@ -552,7 +762,9 @@ def make_pants(spec, boot_top):
     for edges, vs in boundary_loops(o):
         cz = loop_centre(o, vs).z
         if cz < Z_KNEE:
-            c = loop_centre(o, vs); extrude_loop(o, edges, [(-0.006, -0.006)], c, (0, 0, 1))
+            c = loop_centre(o, vs)
+            if spec.get("rolled"): extrude_loop(o, edges, [(-0.004, 0.012), (0.04, 0.0), (0.004, -0.012)], c, (0, 0, 1))   # the rolled cuff
+            else: extrude_loop(o, edges, [(-0.006, -0.006)], c, (0, 0, 1))
     ao += [0.7] * (len(o.data.vertices) - len(ao))
     set_vcol(o, ao); uv_metres(o); finish(o, 0.004)
     PIECES.append(o); LAYERS.append(o)
@@ -726,13 +938,13 @@ def head_cap(name, front_drop, back_drop, gap):
 def make_hat(spec):
     hc = Vector((B["head"].x, B["head"].y, 0))
     if spec["style"] == "beanie":
-        o, p1, nrm = head_cap("hat", 0.088, 0.14, 0.014)
+        o, p1, nrm = head_cap("hat", 0.088, 0.14, 0.009)       # knit hugs the head (a stiffer, wider cap read as a helmet)
         def rib(i, c, n):
             th = math.atan2(c.y - hc.y, c.x - hc.x)
             band = smoothstep(0.05, 0.035, (c - p1).dot(nrm))        # folded brim near the edge
-            return 0.0022 * math.sin(th * 56) ** 2 + 0.007 * band
+            return 0.0018 * math.sin(th * 56) ** 2 + 0.0045 * band
         inflate(o, rib)
-        push_out(o, bvh_of([face]), 0.010)
+        push_out(o, bvh_of([face]), 0.007)
         main = slot("hat", "main", "knit", spec["main"])
         assign_mats(o, [main], lambda i, c: 0)
         ao = [0.85 + 0.15 * math.sin(math.atan2(v.co.y - hc.y, v.co.x - hc.x) * 56) ** 2 for v in o.data.vertices]
@@ -740,6 +952,31 @@ def make_hat(spec):
             extrude_loop(o, edges, [(0.0, -0.008)], hc, (0, 0, 1))
         ao += [0.7] * (len(o.data.vertices) - len(ao))
         set_vcol(o, ao); uv_metres(o); finish(o, 0.004); PIECES.append(o)
+        if spec.get("glasses"):
+            hb = bvh_of([o]); zc = HEAD_TOP - 0.062; gl = bmesh.new(); rows = []
+            fang = -math.pi / 2 if FRONT < 0 else math.pi / 2
+            for zz in (zc - 0.021, zc + 0.021):
+                row = []
+                for k in range(15):
+                    a = fang + math.radians(-72 + 144 * k / 14)
+                    d = Vector((math.cos(a), math.sin(a), 0.0)); orig = Vector((hc.x, hc.y, zz))
+                    hit = hb.ray_cast(orig + d * 0.3, -d, 0.3)
+                    pt = (hit[0] if hit[0] is not None else orig + d * 0.11) + d * 0.006
+                    row.append(gl.verts.new(pt))
+                rows.append(row)
+            for k in range(14):
+                gl.faces.new((rows[0][k], rows[0][k + 1], rows[1][k + 1], rows[1][k]))
+            bmesh.ops.recalc_face_normals(gl, faces=gl.faces[:])
+            frame_pts = [tuple(v.co) for v in rows[1]]          # before new_obj frees the bmesh
+            lens = new_obj("sunglasses", gl)
+            lens.data.materials.append(slot("hat", "lens", "metal", (0.01, 0.012, 0.016)))
+            vg(lens, "head").add(range(len(lens.data.vertices)), 1.0, 'REPLACE')
+            set_vcol(lens, [1.0] * len(lens.data.vertices)); uv_metres(lens); finish(lens, 0.003); PIECES.append(lens)
+            frame = tube_along("glasses_frame", frame_pts, 0.0035, seg=6)
+            frame.data.materials.append(slot("hat", "frame", "rubber", (0.015, 0.015, 0.017)))
+            for g in GROUPS: frame.vertex_groups.new(name=g)
+            vg(frame, "head").add(range(len(frame.data.vertices)), 1.0, 'REPLACE')
+            set_vcol(frame, [1.0] * len(frame.data.vertices)); uv_metres(frame); PIECES.append(frame)
         if spec.get("pom"):
             top = max(o.data.vertices, key=lambda v: v.co.z).co
             pom = sphere("pom", 0.04, loc=(top.x, top.y, top.z + 0.025), seg=18, rings=10)
@@ -793,12 +1030,54 @@ def make_chuba(spec):
     # a loose robe: thick wool that bridges the body's hollows, sleeves widening to the cuff
     inflate(o, lambda i, c, n: 0.022 + sleeve[i] * 0.024 * smoothstep(0.1, 0.5, arm_t(c, side_of(c))))
     laplace(o, 26, 0.6)
+    # torso on the convex outline of its slice + padding (as the jackets): wool hangs straight over the breasts/waist
+    # instead of sculpting them (Pema's cardigan read as a skin-tight bodysuit in game, 2026-11-14)
+    hull, hcy = torso_hull(Z_PELVIS - 0.08, BODY_TOP - 0.06)
+    for v in me.vertices:
+        w = (1.0 - min(1.0, sleeve[v.index] * 1.6)) * smoothstep(BODY_TOP - 0.02, BODY_TOP - 0.10, v.co.z) * smoothstep(0.75, 0.35, abs(v.normal.z))
+        w *= smoothstep(0.29, 0.21, abs(v.co.x))     # A-pose wrists hang at hip height: never pull hands/cuffs to the hull
+        if w <= 0.0: continue
+        r = hull(v.co)
+        if r is None: continue
+        d = Vector((v.co.x, v.co.y - hcy, 0.0)); L = d.length
+        if L < 1e-4: continue
+        target = d * ((r + 0.024 + 0.008 * smoothstep(Z_CHEST - 0.1, Z_PELVIS, v.co.z)) / L)
+        v.co.x = v.co.x + (target.x - d.x) * w; v.co.y = v.co.y + (target.y - d.y) * w
+    me.update()
+    laplace(o, 6, 0.5)
     push_out(o, bvh_of(LAYERS), 0.014)
     laplace(o, 3, 0.5)
     sleeve = sleeve_field(o)
     inflate(o, lambda i, c, n: 0.0035 * math.sin(arm_t(c, side_of(c)) * 2 * math.pi / 0.05) * sleeve[i] * smoothstep(0.25, 0.45, arm_t(c, side_of(c))))
     push_out(o, bvh_of(LAYERS), 0.010)
-    main = slot("chuba", "main", "wool", spec["main"]); trim = slot("chuba", "trim", "brocade", spec["trim"])
+    main = slot("chuba", "main", "wool", spec["main"])
+    if spec.get("top"):                      # modern mix: a dark knit cardigan over the angi; the blouse shows at the collar
+        top = slot("chuba", "cardigan", "knit", spec["top"]); blouse = slot("chuba", "blouse", "brocade", spec["blouse"])
+        assign_mats(o, [top, blouse], lambda i, c: 0)
+        n0 = len(me.vertices)
+        for edges, vs in boundary_loops(o):
+            c = loop_centre(o, vs)
+            if c.z > Z_CHEST:
+                nc = len(me.vertices)
+                # slim standing blouse collar (hongju): a short rise, then its top edge laid on the neck (the old
+                # profile flared 1 cm out + 3 cm up and stood off the neck like a 4 cm ring in game)
+                extrude_loop(o, edges, [(0.004, -0.004), (0.03, -0.03)], Vector((B["neck_01"].x, B["neck_01"].y, 0)), (0, 0, 1), mat_index=1)
+                ft = neck_bvh()
+                for v in me.vertices[nc:]:
+                    hit = ft.find_nearest(v.co)
+                    if hit[0] is None or (hit[0] - v.co).length > 0.09: continue
+                    k = smoothstep(BODY_TOP - 0.05, BODY_TOP - 0.01, v.co.z)     # the top of the collar hugs, the base follows the cardigan
+                    if k <= 0: continue
+                    z = v.co.z; tgt = hit[0] + hit[1] * 0.006; v.co = v.co.lerp(tgt, k); v.co.z = z
+                me.update()
+            elif abs(c.x) > 0.2:             # ribbed knit cuff gathered at the wrist
+                sd = side_of(c); d = (B[f"hand_{sd}"] - B[f"lowerarm_{sd}"]).normalized()
+                extrude_loop(o, edges, [(0.006, -0.016), (0.03, -0.002)], B[f"lowerarm_{sd}"], d)
+        push_out(o, bvh_of(LAYERS), 0.006, only=lambda i, c: i >= n0 and c.z < BODY_TOP)
+        ao = [1.0 - 0.15 * gaussian(v.co.z, Z_PELVIS - 0.02, 0.02) if v.index < n0 else 0.9 for v in me.vertices]
+        set_vcol(o, ao); uv_metres(o); finish(o, 0.005); PIECES.append(o); LAYERS.append(o)
+        return chuba_skirt(spec, main, top_skirt, hem_z)
+    trim = slot("chuba", "trim", "brocade", spec["trim"])
     # wrap edge: a clean brocade band from the throat down to the wearer's right underarm (wearer's right = -x)
     a = Vector((0.0, 0, BODY_TOP - 0.01)); b = Vector((-0.16, 0, Z_CHEST - 0.13))
     nE = (b - a).cross(Vector((0, 1, 0))).normalized()
@@ -829,7 +1108,10 @@ def make_chuba(spec):
     push_out(o, bvh_of(LAYERS), 0.006, only=lambda i, c: i >= n0 and c.z < BODY_TOP)
     ao = [1.0 - 0.2 * gaussian(v.co.z, Z_PELVIS - 0.02, 0.02) if v.index < n0 else 0.9 for v in me.vertices]
     set_vcol(o, ao); uv_metres(o); finish(o, 0.005); PIECES.append(o); LAYERS.append(o)
+    return chuba_skirt(spec, main, top_skirt, hem_z)
 
+
+def chuba_skirt(spec, main, top_skirt, hem_z):
     # ---- skirt: rings around both legs (support function of the body section), flaring to the ankle, back pleats
     NT, NZ = 72, 34
     bverts = [v.co for v in body.data.vertices if BPART[v.index] in ("pelvis", "thigh", "calf", "foot", "other") and abs(v.co.x) < 0.24]
@@ -883,7 +1165,7 @@ def make_chuba(spec):
     for k, z in enumerate((top_skirt - 0.01, top_skirt + 0.03, top_skirt + 0.07)):
         k2 = min(range(NZ), key=lambda q: abs(rings[q][0] - top_skirt)); row = []
         for j in range(NT):
-            th = 2 * math.pi * j / NT; r = rs[k2][j] + 0.034 + 0.004 * (k == 1)
+            th = 2 * math.pi * j / NT; r = rs[k2][j] + 0.022 + 0.004 * (k == 1)
             row.append(bm.verts.new((r * math.cos(th), cy + r * math.sin(th), z)))
         grid.append(row)
     for k in range(2):
@@ -893,15 +1175,32 @@ def make_chuba(spec):
     sa = new_obj("sash", bm); sa.data.materials.append(slot("chuba", "sash", "linen", spec["sash"]))
     for p in sa.data.polygons: p.use_smooth = True
     vg(sa, "pelvis").add(range(len(sa.data.vertices)), 1.0, 'REPLACE')
+    # the sash wraps OVER the robe/cardigan: never inside it (it showed only as two pads at the sides, 2026-11-14)
+    robe = [l for l in LAYERS if l.name.startswith("chuba")]
+    if robe:
+        wrap_over(sa, robe, 0.007, cy); laplace(sa, 2, 0.5); wrap_over(sa, robe, 0.007, cy)
     set_vcol(sa, [0.9] * len(sa.data.vertices)); uv_metres(sa, cyl_uv, 2 * math.pi * 0.2); finish(sa, 0.004); PIECES.append(sa)
+    sash_tree = BVHTree.FromObject(sa, bpy.context.evaluated_depsgraph_get())
+    if spec.get("top"):                      # kyetig: the embossed silver buckle holding the aprons, front of the sash
+        fth = -math.pi / 2 if FRONT < 0 else math.pi / 2
+        k2 = min(range(NZ), key=lambda q: abs(rings[q][0] - top_skirt)); jj = int(round((fth % (2 * math.pi)) / (2 * math.pi) * NT)) % NT
+        hit = sash_tree.ray_cast(Vector((0.0, cy + FRONT * 0.6, top_skirt + 0.03)), Vector((0.0, -FRONT, 0.0)))
+        r = (abs(hit[0].y - cy) + 0.012) if hit[0] is not None else rs[k2][jj] + 0.05     # on the sash's front face
+        bk = bmesh.new(); bmesh.ops.create_cube(bk, size=1.0)
+        bmesh.ops.scale(bk, vec=Vector((0.065, 0.012, 0.045)), verts=bk.verts)
+        bmesh.ops.translate(bk, vec=Vector((r * math.cos(fth), cy + r * math.sin(fth), top_skirt + 0.03)), verts=bk.verts)
+        bu = new_obj("buckle", bk); bu.data.materials.append(slot("chuba", "buckle", "metal", (0.62, 0.62, 0.64)))
+        vg(bu, "pelvis").add(range(len(bu.data.vertices)), 1.0, 'REPLACE')
+        set_vcol(bu, [1.0] * len(bu.data.vertices)); uv_metres(bu); PIECES.append(bu)
     return sk, rings, rs, cy, NT
 
 
-def make_apron(sk_info):
-    """Pangden: the striped apron of married women, over the front of the skirt (texture made by make_pangden)."""
+def make_apron(sk_info, back=False):
+    """Pangden: the striped apron of married women, over the front of the skirt (texture made by make_pangden).
+    back=True: the gyabtil, the striped back apron worn by married and unmarried women alike."""
     sk, rings, rs, cy, NT = sk_info
-    NZ = len(rings); half = math.radians(38)
-    front_th = -math.pi / 2 if FRONT < 0 else math.pi / 2
+    NZ = len(rings); half = math.radians(50 if back else 38)
+    front_th = (-math.pi / 2 if FRONT < 0 else math.pi / 2) + (math.pi if back else 0.0)
     k0 = 1; k1 = NZ - 3
     bm = bmesh.new(); grid = []
     for k in range(k0, k1 + 1):
@@ -916,8 +1215,8 @@ def make_apron(sk_info):
         for j in range(14):
             bm.faces.new((grid[k][j], grid[k][j + 1], grid[k + 1][j + 1], grid[k + 1][j]))
     outward(bm, cy)
-    ap = new_obj("apron", bm)
-    ap.data.materials.append(slot("apron", "main", "pangden", (1, 1, 1)))
+    ap = new_obj("apron_back" if back else "apron", bm)
+    ap.data.materials.append(slot("apron", "back" if back else "main", "pangden", (0.8, 0.8, 0.8) if back else (1, 1, 1)))
     for p in ap.data.polygons: p.use_smooth = True
     z_top, z_bot = rings[k0][0], rings[k1][0]
     for v in ap.data.vertices:
@@ -927,7 +1226,9 @@ def make_apron(sk_info):
             vg(ap, "thigh_l").add([v.index], 0.7 * s * side, 'REPLACE')
             vg(ap, "thigh_r").add([v.index], 0.7 * s * (1 - side), 'REPLACE')
     xs = [v.co.x for v in ap.data.vertices]; x0, x1 = min(xs), max(xs)
-    uv_metres(ap, lambda c: ((c.x - x0) / (x1 - x0), (c.z - z_bot) / (z_top - z_bot)))
+    uv_metres(ap, lambda c: ((c.x - x0) / (x1 - x0), (c.z - z_bot) / (z_top - z_bot) * 0.8 + (0.37 if back else 0.0)))
+    robe = [l for l in LAYERS if l.name.startswith("chuba")]      # over the cardigan's hem (it poked through as notches)
+    if robe: wrap_over(ap, robe, 0.006, cy)
     set_vcol(ap, [1.0] * len(ap.data.vertices)); finish(ap, 0.003); PIECES.append(ap)
 
 
@@ -955,23 +1256,35 @@ def make_pangden(path):
 
 
 # ---------------------------------------------------------------- build
-bt = make_boots(*SPEC["boots"])
+bt = make_scan_boots(SPEC["boots"][1]) if SPEC["boots"][0] == "scan" else make_boots(*SPEC["boots"])
 waist = make_pants(SPEC["pants"], bt) if "pants" in SPEC else Z_PELVIS + 0.115
 if "jacket" in SPEC: make_jacket(SPEC["jacket"], waist)
 if "chuba" in SPEC:
     info = make_chuba(SPEC["chuba"])
     if SPEC.get("apron"): make_apron(info)
+    if SPEC.get("back_apron"): make_apron(info, back=True)
 if "hat" in SPEC: make_hat(SPEC["hat"])
 
 os.makedirs(DEST, exist_ok=True)
 if any(s["fabric"] == "@pangden" for s in SLOTS.values()):
-    make_pangden(os.path.join(DEST, "T_Pangden.png"))
+    try: make_pangden(os.path.join(DEST, "T_Pangden.png"))      # same seed = same image; the PNG save fails now and
+    except RuntimeError as e: print("PANGDEN keep existing:", e)  # then ("internal error", a file lock) -> keep the old one
 
 for o in PIECES:
     zs = [v.co.z for v in o.data.vertices]; xs = [v.co.x for v in o.data.vertices]
     print("PIECE", o.name, "tris", sum(len(p.vertices) - 2 for p in o.data.polygons), "z", round(min(zs), 3), round(max(zs), 3), "x", round(min(xs), 3), round(max(xs), 3))
+# ONE uv channel per piece, all named alike: join merges layers by NAME, and UE reads only channel 0 - pieces whose
+# UVs sat in "UV0" (planar: apron, skirt) or "DiffuseUV" (body copies) got all-zero UVs there and showed a single
+# texel (the pangden read as a flat orange slab, knit/wool looked untextured; found in game 2026-11-14)
+for o in PIECES:
+    L = o.data.uv_layers
+    if not len(L): L.new(name="UVMap"); continue
+    keep = (L.get("UV0") or L.active or L[0]).name
+    for nm in [l.name for l in L if l.name != keep]: L.remove(L[nm])
+    L[keep].name = "UVMap"; L.active = L["UVMap"]; L["UVMap"].active_render = True
 g = join(f"SKM_G_{OUTFIT}{TAG}", PIECES)
 activate(g)
+print("UVLAYERS", [l.name for l in g.data.uv_layers])
 bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=6)
 bpy.ops.object.vertex_group_normalize_all(lock_active=False)
 g.parent = arm
@@ -992,9 +1305,10 @@ for o in (body, face):
 cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam")); s.collection.objects.link(cam); s.camera = cam
 cam.data.lens = 70
 os.makedirs(os.path.join(OUT, "Preview"), exist_ok=True)
-for nm, d in (("front", Vector((0, FRONT, 0.05))), ("threeq", Vector((0.75, FRONT, 0.15))), ("back", Vector((-0.4, -FRONT, 0.1)))):
-    tgt = Vector((0, 0, HEAD_TOP * 0.52))
-    cam.location = tgt + d.normalized() * 4.4
+for nm, d in (("front", Vector((0, FRONT, 0.05))), ("threeq", Vector((0.75, FRONT, 0.15))), ("back", Vector((-0.4, -FRONT, 0.1))),
+              ("feet", Vector((0.8, FRONT, 0.35)))):
+    tgt = Vector((0, 0, HEAD_TOP * 0.52)) if nm != "feet" else Vector((0, B["ball_l"].y, 0.1))
+    cam.location = tgt + d.normalized() * (4.4 if nm != "feet" else 1.3)
     cam.rotation_euler = (tgt - cam.location).to_track_quat('-Z', 'Y').to_euler()
     s.render.filepath = os.path.join(OUT, "Preview", f"garment_{OUTFIT}{TAG}_{nm}.png")
     bpy.ops.render.render(write_still=True)

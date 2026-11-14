@@ -21,7 +21,7 @@ def skeleton():
 def tex(name, kind):
     path = f"{TEX}/{name}"
     if not EAL.does_asset_exist(path):
-        src = f"{GSRC}/{name}.png" if name in ("T_Pangden", "T_White_Linear") else f"{FSRC}/{name}.jpg"
+        src = f"{GSRC}/{name}.png" if (name in ("T_Pangden", "T_White_Linear") or name.startswith("T_scan_")) else f"{FSRC}/{name}.jpg"
         t = unreal.AssetImportTask(); t.filename = src; t.destination_path = TEX; t.automated = True; t.replace_existing = True; t.save = True
         at.import_asset_tasks([t])
         tx = unreal.load_asset(path)
@@ -122,7 +122,12 @@ for js in sorted(glob.glob(f"{GSRC}/SKM_G_*.json")):
         mi = unreal.load_asset(mp) or at.create_asset(f"MI_G_{slot}", f"{DST}/Materials", unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
         mel.set_material_instance_parent(mi, M)
         fab = d["fabric"]
-        if fab == "@pangden":
+        if fab.startswith("@scan:"):          # a downloaded shoe scan keeps its own photographed colours
+            mel.set_material_instance_texture_parameter_value(mi, "Color", tex("T_scan_" + fab[6:], "diff"))
+            mel.set_material_instance_scalar_parameter_value(mi, "UseTexColor", 1.0)
+            mel.set_material_instance_scalar_parameter_value(mi, "TileM", 1.0); mel.set_material_instance_scalar_parameter_value(mi, "DetailTileM", 1.0)
+            mel.set_material_instance_scalar_parameter_value(mi, "AOStrength", 0.0)
+        elif fab == "@pangden":
             mel.set_material_instance_texture_parameter_value(mi, "Color", tex("T_Pangden", "diff"))
             mel.set_material_instance_texture_parameter_value(mi, "Normal", tex("T_rough_linen_nor", "nor"))
             mel.set_material_instance_texture_parameter_value(mi, "Rough", tex("T_rough_linen_rough", "rough"))

@@ -36,6 +36,8 @@ for pid, (preset, skin_u, outfit, hat) in CAST.items():
     if st.get("preset", preset) != preset:      # recast: build again into the same folder (Cast.ygs paths stay)
         st.clear()
     st["preset"] = preset
+    if st.get("built_full") and not EAL.does_asset_exist(path):
+        path = f"{ROOT}/MH_{nm}"              # built before the per-preset names (porter, Ji-woo): never make an unrigged copy
     if not EAL.does_asset_exist(path):
         EAL.duplicate_asset(f"/MetaHumanCharacter/Optional/Presets/{preset}", path)
     ch = unreal.load_asset(path)
@@ -97,7 +99,7 @@ for pid, (preset, skin_u, outfit, hat) in CAST.items():
         body = meshes.get("Body", f"{d}/Body/SKM_MH_{nm}_BodyMesh"); face = meshes.get("Face", f"{d}/Face/SKM_MH_{nm}_FaceMesh")
         cast_out[pid] = dict(body=body, face=face,
                              garment=f"/Game/Story/Garments/SKM_G_{outfit}", hat=hat,
-                             grooms=[dict(slot=a, groom=b, binding=c) for a, b, c in grooms if not (hat and a == "Hair")])
+                             grooms=[dict(slot=a, groom=b, binding=c) for a, b, c in grooms])   # short hair stays under hats (a bald nape reads as CG)
         # body + face for the Blender tailor (Tools/Blender/garments fits each outfit to its own person)
         for src, fn in ((body, f"SKM_MH_{nm}_Body"), (face, f"SKM_MH_{nm}_Face")):
             fbx = f"F:/UE_project/YggdrasilsPeak/Art/Blender/Source/MetaHuman/{fn}.fbx"
