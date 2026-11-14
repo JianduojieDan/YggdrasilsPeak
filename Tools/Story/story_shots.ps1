@@ -24,6 +24,7 @@ $runs = [ordered]@{
     "c_marek"  = @{ at = @(339224, 2469625, -69084, -4, -56.3); cmds = "ygg.Story.Auto 1, ygg.Later 2 ygg.Story.Jump team"; wait = 9 }
     "c_elena"  = @{ at = @(339179, 2469520, -69084, -4, -36.9); cmds = "ygg.Story.Auto 1, ygg.Later 2 ygg.Story.Jump team"; wait = 9 }
     "c_jiwoo"  = @{ at = @(339537, 2469097, -69122, -4, 117.3); cmds = "ygg.Story.Auto 1, ygg.Later 2 ygg.Story.Jump team"; wait = 9 }
+    "c_porter" = @{ at = @(168038.7, 2300064.7, -49930, -9, -136.9); cmds = "ygg.Story.Auto 1, ygg.Later 2 ygg.Story.Jump porters_come, ygg.Later 4 BugItGo 168038.7 2300064.7 -49930 -12 -80 0"; wait = 5 }
     "c_pema"   = @{ at = @(340779, 2467834, -69118, -6, -144.6); cmds = "ygg.Later 2 ygg.Story.Jump dolma_calls"; wait = 6 }
     "roomunlit"= @{ at = (At "room_start" -5); cmds = "ygg.Later 2 ygg.Story.Jump dawn, ygg.Later 8 viewmode unlit"; wait = 13 }
     "page"     = @{ at = (At "night_tent" 0); cmds = "ygg.Realm.StartTime 2030, ygg.Later 3 ygg.Story.Jump night"; wait = 46 }

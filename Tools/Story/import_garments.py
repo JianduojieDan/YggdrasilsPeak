@@ -21,7 +21,7 @@ def skeleton():
 def tex(name, kind):
     path = f"{TEX}/{name}"
     if not EAL.does_asset_exist(path):
-        src = f"{GSRC}/{name}.png" if (name in ("T_Pangden", "T_White_Linear") or name.startswith("T_scan_")) else f"{FSRC}/{name}.jpg"
+        src = f"{GSRC}/{name}.png" if (name in ("T_Pangden", "T_ScarfPrint", "T_White_Linear") or name.startswith("T_scan_")) else f"{FSRC}/{name}.jpg"
         t = unreal.AssetImportTask(); t.filename = src; t.destination_path = TEX; t.automated = True; t.replace_existing = True; t.save = True
         at.import_asset_tasks([t])
         tx = unreal.load_asset(path)
@@ -107,7 +107,7 @@ def master():   # (rough maps are linear masks: the default must be a linear whi
 
 
 FUZZ = {"caban": 0.7, "polar_fleece": 0.9, "knitted_fleece": 0.85, "poly_wool_herringbone": 0.6, "jersey_melange": 0.35,
-        "rough_linen": 0.4, "@pangden": 0.5, "hessian_230": 0.3, "floral_jacquard": 0.3, "quatrefoil_jacquard_fabric": 0.2}
+        "rough_linen": 0.4, "@pangden": 0.5, "@scarfprint": 0.3, "hessian_230": 0.3, "floral_jacquard": 0.3, "quatrefoil_jacquard_fabric": 0.2}
 M = master()
 sk_asset = skeleton()
 print("skeleton", sk_asset.get_path_name() if sk_asset else None)
@@ -127,6 +127,12 @@ for js in sorted(glob.glob(f"{GSRC}/SKM_G_*.json")):
             mel.set_material_instance_scalar_parameter_value(mi, "UseTexColor", 1.0)
             mel.set_material_instance_scalar_parameter_value(mi, "TileM", 1.0); mel.set_material_instance_scalar_parameter_value(mi, "DetailTileM", 1.0)
             mel.set_material_instance_scalar_parameter_value(mi, "AOStrength", 0.0)
+        elif fab == "@scarfprint":            # printed cotton head scarf (texture made by garments make_scarf_print)
+            mel.set_material_instance_texture_parameter_value(mi, "Color", tex("T_ScarfPrint", "diff"))
+            mel.set_material_instance_texture_parameter_value(mi, "Normal", tex("T_rough_linen_nor", "nor"))
+            mel.set_material_instance_texture_parameter_value(mi, "Rough", tex("T_rough_linen_rough", "rough"))
+            mel.set_material_instance_scalar_parameter_value(mi, "TileM", d["tile_m"]); mel.set_material_instance_scalar_parameter_value(mi, "DetailTileM", 0.04)
+            mel.set_material_instance_scalar_parameter_value(mi, "UseTexColor", 1.0)
         elif fab == "@pangden":
             mel.set_material_instance_texture_parameter_value(mi, "Color", tex("T_Pangden", "diff"))
             mel.set_material_instance_texture_parameter_value(mi, "Normal", tex("T_rough_linen_nor", "nor"))

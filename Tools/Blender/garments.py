@@ -31,7 +31,7 @@ DEST = os.path.join(OUT, "Export", "Garments")
 FAB = {"nylon": ("stretch_poplin", 0.18, 0.42), "softshell": ("jersey_melange", 0.25, 0.75), "fleece": ("polar_fleece", 0.22, 0.95),
        "knit": ("knitted_fleece", 0.12, 0.95), "wool": ("caban", 0.35, 0.9), "tweed": ("poly_wool_herringbone", 0.3, 0.9),
        "leather": ("brown_leather", 0.35, 0.6), "rubber": ("", 1.0, 0.85), "brocade": ("quatrefoil_jacquard_fabric", 0.16, 0.55),
-       "floral": ("floral_jacquard", 0.2, 0.7), "linen": ("rough_linen", 0.3, 0.9), "pangden": ("@pangden", 1.0, 0.85),
+       "floral": ("floral_jacquard", 0.2, 0.7), "linen": ("rough_linen", 0.3, 0.9), "pangden": ("@pangden", 1.0, 0.85), "scarfprint": ("@scarfprint", 0.12, 0.85),
        "webbing": ("hessian_230", 0.08, 0.8), "metal": ("", 1.0, 0.3)}
 
 OUTFITS = {
@@ -45,7 +45,7 @@ OUTFITS = {
     # white sneakers (Pangboche 2009 photo in the notes)
     "pema": dict(boots=("scan", "striper_sneaker_white"), chuba=dict(main=(0.022, 0.02, 0.02), top=(0.05, 0.034, 0.04),
                  blouse=(0.30, 0.03, 0.045), sash=(0.30, 0.05, 0.04)), apron=True, back_apron=True,
-                 hat=dict(style="scarf", main=(0.45, 0.06, 0.2))),
+                 hat=dict(style="scarf", main=(0.45, 0.06, 0.2), print=True)),
     # clients
     "marek": dict(boots=("scan", "salomon_x_raise"), pants=dict(style="softshell", main=(0.10, 0.10, 0.11)),
                   jacket=dict(style="shell", main=(0.16, 0.18, 0.07), trim=(0.02, 0.02, 0.025)), hat=dict(style="beanie", main=(0.12, 0.12, 0.13), pom=False)),
@@ -650,7 +650,9 @@ def make_scan_boots(name):
             t = smoothstep(-0.035, 0.03, (v.co - ball).dot(fwd))
             vg(o, f"foot_{sd}").add([v.index], 1.0 - t, 'REPLACE')
             if t > 0: vg(o, f"ball_{sd}").add([v.index], t, 'REPLACE')
-        o.data.materials.clear(); o.data.materials.append(slot("boots", "scan", "@scan:" + name, (1, 1, 1)))
+        # trail dust: scans are showroom-clean (white trainers glowed on the snow)
+        dirt = {"striper_sneaker_white": (0.6, 0.57, 0.52), "reebok_dmx_rainwalker": (0.55, 0.52, 0.47)}.get(name, (0.88, 0.86, 0.82))
+        o.data.materials.clear(); o.data.materials.append(slot("boots", "scan", "@scan:" + name, dirt))
         for p_ in o.data.polygons: p_.material_index = 0; p_.use_smooth = True
         set_vcol(o, [1.0] * len(o.data.vertices))
         PIECES.append(o); LAYERS.append(o); pieces.append(o)
@@ -741,7 +743,7 @@ def make_pants(spec, boot_top):
     cut(o, (0, 0, waist), (0, 0, 1)); cut(o, (0, 0, hem), (0, 0, -1))
     decimate_to(o, 0.03); subdivide(o)
     def off(i, c, n):
-        base = 0.026 if style == "down" else 0.010
+        base = 0.026 if style == "down" else (0.019 if spec.get("rolled") else 0.010)   # porters' cargo trousers hang loose
         flare = 0.022 * smoothstep(Z_KNEE - 0.1, hem, c.z)
         return base + flare + 0.012 * smoothstep(Z_PELVIS - 0.08, Z_PELVIS - 0.25, c.z) * (style != "down")
     inflate(o, off); laplace(o, 10, 0.5)
@@ -763,7 +765,7 @@ def make_pants(spec, boot_top):
         cz = loop_centre(o, vs).z
         if cz < Z_KNEE:
             c = loop_centre(o, vs)
-            if spec.get("rolled"): extrude_loop(o, edges, [(-0.004, 0.012), (0.04, 0.0), (0.004, -0.012)], c, (0, 0, 1))   # the rolled cuff
+            if spec.get("rolled"): extrude_loop(o, edges, [(-0.003, 0.007), (0.05, 0.002), (0.003, -0.007)], c, (0, 0, 1))   # the rolled cuff: a flat folded band (1.2 cm read as a rubber ring)
             else: extrude_loop(o, edges, [(-0.006, -0.006)], c, (0, 0, 1))
     ao += [0.7] * (len(o.data.vertices) - len(ao))
     set_vcol(o, ao); uv_metres(o); finish(o, 0.004)
@@ -992,7 +994,7 @@ def make_hat(spec):
         back = Vector((hc.x, B["head"].y - FRONT * 0.08, HEAD_TOP - 0.17))
         inflate(o, lambda i, c, n: 0.028 * gaussian((c - back).length, 0, 0.06) + 0.002 * math.sin(c.z * 90 + c.x * 40))
         push_out(o, bvh_of([face]), 0.012)
-        main = slot("scarf", "main", "floral", spec["main"])
+        main = slot("scarf", "main", "scarfprint", (1, 1, 1)) if spec.get("print") else slot("scarf", "main", "floral", spec["main"])
         assign_mats(o, [main], lambda i, c: 0)
         set_vcol(o, [1.0 - 0.25 * gaussian((v.co - back).length, 0, 0.05) for v in o.data.vertices]); uv_metres(o); finish(o, 0.003)
         PIECES.append(o)
@@ -1255,6 +1257,36 @@ def make_pangden(path):
     img.filepath_raw = path; img.file_format = 'PNG'; img.save()
 
 
+def make_scarf_print(path):
+    """Printed cotton head scarf (Sherpa/Tibetan women): small cream five-petal flowers with yellow centres and green
+    leaves scattered on deep red; one 256 px tile = 12 cm of cloth. A plain floral jacquard read as a knit cap in game."""
+    import random
+    random.seed(11)
+    W = 256; C = 64
+    base = (0.50, 0.07, 0.14); petal = (0.93, 0.88, 0.76); mid = (0.95, 0.72, 0.12); leaf = (0.16, 0.40, 0.18)
+    cells = {(i, j): (random.uniform(-10, 10), random.uniform(-10, 10), random.uniform(0, 1.2), random.random() < 0.5)
+             for i in range(W // C) for j in range(W // C)}
+    img = bpy.data.images.new("T_ScarfPrint", W, W, alpha=False)
+    px = [0.0] * (W * W * 4)
+    for y in range(W):
+        for x in range(W):
+            i, j = x // C, y // C; ox, oy, rot, small = cells[(i, j)]
+            cx = i * C + C / 2 + ox; cy = j * C + C / 2 + oy
+            dx = x - cx; dy = y - cy; r = math.hypot(dx, dy); a = math.atan2(dy, dx) - rot
+            k = 0.7 if small else 1.0
+            col = base
+            for sgn in (1, -1):                      # two leaves
+                lx = dx * math.cos(rot + sgn * 2.4) + dy * math.sin(rot + sgn * 2.4); ly = -dx * math.sin(rot + sgn * 2.4) + dy * math.cos(rot + sgn * 2.4)
+                if ((lx - 15 * k) / (9 * k)) ** 2 + (ly / (4 * k)) ** 2 < 1: col = leaf
+            pr = 9 * k * (0.65 + 0.35 * abs(math.cos(2.5 * a)))      # five petals
+            if r < pr + 2.5 * k: col = petal
+            if r < 3.5 * k: col = mid
+            n = 0.92 + 0.08 * (((x * 7 + y * 13) % 5) / 4)          # weave
+            q = (y * W + x) * 4; px[q:q + 4] = [col[0] * n, col[1] * n, col[2] * n, 1.0]
+    img.pixels = px
+    img.filepath_raw = path; img.file_format = 'PNG'; img.save()
+
+
 # ---------------------------------------------------------------- build
 bt = make_scan_boots(SPEC["boots"][1]) if SPEC["boots"][0] == "scan" else make_boots(*SPEC["boots"])
 waist = make_pants(SPEC["pants"], bt) if "pants" in SPEC else Z_PELVIS + 0.115
@@ -1269,6 +1301,10 @@ os.makedirs(DEST, exist_ok=True)
 if any(s["fabric"] == "@pangden" for s in SLOTS.values()):
     try: make_pangden(os.path.join(DEST, "T_Pangden.png"))      # same seed = same image; the PNG save fails now and
     except RuntimeError as e: print("PANGDEN keep existing:", e)  # then ("internal error", a file lock) -> keep the old one
+if any(s["fabric"] == "@scarfprint" for s in SLOTS.values()):
+    for _try in range(3):
+        try: make_scarf_print(os.path.join(DEST, "T_ScarfPrint.png")); break
+        except RuntimeError as e: print("SCARFPRINT retry:", e)
 
 for o in PIECES:
     zs = [v.co.z for v in o.data.vertices]; xs = [v.co.x for v in o.data.vertices]
