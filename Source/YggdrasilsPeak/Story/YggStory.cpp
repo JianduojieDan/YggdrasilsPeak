@@ -438,6 +438,15 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 			// land the hop on top of whatever is under the spot (a person spawned a little inside a coarse collision
 			// surface could never move: a checked teleport out of an overlap fails - the porters stood frozen)
 			const FVector Side = FVector::CrossProduct(FVector::UpVector, Dir) * 140.f;
+			{	// say what blocks the way (diagnostics for people who cannot walk somewhere)
+				FHitResult B;
+				FCollisionQueryParams BQ(SCENE_QUERY_STAT(StoryNPCBlock), false, this);
+				const FCollisionShape Cap = FCollisionShape::MakeCapsule(GetCapsuleComponent()->GetScaledCapsuleRadius(), GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+				const bool bHit = GetWorld()->SweepSingleByChannel(B, Me, Me + Dir * 60.f, FQuat::Identity, ECC_Pawn, Cap, BQ);
+				UE_LOG(LogTemp, Display, TEXT("Story NPC %s stuck at %s: %s %s start-penetrating=%d normal=%s"), *Id.ToString(), *Me.ToCompactString(),
+					bHit && B.GetActor() ? *B.GetActor()->GetName() : TEXT("-"), bHit && B.GetComponent() ? *B.GetComponent()->GetName() : TEXT("-"),
+					bHit ? int32(B.bStartPenetrating) : -1, bHit ? *B.ImpactNormal.ToCompactString() : TEXT("-"));
+			}
 			FVector To = Me + Side + Dir * 120.f;
 			FHitResult H;
 			FCollisionQueryParams Q(SCENE_QUERY_STAT(StoryNPCHop), true, this);
@@ -1030,7 +1039,27 @@ float UYggStorySubsystem::DoAction(FRun& Run, const TSharedPtr<FJsonObject>& A)
 		{
 			const FRotator Face(0.f, Num(A, TEXT("yaw"), Rot.Yaw), 0.f);
 			FVector G;
-			const FVector Spot = StoryGround(World, At, 400.f, 400.f, G, nullptr) ? G + FVector(0.f, 0.f, 95.f) : At + FVector(0.f, 0.f, 100.f);
+			const bool bTile = StoryGround(World, At, 400.f, 400.f, G, nullptr);
+			FVector Spot = bTile ? G + FVector(0.f, 0.f, 95.f) : At + FVector(0.f, 0.f, 100.f);
+			if (!bTile)
+			{
+				// off the detail tiles: stand on whatever collision is there (coarse ground), not 1 m over the place height
+				FHitResult H;
+				FCollisionQueryParams Q(SCENE_QUERY_STAT(StorySpawnGround), true);
+				if (World->LineTraceSingleByChannel(H, At + FVector(0.f, 0.f, 400.f), At - FVector(0.f, 0.f, 400.f), ECC_Visibility, Q) && !Cast<APawn>(H.GetActor()))
+				{
+					Spot = H.ImpactPoint + FVector(0.f, 0.f, 95.f);
+				}
+			}
+			// two people sent to the same spot (porter1 + porter2 at porter_start) spawned inside each other and
+			// locked: queue the newcomer a step behind whoever already stands there
+			for (const TPair<FName, TWeakObjectPtr<AYggStoryNPC>>& Other : People)
+			{
+				if (Other.Value.IsValid() && Other.Value.Get() != N && FVector::Dist2D(Other.Value->GetActorLocation(), Spot) < 100.f)
+				{
+					Spot -= Face.Vector().GetSafeNormal2D() * 110.f;
+				}
+			}
 			if (!N)
 			{
 				FActorSpawnParameters SP;
@@ -1039,7 +1068,19 @@ float UYggStorySubsystem::DoAction(FRun& Run, const TSharedPtr<FJsonObject>& A)
 				// the spawn's overlap fix-up can shove a person far sideways (the porters landed 42 m off the trail,
 				// off the collision corridor, and fell out of the world): put them back on their spot
 				if (N && FVector::Dist2D(N->GetActorLocation(), Spot) > 150.f) { N->TeleportTo(Spot, Face, false, true); }
-				if (N) { People.Add(FName(*Id), N); N->Id = FName(*Id); }
+				if (N)
+				{
+					// story people never block each other (a pair spawned close together could not walk); the player still collides
+					for (const TPair<FName, TWeakObjectPtr<AYggStoryNPC>>& Other : People)
+					{
+						if (AYggStoryNPC* O = Other.Value.Get())
+						{
+							N->GetCapsuleComponent()->IgnoreActorWhenMoving(O, true);
+							O->GetCapsuleComponent()->IgnoreActorWhenMoving(N, true);
+						}
+					}
+					People.Add(FName(*Id), N); N->Id = FName(*Id);
+				}
 			}
 			else
 			{
