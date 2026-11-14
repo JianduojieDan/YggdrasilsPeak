@@ -9,8 +9,8 @@ struct HexTile {
   // safe normalize: Nanite-tessellated triangles can deliver a zero/NaN normal -> fall back instead of NaN (black triangles)
   float3 SN(float3 v, float3 f){ float l=dot(v,v); return (l>1e-12 && l<1e12) ? v*rsqrt(l) : f; }
   // per-cell UV transform: random rotation (full circle) and scale (0.35..2.8, log-uniform)
-  float2 Xf(float2 uv, float2 q, float2 o){ return Rot(uv*exp2(lerp(-1.5,1.5,q.y)), q.x*6.2831853)+o; }
-  float2 Xd(float2 d, float2 q){ return Rot(d*exp2(lerp(-1.5,1.5,q.y)), q.x*6.2831853); }
+  float2 Xf(float2 uv, float2 q, float2 o){ return Rot(uv*exp2(lerp(-0.5,0.5,q.y)), q.x*6.2831853)+o; }
+  float2 Xd(float2 d, float2 q){ return Rot(d*exp2(lerp(-0.5,0.5,q.y)), q.x*6.2831853); }
   // rock UV multiplier per cell: 90% normal rock (0.75..1.35), 10% big rock (UV x0.18..0.33 = 3..5.5x bigger)
   float SR(float2 q){ return q.y<0.9 ? lerp(0.75,1.35,q.y/0.9) : lerp(0.18,0.33,(q.y-0.9)*10.0); }
   float2 XfR(float2 uv, float2 q, float2 o){ return Rot(uv*SR(q), q.x*6.2831853)+o; }
@@ -55,6 +55,25 @@ struct HexTile {
     return ridge*ridge*smoothstep(0.35,0.7,VN(r*float2(1.0/2500.0,1.0/700.0)+9.1)); }
 };
 HexTile hx;
+// ---- wind ripples (2026-11-14): integer-hashed hex cells (~2.8 m) over the ripple map, each with a random offset,
+// a +-0.15 rad turn and +-12 % size. The colour node and the tile displacement node run the same code, so the
+// raised crests and their shading line up.
+struct WindRip {
+  float2 H2(float2 p){ int2 i=int2(floor(p)); uint h=asuint(i.x)*0x8da6b343u+asuint(i.y)*0xd8163841u;
+    h^=h>>15; h*=0x2c1b3c6du; h^=h>>12; h*=0x297a2d39u; h^=h>>15; return float2(float(h&0xffffu),float(h>>16))/65536.0; }
+  float2 R(float2 v, float a){ float s,c; sincos(a,s,c); return float2(c*v.x-s*v.y, s*v.x+c*v.y); }
+  void Cells(float2 u, out float3 w, out float2 o1, out float2 o2, out float2 o3, out float3 a, out float3 k){
+    float2 s=float2(u.x,-0.57735027*u.x+1.15470054*u.y)*1.08;
+    float2 b=floor(s); float2 f=frac(s); float z=1.0-f.x-f.y; float2 v1,v2,v3;
+    if(z>0){ w=float3(z,f.y,f.x); v1=b; v2=b+float2(0,1); v3=b+float2(1,0); }
+    else   { w=float3(-z,1.0-f.y,1.0-f.x); v1=b+1.0; v2=b+float2(1,0); v3=b+float2(0,1); }
+    o1=H2(v1); o2=H2(v2); o3=H2(v3);
+    float2 q1=H2(v1+7.0), q2=H2(v2+7.0), q3=H2(v3+7.0);
+    a=(float3(q1.x,q2.x,q3.x)-0.5)*0.3; k=exp2((float3(q1.y,q2.y,q3.y)-0.5)*0.35);
+  }
+  float3 Bl(float3 w, float3 h){ float3 b=pow(max(w,0.0),4.0)*(0.3+h); return b/max(b.x+b.y+b.z,1e-6); }
+};
+WindRip wr;
 
 float3 n=hx.SN(float3(N.xy,N.z*1.0),float3(0,0,1)); // landscape normal arrives unscaled; 1.774 = xy/z scale (1687.12/951.4, 2x landscape)
 float lf=hx.Fbm(WP.xy/30000.0); // value noise, no fixed wavelength (sine waves made visible stripes)
@@ -71,6 +90,9 @@ float2 n2[3]={n.yz,n.xz,n.xy}; float nax[3]={n.x,n.y,n.z};
 float sg[3]={n.x<0?-1.0:1.0,n.y<0?-1.0:1.0,n.z<0?-1.0:1.0};
 float2 gx[3]={float2(ddx(pc[0].x),ddx(pc[0].y)),float2(ddx(pc[1].x),ddx(pc[1].y)),float2(ddx(pc[2].x),ddx(pc[2].y))};
 float2 gy[3]={float2(ddy(pc[0].x),ddy(pc[0].y)),float2(ddy(pc[1].x),ddy(pc[1].y)),float2(ddy(pc[2].x),ddy(pc[2].y))};
+// DLSS/TSR render fewer pixels and sharpen the engine's own texture reads by the view's mip bias; a Custom node's
+// SampleGrad never got it (about 0.9 mip blurrier at 67 %) - scale our gradients the same way (2026-11-14)
+float dmul=ResolvedView.MaterialTextureDerivativeMultiply;
 // snow variety fields: which of two snow scales shows, how bumpy it is (wind-packed vs. loose)
 float sm1=hx.Fbm(WP.xy/1700.0+7.7); float sm2=hx.Fbm(WP.xy/5200.0+91.3); float sm3=hx.Fbm(WP.xy/600.0+41.9);
 float bigMix=smoothstep(0.35,0.65,sm2);
@@ -78,7 +100,7 @@ float sNStr=NStr*lerp(0.25,1.7,smoothstep(0.2,0.8,sm1*0.7+sm3*0.3));
 float3 rockC=0,rockW=0,rockM=0; float rockH=0;
 float3 snowC=0,snowW=0; float snowH=0;
 [unroll] for(int i=0;i<3;i++){
-  float2 uvR=pc[i]*rt; float2 dX=gx[i]*rt; float2 dY=gy[i]*rt;
+  float2 uvR=pc[i]*rt; float2 dX=gx[i]*(rt*dmul); float2 dY=gy[i]*(rt*dmul);
   float3 hw; float2 o1,o2,o3,q1,q2,q3; hx.Cell(uvR,hw,o1,o2,o3,q1,q2,q3);
   float2 ua=hx.XfR(uvR,q1,o1), ub=hx.XfR(uvR,q2,o2), uc=hx.XfR(uvR,q3,o3);
   float2 xa=hx.XdR(dX,q1), xb=hx.XdR(dX,q2), xc=hx.XdR(dX,q3);
@@ -97,7 +119,7 @@ float3 snowC=0,snowW=0; float snowH=0;
   float3 wn=(i==0)?tn.zxy:((i==1)?float3(tn.x,tn.z,tn.y):tn);
   rockC+=rc*wa[i]; rockW+=wn*wa[i]; rockH+=dot(hh,bw)*wa[i]; rockM+=rm3*wa[i];
   // snow layer A: small hex cells (1.8x denser than rock), random offset/rotation/size per cell
-  float2 uvS=pc[i]*st; float2 sX=gx[i]*st; float2 sY=gy[i]*st;
+  float2 uvS=pc[i]*st; float2 sX=gx[i]*(st*dmul); float2 sY=gy[i]*(st*dmul);
   float3 sw; float2 p1,p2,p3,r1,r2,r3; hx.Cell(uvS*1.8+53.1,sw,p1,p2,p3,r1,r2,r3);
   float2 sa=hx.Xf(uvS,r1,p1), sb=hx.Xf(uvS,r2,p2), sc3=hx.Xf(uvS,r3,p3);
   float2 ka=hx.Xd(sX,r1), kb=hx.Xd(sX,r2), kc=hx.Xd(sX,r3);
@@ -121,7 +143,7 @@ float3 snowC=0,snowW=0; float snowH=0;
   float2 sxB=hx.Rot(SnowNrm.SampleGrad(SnowNrmSampler,uvB,bX,bY).rg*2.0-1.0,-1.1);
   float bm=saturate(bigMix+(shB-shA)*0.8-0.4+0.4*bigMix);
   sc=lerp(sc,scB,bm); sx=lerp(sx,sxB,bm); float shS=lerp(shA,shB,bm);
-  sx*=sNStr; sx.x*=(i==2)?-sg[i]:sg[i];
+  sx*=sNStr; // no x flip (2026-11-14): our maps are (-dh/du,-dh/dv) in UE's uv; the flip mirrored the light against the height
   float sz=sqrt(saturate(1.0-dot(sx,sx)));
   float3 sn=float3(sx+n2[i],sz*nax[i]);
   float3 swn=(i==0)?sn.zxy:((i==1)?float3(sn.x,sn.z,sn.y):sn);
@@ -154,15 +176,39 @@ float es=20.0;
 float s0=hx.Sast(WP.xy), sx1=hx.Sast(WP.xy+float2(es,0)), sy1=hx.Sast(WP.xy+float2(0,es));
 float2 gS=float2(sx1-s0,sy1-s0)/es*4.0*lerp(0.22,1.0,hard)*lerp(0.2,1.0,hx.Fbm(WP.xy/2500.0+7.7)); // low and patchy: crisp even ripples read as machined metal
 // grain from the snow texture is kept faint: deep powder looks smooth, wind crust a bit rougher
-float3 micro=hx.SN(lerp(n,hx.SN(snowW,n),lerp(0.09,0.30,hard)),n);
-// soft lumps and clumps, strongest in deep powder; clumps fade out where a pixel covers more than ~3 cm (no shimmer far away)
 float fp=length(float2(ddx(WP.x),ddx(WP.y)))+length(float2(ddy(WP.x),ddy(WP.y)));
+// near the eye the snow's own grain shows (photos: crisp crust and crumbs at your feet); beyond ~10 m it fades back to
+// the calm large forms the user chose on 2026-10-22. fp = cm per pixel on the ground. (2026-11-14)
+float nearK=1.0-smoothstep(1.5,8.0,fp);
+float3 micro=hx.SN(lerp(n,hx.SN(snowW,n),lerp(lerp(0.09,0.30,hard),lerp(1.25,1.45,hard),nearK)),n); // >1 = steeper than the map, near only (P2b)
+// soft lumps and clumps, strongest in deep powder; clumps fade out where a pixel covers more than ~3 cm (no shimmer far away)
 float el=20.0, ec=15.0;
 float l0=hx.Lump(WP.xy), lx=hx.Lump(WP.xy+float2(el,0)), ly=hx.Lump(WP.xy+float2(0,el));
 float c0=hx.Clump(WP.xy), cx=hx.Clump(WP.xy+float2(ec,0)), cy=hx.Clump(WP.xy+float2(0,ec));
 float2 gL=float2(lx-l0,ly-l0)/el*lerp(18.0,14.0,hard);   // snow keeps lumps up high too; it read as a smooth sheet
 float2 gC=float2(cx-c0,cy-c0)/ec*lerp(5.0,5.0,hard);
-float3 sN=hx.SN(micro-float3(gP.x+gS.x+gL.x+gC.x,gP.y+gS.y+gL.y+gC.y,0.0),n);
+// wind ripples (2026-11-14): 8-25 cm crests, 1-2 cm high, across the prevailing westerly (Sast's 0.35 rad turned 90 deg).
+// Gentle snow only, in patches (wind-scoured fields next to smooth powder); beyond ~40 m they are below a pixel.
+float ripK=smoothstep(0.80,0.93,n.z)*w.z*smoothstep(0.40,0.66,hx.Fbm(WP.xy/1600.0+61.3))*lerp(0.75,1.0,hard);
+float ripF=1.0-smoothstep(5.0,20.0,fp);
+float2 gR=0; float ripH=0.5;
+[branch] if(ripK*ripF>0.003){
+  float rpt=1.0/RipTile; const float A0=-1.2208;
+  float2 rpU=wr.R(WP.xy*rpt,A0); float2 rpDu=wr.R(gx[2]*(rpt*dmul),A0), rpDv=wr.R(gy[2]*(rpt*dmul),A0);
+  float3 rpW,rpA,rpK3; float2 rpO1,rpO2,rpO3; wr.Cells(rpU,rpW,rpO1,rpO2,rpO3,rpA,rpK3);
+  float2 rpU1=wr.R(rpU,rpA.x)*rpK3.x+rpO1, rpU2=wr.R(rpU,rpA.y)*rpK3.y+rpO2, rpU3=wr.R(rpU,rpA.z)*rpK3.z+rpO3;
+  float2 rpX1=wr.R(rpDu,rpA.x)*rpK3.x, rpX2=wr.R(rpDu,rpA.y)*rpK3.y, rpX3=wr.R(rpDu,rpA.z)*rpK3.z;
+  float2 rpY1=wr.R(rpDv,rpA.x)*rpK3.x, rpY2=wr.R(rpDv,rpA.y)*rpK3.y, rpY3=wr.R(rpDv,rpA.z)*rpK3.z;
+  float3 rpH3=float3(RipH.SampleGrad(RipHSampler,rpU1,rpX1,rpY1).r,RipH.SampleGrad(RipHSampler,rpU2,rpX2,rpY2).r,RipH.SampleGrad(RipHSampler,rpU3,rpX3,rpY3).r);
+  float3 rpB=wr.Bl(rpW,rpH3); float rpV=rsqrt(max(dot(rpB,rpB),0.2));
+  ripH=saturate(0.5+(dot(rpH3,rpB)-0.5)*rpV);
+  // the map's normal is (-dh/du,-dh/dv) for a 3 m tile: back to world by -(A0+turn), steeper where a cell is shrunk
+  float2 rpT=wr.R(RipN.SampleGrad(RipNSampler,rpU1,rpX1,rpY1).rg*2.0-1.0,-(A0+rpA.x))*(rpK3.x*rpB.x)
+            +wr.R(RipN.SampleGrad(RipNSampler,rpU2,rpX2,rpY2).rg*2.0-1.0,-(A0+rpA.y))*(rpK3.y*rpB.y)
+            +wr.R(RipN.SampleGrad(RipNSampler,rpU3,rpX3,rpY3).rg*2.0-1.0,-(A0+rpA.z))*(rpK3.z*rpB.z);
+  gR=rpT*rpV*(300.0*rpt)*1.25*ripK*ripF; // x1.25: physically made slopes read flat at game exposure (as the crust, P2b)
+}
+float3 sN=hx.SN(micro+float3(gR,0.0)-float3(gP.x+gS.x+gL.x+gC.x,gP.y+gS.y+gL.y+gC.y,0.0),n);
 // colour: clean white powder, blue-grey crust, blue ice patches on steep high ground; blue in the hollows
 // bare blue ice only where it is both high and steep (wind strips the snow), in soft-edged patches
 float ice=(1.0-smoothstep(0.6,0.85,n.z))*smoothstep(7000.0,7800.0,elev)*smoothstep(0.45,0.8,hx.Fbm(WP.xy/4000.0+5.0))*0.8;
@@ -172,13 +218,27 @@ float hollow=saturate((0.55-snowH)*1.6)*0.08+saturate(0.6-p0*0.6)*0.35*(1.0-hard
 hollow=saturate(hollow+saturate(rm*(1.0-rm)*4.0)*0.5); // blue edge where snow meets rock: the side of the snow layer
 sCol*=lerp(float3(1,1,1),float3(0.84,0.91,1.0),hollow);
 sCol*=lerp(0.95,1.03,sm3*0.5+sm1*0.5);
+// light scattered inside the snow: its own low spots a little blue and darker, near the eye only (2026-11-14)
+float cav=saturate((0.47-snowH)*5.0)*nearK; // cracks and dips only (P2b)
+sCol*=lerp(float3(1,1,1),float3(0.84,0.91,1.0),cav*0.45); // softer (P2d)
 float sRough=lerp(lerp(0.86,0.93,sm1),lerp(0.80,0.90,sm3),hard); // wind crust is still matte; 0.6 here made a metallic sheen at low sun
 sRough=lerp(sRough,0.45,ice);
+sRough=lerp(sRough,max(sRough-0.14,0.68),saturate((snowH-0.5)*3.0)*nearK*hard); // wind-polished crests, matte hollows
+// ripple troughs keep a little blue shade, ripple crests are wind-polished (2026-11-14)
+float rpC=saturate((0.42-ripH)*3.0)*ripK*ripF;
+sCol*=lerp(float3(1,1,1),float3(0.86,0.92,1.0),rpC*0.7);
+sRough=lerp(sRough,max(sRough-0.08,0.70),saturate((ripH-0.6)*3.0)*ripK*ripF);
 // sparkle: a few ice-crystal facets per square decimetre catch the sun, near the camera only
-float2 gc=floor(WP.xy/1.6); float2 gh=hx.Hash(gc+0.37);
-float spark=step(0.988,gh.x)*(1.0-smoothstep(1.0,3.2,fp))*(1.0-ice);
-sRough=lerp(sRough,0.08,spark);
-sN=hx.SN(lerp(sN,hx.SN(float3((gh.y-0.5)*0.8,(frac(gh.y*7.3)-0.5)*0.8,1.0),n),spark),n);
+// (2026-11-14) a few facets per cm2 face exactly half-way between the eye and the sun, so they really flash; which ones
+// flash re-rolls as the angle changes, so they twinkle as you walk. Integer hash: sin-hash breaks on world-size ids (#55).
+float3 sunG=normalize(ResolvedView.AtmosphereLightDirection[0].xyz);
+float3 Hs=normalize(sunG+Parameters.CameraVector);
+uint2 gi=uint2(int2(floor(WP.xy/0.7))+int2(1<<20,1<<20));
+uint gh=(gi.x*0x8da6b343u)^(gi.y*0xd8163841u)^(uint(floor(Hs.x*18.0)+64.0)*0x2c1b3c6du)^(uint(floor(Hs.y*18.0)+64.0)*0x297a2d39u);
+gh^=gh>>15; gh*=0x2c1b3c6du; gh^=gh>>12;
+float spark=step(0.9975,float(gh&0xffffu)/65536.0)*step(0.75,dot(Hs,n))*(1.0-smoothstep(0.35,0.9,fp))*(1.0-ice); // rare, near only (v1 sprinkled dots everywhere)
+sN=hx.SN(lerp(sN,Hs,spark),n);
+sRough=lerp(sRough,0.12,spark);
 
 float3 col=lerp(sCol,rockC,rm);
 col*=lerp(0.96,1.03,lf);
@@ -187,10 +247,10 @@ Normal=hx.SN(lerp(sN,rN,rm),n);
 // lit/unlit in stripes and triangle-shaped blocks (VSM acne). Fade the sun's direct light out a little early on snow
 // there (remove the sun-facing part of the normal), so those stripes land on snow that is already in soft shade.
 float3 sunL=normalize(ResolvedView.AtmosphereLightDirection[0].xyz);
-float term=(1.0-smoothstep(0.03,0.30,dot(n,sunL)))*(1.0-rm);
+float term=0.0; // route tiles are 1 m triangles: the 17 m terminator hack only flattened raking-sun detail (2026-11-14)
 Normal=hx.SN(Normal-sunL*max(dot(Normal,sunL),0.0)*term,n);
 Roughness=lerp(sRough,rockM.g,rm);
-AO=lerp(lerp(1.0,0.9,hollow),rockM.r,rm);
+AO=lerp(lerp(1.0,0.9,hollow)*lerp(1.0,0.78,cav)*lerp(1.0,0.8,rpC),rockM.r,rm);
 RockMask=rm;
 SnowOut=sCol*lerp(0.96,1.03,lf); // fed to UDS so its weather-snow layer looks like ours
 return max(col,0.0);

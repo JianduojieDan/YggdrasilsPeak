@@ -9,7 +9,7 @@ struct HexTile {
   // safe normalize: Nanite-tessellated triangles can deliver a zero/NaN normal -> fall back instead of NaN (black triangles)
   float3 SN(float3 v, float3 f){ float l=dot(v,v); return (l>1e-12 && l<1e12) ? v*rsqrt(l) : f; }
   // per-cell UV transform: random rotation (full circle) and scale (0.35..2.8, log-uniform)
-  float2 Xf(float2 uv, float2 q, float2 o){ return Rot(uv*exp2(lerp(-1.5,1.5,q.y)), q.x*6.2831853)+o; }
+  float2 Xf(float2 uv, float2 q, float2 o){ return Rot(uv*exp2(lerp(-0.5,0.5,q.y)), q.x*6.2831853)+o; }
   float2 Xd(float2 d, float2 q){ return Rot(d*exp2(lerp(-1.5,1.5,q.y)), q.x*6.2831853); }
   // rock UV multiplier per cell: 90% normal rock (0.75..1.35), 10% big rock (UV x0.18..0.33 = 3..5.5x bigger)
   float SR(float2 q){ return q.y<0.9 ? lerp(0.75,1.35,q.y/0.9) : lerp(0.18,0.33,(q.y-0.9)*10.0); }
@@ -26,6 +26,25 @@ struct HexTile {
   float3 Blend(float3 w, float3 h){ float3 b=pow(max(w,0.0),4.0)*(0.3+h); return b/max(b.x+b.y+b.z,1e-6); }
 };
 HexTile hx;
+// ---- wind ripples (2026-11-14): integer-hashed hex cells (~2.8 m) over the ripple map, each with a random offset,
+// a +-0.15 rad turn and +-12 % size. The colour node and the tile displacement node run the same code, so the
+// raised crests and their shading line up.
+struct WindRip {
+  float2 H2(float2 p){ int2 i=int2(floor(p)); uint h=asuint(i.x)*0x8da6b343u+asuint(i.y)*0xd8163841u;
+    h^=h>>15; h*=0x2c1b3c6du; h^=h>>12; h*=0x297a2d39u; h^=h>>15; return float2(float(h&0xffffu),float(h>>16))/65536.0; }
+  float2 R(float2 v, float a){ float s,c; sincos(a,s,c); return float2(c*v.x-s*v.y, s*v.x+c*v.y); }
+  void Cells(float2 u, out float3 w, out float2 o1, out float2 o2, out float2 o3, out float3 a, out float3 k){
+    float2 s=float2(u.x,-0.57735027*u.x+1.15470054*u.y)*1.08;
+    float2 b=floor(s); float2 f=frac(s); float z=1.0-f.x-f.y; float2 v1,v2,v3;
+    if(z>0){ w=float3(z,f.y,f.x); v1=b; v2=b+float2(0,1); v3=b+float2(1,0); }
+    else   { w=float3(-z,1.0-f.y,1.0-f.x); v1=b+1.0; v2=b+float2(1,0); v3=b+float2(0,1); }
+    o1=H2(v1); o2=H2(v2); o3=H2(v3);
+    float2 q1=H2(v1+7.0), q2=H2(v2+7.0), q3=H2(v3+7.0);
+    a=(float3(q1.x,q2.x,q3.x)-0.5)*0.3; k=exp2((float3(q1.y,q2.y,q3.y)-0.5)*0.35);
+  }
+  float3 Bl(float3 w, float3 h){ float3 b=pow(max(w,0.0),4.0)*(0.3+h); return b/max(b.x+b.y+b.z,1e-6); }
+};
+WindRip wr;
 struct MorHexFx {
 // ---- detail tiles: moraine sampled in randomly rotated / offset hexagonal cells (no visible 4.5 m repeat).
 // The same function runs in the displacement node, so the raised stones line up with the visible ones.
@@ -62,8 +81,8 @@ float rockH=0,snowH=0;
   float2 uvR=pc[i]*rt; float3 hw; float2 o1,o2,o3,q1,q2,q3; hx.Cell(uvR,hw,o1,o2,o3,q1,q2,q3);
   float3 hh=float3(RockH.SampleLevel(RockHSampler,hx.XfR(uvR,q1,o1),1).r,RockH.SampleLevel(RockHSampler,hx.XfR(uvR,q2,o2),1).r,RockH.SampleLevel(RockHSampler,hx.XfR(uvR,q3,o3),1).r);
   rockH+=dot(hh,hx.Blend(hw,hh))*wa[i];
-  float2 uvS=pc[i]*st; float3 sw; float2 p1,p2,p3,r1,r2,r3; hx.Cell(uvS+53.1,sw,p1,p2,p3,r1,r2,r3);
-  float3 sh3=float3(SnowH.SampleLevel(SnowHSampler,hx.Xf(uvS,r1,p1),0).r,SnowH.SampleLevel(SnowHSampler,hx.Xf(uvS,r2,p2),0).r,SnowH.SampleLevel(SnowHSampler,hx.Xf(uvS,r3,p3),0).r);
+  float2 uvS=pc[i]*st; float3 sw; float2 p1,p2,p3,r1,r2,r3; hx.Cell(uvS*1.8+53.1,sw,p1,p2,p3,r1,r2,r3); // same cells as the colour node (2026-11-14)
+  float3 sh3=float3(SnowH.SampleLevel(SnowHSampler,hx.Xf(uvS,r1,p1),3).r,SnowH.SampleLevel(SnowHSampler,hx.Xf(uvS,r2,p2),3).r,SnowH.SampleLevel(SnowHSampler,hx.Xf(uvS,r3,p3),3).r); // mip 3 = 8 mm
   snowH+=dot(sh3,hx.Blend(sw,sh3))*wa[i];
 }
 float hb=slopeM*1.6-0.3+(rockH-snowH)*0.6;
@@ -83,5 +102,26 @@ if (trD > 0.001)
   float3 hb3 = pow(max(hw, 0.0), 3.0) * (0.25 + l3); hb3 /= max(hb3.x + hb3.y + hb3.z, 1e-5);
   float lum = dot(l3, hb3);
   d += (lum - 0.45) * TileRubbleCm * trD;
+}
+// wind ripples stand up too (2026-11-14): same cells and height as the colour node, read at mip 3 (1.2 cm), within
+// ~35 m of the player only (Area = the trail map around the player); further out they are below a pixel. Height is
+// not scaled with the cell size: the colour node's slopes grow with it instead, so the two match.
+if (Area.w > 0.5)
+{
+  float rpE=6326.3+(WP.z-129770.0)/100.0;
+  float rpHard=saturate(smoothstep(6600.0,7600.0,rpE+(hx.Fbm(WP.xy/9000.0+3.3)-0.5)*600.0)*0.9+(1.0-smoothstep(0.72,0.92,n.z))*0.55);
+  float ripK=smoothstep(0.80,0.93,n.z)*w.z*smoothstep(0.40,0.66,hx.Fbm(WP.xy/1600.0+61.3))*lerp(0.75,1.0,rpHard)
+            *(1.0-smoothstep(2500.0,4000.0,length(WP.xy-Area.xy)))*(1.0-rm)*(1.0-saturate(TileRock));
+  if (ripK>0.003)
+  {
+    float rpt=1.0/RipTile; const float A0=-1.2208;
+    float2 rpU=wr.R(WP.xy*rpt,A0); float3 rpW,rpA,rpK3; float2 rpO1,rpO2,rpO3; wr.Cells(rpU,rpW,rpO1,rpO2,rpO3,rpA,rpK3);
+    float3 rpH3=float3(RipH.SampleLevel(RipHSampler,wr.R(rpU,rpA.x)*rpK3.x+rpO1,3).r,
+                       RipH.SampleLevel(RipHSampler,wr.R(rpU,rpA.y)*rpK3.y+rpO2,3).r,
+                       RipH.SampleLevel(RipHSampler,wr.R(rpU,rpA.z)*rpK3.z+rpO3,3).r);
+    float3 rpB=wr.Bl(rpW,rpH3); float rpV=rsqrt(max(dot(rpB,rpB),0.2));
+    float ripH=saturate(0.5+(dot(rpH3,rpB)-0.5)*rpV);
+    d+=(ripH-0.5)*3.0*1.25*ripK; // map 0..1 = -1.5..+1.5 cm; x1.25 as the shading
+  }
 }
 return saturate(0.5+d/400.0);

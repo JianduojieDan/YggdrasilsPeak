@@ -47,3 +47,15 @@ before/after). Every item's timing is in `Docs/Development/2026-11-14-overnight.
 - One heavy job on the laptop at a time; agents wrote code in parallel in the cloud, then **one** build for a whole batch (38 s). The first batch of 12 agents took 68 minutes; the build, title, pack and feet tests then took 15 minutes in total.
 - Testing in the standalone game was faster than the editor. The route check replaced hours of walking with 8 minutes.
 - What cost time: my two mistakes (7 minutes), material text with Windows line endings (1 minute), an editor that refuses renames of things named in the config (6 minutes to work around).
+
+## Morning addendum (06:01-06:25, after the usage reset; game and editor were closed)
+
+- **Snow wind ripples are in** (diagnosis step P2): 8-25 cm crests, 1-2 cm high, lying across the prevailing wind,
+  on gentle snow only, in fields with calm smooth snow between them. On the route tiles they have real height within
+  ~35 m of you, like the rock. Our own ripple texture, no download. Script: `Tools/Materials/snow_ripples_p2c.py`
+  (+ `_p2d` tuning).
+- **Crust cracks softer**: in shade they drew dark lines like dried mud (the risk I mentioned above). Their near-feet
+  boost went from 1.6-1.9x to 1.25-1.45x (`Tools/Materials/snow_crust_p2e.py`), and a sign error in the crust's
+  lighting is fixed (it lit cracks like ridges, against the real height).
+- Pictures: `Saved/Review/snow_ripples_2026-11-14.jpg` (last night vs now, sun and shade). **Your call**: if the
+  ripples are too strong, too busy or in the wrong places, tell me and it is one number each.
