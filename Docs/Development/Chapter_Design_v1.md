@@ -1,6 +1,6 @@
 # Yggdrasil's Peak: The Climb, Chapter Design v1 (14 hours)
 
-Version 1.0 · 2026-11-14 · written for the author to react to and cut.
+Version 1.1 · 2026-11-14 · written for the author to react to and cut. (1.1: section 1.6, the loops, from research.)
 Builds on `Docs/Development/Phase1_Design_Plan.md` (story, endings, stage template) and **changes two of its
 decisions** at the author's request (section 1.2).
 
@@ -113,6 +113,95 @@ and chapter in this document is checked against them.
 - **Systemic**: happens when the systems produce it (weather, body, supplies, other people's states). Most of the
   tension.
 - **Chosen**: the player starts it (detours, help, risk lines, own lines). Most of the story.
+
+### 1.6 The loops: why a player cannot stop [Proposed, from research, sources in section 13]
+
+**[Established]** The author (2026-11-14): there are known game-design mechanisms that, completed as a loop, make a
+player obsessed. Design the game around them.
+
+**What the research says** (summarised; sources in section 13):
+
+| Finding | What it means for us |
+|---|---|
+| Games run on **nested loops**: a seconds-long core loop, a minutes-to-an-hour loop, a long progression loop. Each feeds the next, and when a game is not fun, the fault is usually in the smallest loop | build and test the smallest loop first |
+| The **compulsion loop** is anticipation → activity → reward, and the **anticipation** is the most gripping part. Unpredictable rewards hold attention most strongly; that is honest when the unpredictability comes from gameplay and exploitative when it is tied to money | our surprises come from the mountain's systems, never from loot or shops |
+| Players enjoy games, and feel better after them, when three needs are met: **autonomy** (real choice), **competence** (getting better, fair feedback) and **relatedness** (connection to others). Loneliness counts as frustration of the third | the author's "extremely lonely" is a known motivation gap; Nima is the fix |
+| An **unfinished task** stays on the mind (the Zeigarnik effect, the "one more turn" of strategy games). Healthy open loops are ones the player wants closed and can close; loops that never close turn into anxiety | every chapter ends on a question, and every question gets answered |
+| **Emergent stories** (RimWorld's "story generator"): a small cast of named characters, a simulation of health and relationships simple enough to watch, and players read more story into it than is really there | exactly our systems: a few named people, bodies and trust; the journal tells it back |
+| **Cairn's** strength is its climb-and-camp loop: the bivouac is where the survival systems matter most, preparing in the tent for the next climb | camp is not a pause; it is half the loop |
+| **Death Stranding:** route planning, load and terrain make every trip a decision; its weak point is when planning stops mattering late in the game and it becomes "hold the stick forward" | conditions must keep escalating so planning never stops mattering |
+| **The Long Dark:** scarcity drives action, and rest is a resource; its weak point is repetition without an end goal | stocks are limited; the summit and the parents are always the goal |
+
+#### The five loops of Yggdrasil's Peak
+
+Each loop sits inside the next one. A reward in a small loop is progress in the bigger one.
+
+**Loop 1 · The step** (seconds). *Read → act → the body answers.*
+Read the ground ahead (snow, ice, rock, the next anchor, the next rung) → act (step, clip, push the jumar, rest-step,
+breathe) → the body answers at once (breath, heartbeat, the SpO₂ number, stamina). The small rewards: the clean click
+of a clip, a steady rhythm, breath settling. The small anticipation: the next anchor fifteen metres up.
+**Today this loop is weak** (walking only; ropes clip by themselves), so it is the biggest risk in the whole design.
+Built by: clipping by hand, rest-step, the jumar rhythm, feet that land on the slope (exists), crampon, rope and breath
+sounds (4.8).
+
+**Loop 2 · The stretch** (2-10 minutes). *See → decide → commit → outcome.*
+See the next thing (a serac zone, a ladder, the weather climbing the valley, a queue) → decide (line, timing, oxygen
+flow, wait or go) → commit under pressure (the serac clock, a gust, the wheel's countdown) → outcome: safe (relief), a
+close call (adrenaline, and something worth writing tonight), or a cost (time, an injury, a bottle). The
+unpredictability comes from systems, so it is the honest kind. The anticipation (the creak of a ladder, "MOVE!", the
+wheel spinning) is the gripping part.
+
+**Loop 3 · The day** (one chapter, camp to camp, 40-100 minutes). *Plan → climb → arrive → tend → write → wonder.*
+**This is the heart of the game.**
+- **Plan:** forecast, start time, what to carry.
+- **Climb:** a chain of stretches (loop 2).
+- **Arrive:** reaching camp is the strongest reward in the game, as every real climber knows: the tent, the stove's
+  roar, warmth.
+- **Tend:** water, food, Nima, the radio call, injuries, tomorrow's loads. As in Cairn's bivouac, this is where the
+  survival systems matter most.
+- **Write:** the journal turns the day into a page of the player's story (4.12). The reward is the story itself.
+- **Wonder:** tomorrow's open question (the forecast, the cough, a light on the ridge). That is the open loop that
+  makes "one more day" irresistible. Then sleep, and the next plan.
+
+**Loop 4 · The rotation** (several days, three or four chapters). *Go high → stock → come down → recover → plan.*
+Progress the player can see, earned in loops 2 and 3 and spent on the next push:
+- **The body's ceiling:** "adapted to 6,200 m" on the oximeter screen; a higher ceiling means better SpO₂ and longer
+  stretches next time.
+- **Camp stocks:** "Camp 2: 3 bottles, 6 rations, 2 gas."
+- **Route knowledge:** the Icefall's state known after helping the doctors.
+- **Trust:** Nima's and Dr. Hale's.
+These are the game's "upgrades", but they are real physiology and real logistics, not points.
+
+**Loop 5 · The climb** (the whole game). *A question → evidence → doubt → the answer.*
+Every chapter answers one small question and opens a bigger one (the names on the stone → their tent → wood in the
+ice → page 3 → the limb → page 2 → the light). Alongside: the people's stories (Nima, Elena, Ji-woo, the trekker)
+and the book growing night by night. It closes with the ending the player shaped, and a new climb can be different
+(other choices, other lines, another book).
+
+#### How the three needs are met
+
+| Need | In this game |
+|---|---|
+| Autonomy | your own line off the rope, start times, the window, who to help, the oxygen dial, the turnaround time; never one obviously right answer |
+| Competence | mastering the step loop (clean clips, rhythm), a rotation plan that works, numbers the player can read (oximeter, thermometer), deaths that are fair |
+| Relatedness | Nima, Dr. Hale, the other team, the aunt; the bond is built by play (catching each other, sharing loads), not only by dialogue |
+
+#### Eight rules that follow
+
+1. **Loop 1 must be fun on its own.** Build and test it first (the vertical slice, section 9).
+2. **Every reward sets up the next anticipation:** camp sets up tomorrow's question; the summit sets up the descent.
+3. **Surprises come from systems,** never from random loot.
+4. **Every loop closes:** camp closes the day, a stocked camp and a ready body close the rotation, the ending and the
+   book close the climb. No chores that never end.
+5. **Planning never stops mattering** (the Death Stranding lesson): conditions escalate with altitude, and no item
+   makes walking trivial.
+6. **Scarcity drives action** (the Long Dark lesson): stocks and gas run out; rest is a resource.
+7. **A small named cast, simulated bodies and relationships** (the RimWorld lesson); the journal tells their story.
+8. **Measure the loops** (section 11): time between clips, between decisions (under 6 minutes), per chapter, and
+   progress per rotation.
+
+**What we do not do:** no rewards for money, no daily log-ins, no timers that punish being away, no loops that never
+close. The pull comes from the climb itself.
 
 ---
 
@@ -1330,3 +1419,33 @@ The session monitor (exists) gets a few more fields, and every play-test is judg
     Patthar, and the Balcony, South Summit and Hillary Step on our terrain.
 11. **The last descent as an epilogue** after the summit (Chapter 17), or walk all of it?
 12. **Should Nima see the ghosts** at the very end?
+
+## 13. Sources (section 1.6)
+
+Loops and motivation:
+- Nested loops (micro, macro, meta): [Medium, HAMSOFT](https://medium.com/@HAMSOFT/game-design-using-micro-macro-meta-grouping-bff507b1c77e),
+  [Games Alchemy](https://gamesalchemy.substack.com/p/48-macro-and-micro-designing-the),
+  [hitem3d blog](https://blog.hitem3d.ai/blog/What-is-a-Game-Loop-The-Core-Concept-Every-Game-Designer-Must-Understand)
+- The compulsion loop and its ethics: [GameAnalytics](https://www.gameanalytics.com/blog/the-compulsion-loop-explained),
+  [Game Developer: exploitative design](https://www.gamedeveloper.com/design/exploitative-game-design-beyond-the-f2p-debate),
+  [Deceptive Design, ch. 11](https://deceptive.design/book/contents/chapter-11)
+- Self-determination theory and games (Ryan, Rigby, Przybylski 2006):
+  [paper (PDF)](https://www.rochester.edu/warner/lida/wp-content/uploads/2022/11/02bfe513dd59366750000000.pdf),
+  [Przybylski, Ryan, Rigby 2009 (PDF)](https://selfdeterminationtheory.org/wp-content/uploads/2014/04/2009_PrzbylskiRyanRigby_PSPB-1.pdf),
+  [Rigby and Ryan 2017 (PDF)](https://selfdeterminationtheory.org/wp-content/uploads/2020/10/2017_RigbyRyan_TimeWellSpent.pdf)
+- The Zeigarnik effect and open loops: [Psychology of Games](https://www.psychologyofgames.com/2013/03/the-zeigarnik-effect-and-quest-logs),
+  [Yu-kai Chou](https://yukaichou.com/behavioral-analysis/zeigarnik-effect-incomplete-tasks-memory-tension/)
+- Emergent stories (RimWorld): [Rock Paper Shotgun, via reader](https://hn.jakechampion.name/reader/https://www.rockpapershotgun.com/2016/08/12/how-rimworld-generates-great-stories),
+  [Game Developer](https://gamedeveloper.com/design/rimworld-dwarf-fortress-and-procedurally-generated-story-telling),
+  [Game Developer: the simulation dream](https://gamedeveloper.com/design/the-simulation-dream)
+
+Games compared:
+- Cairn (2026): [Slant](https://www.slantmagazine.com/games/cairn-review/), [The Outerhaven](https://www.theouterhaven.net/cairn-review-survive-the-climb/),
+  [PC Gamer](https://pcgamer.com/games/action/cairn-review)
+- Death Stranding: [Game Developer design discussion](https://www.gamedeveloper.com/design/a-design-discussion-on-death-stranding),
+  [Epilogue Gaming](https://epiloguegaming.com/distinctly-human-a-critical-review-of-death-stranding/)
+- The Long Dark: [Game Design Skills: survival](https://gamedesignskills.com/game-design/survival/),
+  [PC Gamer interview](https://pcgamer.com/the-long-darks-creative-director-explains-why-it-doesnt-need-zombies/2)
+
+Many of these are blogs and reviews, not peer-reviewed research; the self-determination papers and the Zeigarnik
+work are the strongest evidence, and the loop models are practitioners' rules of thumb.
