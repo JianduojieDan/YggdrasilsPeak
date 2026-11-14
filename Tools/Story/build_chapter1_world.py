@@ -214,48 +214,82 @@ for sgn in (-1, 1):
     box(O, RY, 0, sgn * half / 2, H_ + 20 + rise / 2, L_ + 70, half / math.cos(math.radians(pitch)) + 6, 5, "PBR_Roof", roll=-sgn * pitch)
 for sgn in (-1, 1):
     box(O, RY, sgn * (L_ / 2 - 6), 0, H_ + 14 + rise * 0.35, 10, W_ - 40, rise * 0.7, "PBR_Wood")
-# stove, pipe, kettle, the ember glow
+# ---- furniture and things: downloaded Poly Haven models (CC0), placed like a Khumbu kitchen
+PHD = "/Game/Story/PH"
+def ph(i, name=None):
+    return unreal.load_asset(f"{PHD}/{i}/{i}/StaticMeshes/{name or i}")
+def put(i, x, y, z, yaw=0.0, s=1.0, name=None, tags=(), folder="Story/Ch1/Room"):
+    m = ph(i, name)
+    if not m: print("missing model", i, name); return None
+    a = EAS.spawn_actor_from_object(m, local(O, RY, x, y, z), R(0, 0, RY + yaw))
+    a.set_actor_scale3d(V(s, s, s)); a.tags = ["Ch1"] + list(tags); a.set_folder_path(folder)
+    return a
+def put_set(i, parts, x, y, z, yaw=0.0, s=1.0):
+    for n in parts: put(i, x, y, z, yaw, s, n)
 SX, SY = -95.0, 95.0
-cyl(O, RY, SX, SY, 0, 62, 62, "Iron"); cyl(O, RY, SX, SY, 62, 66, 4, "Iron")
-cyl(O, RY, SX - 12, SY, 66, 12, H_ + 70 - 66, "Iron")
-cyl(O, RY, SX + 14, SY + 10, 66, 22, 18, "Copper")
-box(O, RY, SX + 31, SY, 20, 4, 26, 16, "Ember", tags=("ember",))
-box(O, RY, 20, -20, 11, 180, 120, 2, "Rug")
-light(unreal.PointLight, local(O, RY, SX + 60, SY, 45), R(0, 0, 0), 420.0, (255, 140, 70, 255), 700, ("roomlight",))
-# benches with rugs, low tables
-for sgn in (-1, 1):
-    box(O, RY, 10 + (60 if sgn > 0 else 0), sgn * (iW / 2 - 32), 21, iL - 120 - (120 if sgn > 0 else 0), 64, 42, "PBR_Wood")
-    box(O, RY, 10 + (60 if sgn > 0 else 0), sgn * (iW / 2 - 32), 44, iL - 140 - (120 if sgn > 0 else 0), 58, 4, "Rug")
-    box(O, RY, 40, sgn * (iW / 2 - 100), 22, 110, 55, 44, "PBR_Wood")
-# altar cabinet on the back wall, butter lamps, thangka, the photo wall, a khata over the middle photo
-AX = -(iL / 2) + 24
-box(O, RY, AX, 0, 60, 46, 220, 120, "PBR_Wood")
-box(O, RY, AX + 2, 0, 121, 50, 226, 4, "PBR_Wood")
-for i, y in enumerate((-60, -30, 0, 30, 60)):
-    cyl(O, RY, AX + 8, y, 123, 7, 6, "Copper"); cyl(O, RY, AX + 8, y, 129, 2.4, 3.5, "Flame", shadow=False)
-light(unreal.PointLight, local(O, RY, AX + 40, 0, 140), R(0, 0, 0), 90.0, (255, 170, 90, 255), 360, ("roomlight",))
-spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, 0, 185), R(90, 0, RY - 90), (0.7, 1.0, 1), MI("Thangka"), (), "Story/Ch1/Room", collide=False)
-photos = [("Photo_Khumbu", -78), ("Photo_BaseCamp", 78), ("Photo_Valley", -78 - 10)]
-spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, -78, 160), R(90, 0, RY - 90), (0.42, 0.32, 1), MI("Photo_Khumbu"), ("photo_wall",), "Story/Ch1/Room", collide=False)
-spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, 78, 160), R(90, 0, RY - 90), (0.42, 0.32, 1), MI("Photo_BaseCamp"), ("photo_wall",), "Story/Ch1/Room", collide=False)
-spawn(KHATA, local(O, RY, -(iL / 2) + 9, 0, 236), R(0, 0, RY + 90), (0.55, 0.55, 0.55), MI("Silk"), (), "Story/Ch1/Room", collide=False)
-# copper pots on a wall shelf (+y wall, by the back), a water drum, the father's duffel and photo on the bench
-box(O, RY, -150, iW / 2 - 16, 160, 150, 30, 4, "PBR_Wood")
-for i, (x, d, h) in enumerate(((-205, 30, 26), (-175, 24, 20), (-150, 34, 30), (-122, 20, 16), (-100, 26, 22))):
-    cyl(O, RY, x, iW / 2 - 18, 162, d, h, "Copper")
-cyl(O, RY, 150, iW / 2 - 40, 0, 50, 70, "Copper")
-cyl(O, RY, 130, -(iW / 2 - 34), 46 + 20, 40, 78, "TentOrange", pitch=90.0, tags=("duffel",))
-spawn(PLANE, local(O, RY, 70, -(iW / 2 - 40), 47), R(0, 0, RY + 12), (0.14, 0.105, 1), MI("Photo_Icefall"), ("photo_father",), "Story/Ch1/Room", collide=False)
+put("barrel_stove", SX, SY, 0, 90)
+cyl(O, RY, SX - 10, SY, 95, 13, H_ + 70 - 95, "Iron")                       # chimney through the roof
+put("brass_pot_02", SX + 6, SY - 4, 92, 30)
+light(unreal.PointLight, local(O, RY, SX + 55, SY, 40), R(0, 0, 0), 420.0, (255, 140, 70, 255), 700, ("roomlight",))
+box(O, RY, 20, -20, 11, 200, 130, 2, "Rug")
+# the family altar: painted cabinet on the back wall, seven water offerings, butter lamps, the thangka and photos above
+AX = -(iL / 2) + 30
+put_set("painted_wooden_cabinet", ["painted_wooden_cabinet", "painted_wooden_cabinet_door_01", "painted_wooden_cabinet_door_02",
+        "painted_wooden_cabinet_drawer_01", "painted_wooden_cabinet_drawer_02"], AX, 0, 0, -90)
+for k, y in enumerate((-45, -30, -15, 0, 15, 30, 45)):
+    put("brass_goblets", AX + 6, y, 118, k * 40, 0.5, "brass_goblet_03")
+put("brass_diya_lantern", AX + 12, -55, 118, 0, 0.9); put("brass_diya_lantern", AX + 12, 55, 118, 0, 0.9)
+light(unreal.PointLight, local(O, RY, AX + 40, 0, 150), R(0, 0, 0), 90.0, (255, 170, 90, 255), 360, ("roomlight",))
+spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, 0, 190), R(90, 0, RY - 90), (0.56, 0.86, 1), MI("Thangka_Shakyamuni"), (), "Story/Ch1/Room", collide=False)
+spawn(PLANE, local(O, RY, 150, -(iW / 2) + 1.5, 160), R(90, 0, RY), (0.5, 0.8, 1), MI("Thangka_MountMeru"), (), "Story/Ch1/Room", collide=False)
+box(O, RY, SX + 26, SY, 30, 3, 22, 14, "Ember", tags=("ember",))                        # the stove's glowing door
+spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, -82, 165), R(90, 0, RY - 90), (0.42, 0.32, 1), MI("Photo_Khumbu"), ("photo_wall",), "Story/Ch1/Room", collide=False)
+spawn(PLANE, local(O, RY, -(iL / 2) + 1.5, 82, 165), R(90, 0, RY - 90), (0.42, 0.32, 1), MI("Photo_BaseCamp"), ("photo_wall",), "Story/Ch1/Room", collide=False)
+spawn(KHATA, local(O, RY, -(iL / 2) + 9, 0, 240), R(0, 0, RY + 90), (0.5, 0.5, 0.5), MI("Silk"), (), "Story/Ch1/Room", collide=False)
+# benches with rugs along the -y wall, low tables with thermoses and tea things
+for bx in (-30, 95):
+    put("painted_wooden_bench", bx, -(iW / 2 - 28), 0, 0)
+box(O, RY, 32, -(iW / 2 - 30), 45, 230, 46, 4, "Rug")
+put("chinese_tea_table", 40, -(iW / 2 - 105), 0, 0, 0.75)
+put("plastic_thermos", 30, -(iW / 2 - 100), 38, 20); put("modified_thermos", 52, -(iW / 2 - 112), 38, 70)
+put("carved_wooden_plate", 45, -(iW / 2 - 95), 38); put("jug_01", 62, -(iW / 2 - 92), 38, 120)
+# the kitchen wall (+y): tall painted dresser and shelves lined with brass and copper
+put_set("painted_wooden_cabinet_02", ["painted_wooden_cabinet_02", "painted_wooden_cabinet_02_door", "painted_wooden_cabinet_02_drawer"], 60, iW / 2 - 36, 0, 90, 0.88)
+put("painted_wooden_shelves", -170, iW / 2 - 22, 0, 90)
+for k, (i, x, z) in enumerate((("brass_pot_01", -182, 40), ("brass_vase_02", -158, 40), ("brass_pan_01", -170, 76), ("metal_jug", -160, 76),
+                                ("brass_vase_03", -185, 76), ("brass_vase_04", -176, 110), ("brass_vase_01", -150, 113))):
+    put(i, x, iW / 2 - 22, z, k * 35)
+for k, (i, x) in enumerate((("brass_pot_01", 40), ("brass_vase_02", 62), ("brass_vase_01", 84))):
+    put(i, x, iW / 2 - 36, 226 * 0.88, k * 50)
+# the brass wall: a long shelf on the -y wall above the benches, lined with brass and copper (the pride of a Sherpa kitchen)
+box(O, RY, 0, -(iW / 2 - 14), 168, 320, 26, 4, "PBR_Wood"); box(O, RY, 0, -(iW / 2 - 14), 122, 320, 26, 4, "PBR_Wood")
+row = ["brass_pot_01", "brass_vase_02", "metal_jug", "brass_vase_01", "brass_pot_01", "jug_01", "brass_vase_02", "brass_pot_01", "metal_jug", "brass_vase_03"]
+for k, i in enumerate(row):
+    put(i, -150 + k * 33, -(iW / 2 - 15), 170, k * 37, 0.85)
+for k, i in enumerate(["brass_goblets", "brass_vase_04", "brass_pan_01", "brass_vase_03", "brass_goblets", "brass_vase_04", "brass_pan_01"]):
+    put(i, -140 + k * 45, -(iW / 2 - 15), 124, k * 51, 0.85, "brass_goblet_03" if i == "brass_goblets" else None)
+for bx in (-60, 10, 80, 140):
+    box(O, RY, bx, -(iW / 2 - 40), 52, 52, 40, 9, "Rug", extra_yaw=4)            # cushions on the benches
+box(O, RY, -60, 30, 11, 150, 100, 2, "Rug", extra_yaw=-8)
+# by the door: the water pot, an enamel pot on a stool, a hanging lantern
+put("ceramic_pot", xf - 70, iW / 2 - 50, 0, 30, 0.8)
+put("painted_wooden_stool", SX + 70, SY + 40, 0, 30)
+put_set("pot_enamel_01", ["pot_enamel_01_base", "pot_enamel_01_lid"], SX + 70, SY + 40, 58, 10)
+lant = put("Lantern_01", 20, 0, H_ - 60)
+light(unreal.PointLight, local(O, RY, 20, 0, H_ - 75), R(0, 0, 0), 60.0, (255, 180, 110, 255), 420, ("roomlight",))
+# the father's duffel and the photo on the bench
+cyl(O, RY, 120, -(iW / 2 - 32), 48 + 20, 40, 78, "TentOrange", pitch=90.0, tags=("duffel",))
+spawn(PLANE, local(O, RY, 70, -(iW / 2 - 40), 49), R(0, 0, RY + 12), (0.14, 0.105, 1), MI("Photo_Icefall"), ("photo_father",), "Story/Ch1/Room", collide=False)
 # dawn through the window, a soft fill so the room reads
-light(unreal.SpotLight, local(O, RY, wx, yw + 260, wz + 150), R(0, -28, RY - 90), 140.0, (255, 214, 180, 255), 900, ("roomlight",))
+light(unreal.SpotLight, local(O, RY, wx, yw + 260, wz + 150), R(0, -40, RY - 90), 90.0, (255, 220, 185, 255), 700, ("roomlight",))
 light(unreal.PointLight, local(O, RY, 0, 0, H_ - 40), R(0, 0, 0), 25.0, (255, 210, 170, 255), 520, ("roomlight",), shadows=False)
 # inside only: a warm, dim, smoky room (sky light floods in through the door and window otherwise)
 ppv = EAS.spawn_actor_from_class(unreal.PostProcessVolume, local(O, RY, 0, 0, H_ / 2), R(0, 0, RY))
 ppv.set_actor_scale3d(V(iL / 200.0, iW / 200.0, H_ / 200.0))
 ppv.set_editor_property("priority", 20.0); ppv.set_editor_property("blend_radius", 60.0); ppv.set_editor_property("unbound", False)
 ps = ppv.get_editor_property("settings")
-for k, v in (("override_auto_exposure_bias", True), ("auto_exposure_bias", -1.3), ("override_white_temp", True), ("white_temp", 7600.0),
-             ("override_indirect_lighting_intensity", True), ("indirect_lighting_intensity", 0.35),
+for k, v in (("override_auto_exposure_bias", True), ("auto_exposure_bias", -2.0), ("override_white_temp", True), ("white_temp", 7600.0),
+             ("override_indirect_lighting_intensity", True), ("indirect_lighting_intensity", 0.2), ("override_color_gain", True), ("color_gain", unreal.Vector4(1.28, 1.02, 0.74, 1.0)),
              ("override_color_saturation", True), ("color_saturation", unreal.Vector4(0.9, 0.9, 0.9, 1.0))):
     try: ps.set_editor_property(k, v)
     except Exception as e: print("ppv", k, e)
@@ -267,7 +301,7 @@ spawn(CYL, pg + V(0, 0, 230), R(0, 0, 0), (0.08, 0.08, 4.6), MI("PBR_Wood"), (),
 flag_line(local(O, RY, L_ / 2, W_ / 2, H_ + 20), pg + V(0, 0, 440), 14, folder="Story/Ch1/Room")
 place("room_start", local(O, RY, 175, -120, 10), RY + 168)
 place("room_photos", local(O, RY, -(iL / 2), 0, 165), 0)
-place("room_duffel", local(O, RY, 130, -(iW / 2 - 34), 60), 0)
+place("room_duffel", local(O, RY, 120, -(iW / 2 - 32), 60), 0)
 place("room_door", local(O, RY, xf - 60, 0, 0), RY)
 place("room_out", local(O, RY, xf + 240, 0, 0), RY)
 dg, dn = ground(local(O, RY, xf + 300, 120, 0).x, local(O, RY, xf + 300, 120, 0).y, O.z)

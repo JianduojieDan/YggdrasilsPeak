@@ -60,7 +60,7 @@ mel.connect_material_property(c, "Rough", unreal.MaterialProperty.MP_ROUGHNESS)
 mel.connect_material_property(c, "Nrm", unreal.MaterialProperty.MP_NORMAL)
 mel.recompile_material(m); EAL.save_loaded_asset(m, False)
 
-SETS = {"PBR_Wall": ("plastered_stone_wall", 220.0, (0.92, 0.88, 0.82)), "PBR_Floor": ("old_wood_floor", 180.0, (0.8, 0.72, 0.62)),
+SETS = {"PBR_Wall": ("plastered_stone_wall", 220.0, (0.5, 0.42, 0.34)), "PBR_Floor": ("old_wood_floor", 180.0, (0.8, 0.72, 0.62)),
         "PBR_Wood": ("dark_planks", 140.0, (0.85, 0.78, 0.7)), "PBR_Roof": ("corrugated_iron", 160.0, (0.55, 0.75, 1.15)),
         "PBR_StoneOut": ("plastered_stone_wall", 260.0, (0.78, 0.76, 0.72))}
 for name, (tex, tile, tint) in SETS.items():
