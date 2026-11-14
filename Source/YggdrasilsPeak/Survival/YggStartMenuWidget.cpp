@@ -19,6 +19,7 @@
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
+#include "Story/YggStory.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Rendering/DrawElements.h"
 
@@ -281,6 +282,7 @@ void UYggStartMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 			// the start menu's UI-only input lives on the game viewport and would follow us onto the mountain
 			// (to-do #64: the player could not walk or look after the menus)
 			if (APlayerController* PC = GetOwningPlayer()) { PC->SetInputMode(FInputModeGameOnly()); PC->SetShowMouseCursor(false); }
+			UYggStorySubsystem::bPendingNewGame = bLeaveNew;   // a new expedition starts with chapter 1 (the story)
 			UGameplayStatics::OpenLevel(this, FName(TEXT("/Game/LevelPrototyping/base_map")));
 		}
 	}
