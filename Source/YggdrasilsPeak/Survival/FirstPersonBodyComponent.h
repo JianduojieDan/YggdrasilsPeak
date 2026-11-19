@@ -6,12 +6,17 @@
 #include "Components/ActorComponent.h"
 #include "FirstPersonBodyComponent.generated.h"
 
+class APawn;
+class AController;
 class UCameraComponent;
 class UPoseableMeshComponent;
 class USkeletalMeshComponent;
-class USpringArmComponent;
+class USkinnedMeshComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
+
+// The view rig's posture (Survival/YggViewRig.h). Declared opaquely so this header doesn't pull the rig in.
+enum class EYggView : uint8;
 
 /**
  *  First-person body: the local player sees their own body (legs, arms, hands) with the head bone hidden
@@ -19,7 +24,12 @@ class UStaticMeshComponent;
  *  Hiding the head also removes it from the shadow, so a second, shadow-only copy of the mesh is spawned
  *  (invisible to the owner, full head, own animation instance) and the visible body stops casting shadows.
  *  Other players / cameras keep seeing the normal full mesh.
- *  The camera boom also follows the animated head (HeadFollow), so steps and breathing move the view a little.
+ *  The eye itself belongs to the view rig (UYggViewRigComponent, Chapter1_Camera_Spec.md), which BeginPlay creates for
+ *  the locally controlled pawn; this component only places the body under it.
+ *
+ *  One body (Chapter1_Camera_Spec.md 5.8, ygg.View.OneBody): walking, the owner sees one world-space body, FeetBody (legs,
+ *  torso and arms, only neck and head hidden), and the first-person mesh is hidden and stops animating. It comes back
+ *  for hands in use (SetHandsInUse) and in a posture (SetPostureView: lowered under the low eye, world projection).
  *
  *  With a HeldToolMesh the owner's view body is a posable copy of the animated body. The right arm is raised so the fist
  *  rests low on the right of the view (two-bone IK, bone lengths kept, never stretched), the hand stays in line with
@@ -47,17 +57,8 @@ public:
 	UPROPERTY(EditAnywhere, Category="First Person")
 	bool bShadowProxy = true;
 
-	/** 0 = camera fixed at the boom's default spot, 1 = camera rides fully on the animated head. */
-	UPROPERTY(EditAnywhere, Category="First Person", meta=(ClampMin="0", ClampMax="1"))
-	float HeadFollow = 0.6f;
-
-	/** Eye position relative to the head bone, in actor space (X forward, Z up), cm. */
-	UPROPERTY(EditAnywhere, Category="First Person")
-	FVector EyeOffset = FVector(10.f, 0.f, 6.f);
-
-	/** How fast the camera catches up with the head; lower = smoother sway. */
-	UPROPERTY(EditAnywhere, Category="First Person", meta=(ClampMin="1"))
-	float FollowSpeed = 18.f;
+	// (HeadFollow / EyeOffset / FollowSpeed are gone: they moved a spring arm the first-person camera never hung on, and
+	// at times grabbed the climbing camera's arm instead. The view rig owns the eye now.)
 
 	/**
 	 *  Engine first-person rendering (as in the UE 5.6+ First Person template): the view body and the held tool are drawn
@@ -222,8 +223,67 @@ public:
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	/** Sinks the visible body, its shadow copy and the eye this far (cm) into the snow; collision is unchanged. */
+	/** Sinks the visible body and its shadow copy this far (cm) into the snow; collision is unchanged. Counted once: the
+	 *  first-person mesh rides on the world body, so it is not sunk a second time (that put the old eye up to 24 cm low). */
 	void SetSinkDepth(float Centimetres);
+
+	/** Powder sink (cm) and the slope's hips drop (cm, eased) the body is lowered by now: the view rig's eye reads them
+	 *  (sink once, the drop at half, capped). */
+	float GetSinkDepth() const { return SinkDepth; }
+	float GetFootDrop() const { return FootDrop; }
+
+	/** One body (ygg.View.OneBody; the rig may also call this): true = walking shows FeetBody with torso and arms (one
+	 *  world projection, no seam at the hips) and the first-person mesh is hidden and not animated; false = the older
+	 *  two-projection body (first-person torso and arms, world-space legs). */
+	void SetOneBody(bool bOn);
+	bool IsOneBody() const { return bOneBody; }
+
+	/**
+	 *  The rig's posture and how far (cm) the eye is under standing height now (156 - posture eye). Posed (anything but
+	 *  Walk, or still more than PosedUntilCm low while standing up), FeetBody's standing legs are hidden (they sat under
+	 *  the dropped eye: the "huge boot under the lens"), the feet fit eases out, and the first-person mesh is shown in world
+	 *  projection, lowered by DropCm so its shoulders stay under the eye (legs and head hidden). Lie and Crawl show nothing.
+	 *  Call it every frame of a transition with the current drop, or once: the drop is followed at PostureFollowCmPerS.
+	 */
+	void SetPostureView(EYggView View, float DropCm);
+	bool IsPosed() const { return bPosedVisual; }
+
+	/**
+	 *  Hands in use (compass, photo, Dolma's hand, khata, bottle): Item names it (NAME_None = hands down). Left / Right are
+	 *  where each hand rests in camera space (cm, X forward, Y right, Z up); a zero vector leaves that hand to the
+	 *  animation. Both zero = DefaultHandsFor(Item). The first-person mesh is shown as a posed copy whose arms reach those
+	 *  spots by two-bone IK (bone lengths kept, never stretched), rising in HandsRiseSeconds and lowering in
+	 *  HandsLowerSeconds; meanwhile FeetBody goes back to hips and legs so no second pair of arms hangs below them.
+	 */
+	void SetHandsInUse(FName Item, FVector Left, FVector Right);
+	FName GetHandsItem() const { return bHandsWanted ? HandsItem : NAME_None; }
+	bool AreHandsUp() const;
+
+	/** Spec 9 rest spots: compass (right) (40, 8, -22), photo (38, +-10, -16), bottle (right) (38, 6, -24),
+	 *  khata (42, +-12, -30), dolma (left) (30, -25, -55). False for an unknown item. */
+	static bool DefaultHandsFor(FName Item, FVector& OutLeft, FVector& OutRight);
+
+	/** The owner's own world-space body (legs; torso and arms with one body): things worn on the chest attach here
+	 *  (the khata). Null before BeginPlay or without the first-person layout. */
+	UPoseableMeshComponent* GetOwnBody() const { return FeetBody; }
+
+	/** Raised story hands trail the view by about 70 ms (the axe hand keeps HandFollowSpeed). */
+	UPROPERTY(EditAnywhere, Category="First Person|Hands In Use", meta=(ClampMin="1"))
+	float HandsInUseFollowSpeed = 13.f;
+
+	UPROPERTY(EditAnywhere, Category="First Person|Hands In Use", meta=(ClampMin="0.01"))
+	float HandsRiseSeconds = 0.3f;
+
+	UPROPERTY(EditAnywhere, Category="First Person|Hands In Use", meta=(ClampMin="0.01"))
+	float HandsLowerSeconds = 0.25f;
+
+	/** Standing up, the walking body comes back once the eye is less than this far (cm) under standing height. */
+	UPROPERTY(EditAnywhere, Category="First Person|Posture", meta=(ClampMin="0"))
+	float PosedUntilCm = 10.f;
+
+	/** How fast the lowered first-person mesh follows the posture drop (cm/s), if the rig sets it in steps. */
+	UPROPERTY(EditAnywhere, Category="First Person|Posture", meta=(ClampMin="10"))
+	float PostureFollowCmPerS = 200.f;
 
 	/** A planted boot goes this far into snow (cm) so it clearly touches it; on rock it stands on the surface. */
 	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0", ClampMax="10"))
@@ -265,6 +325,10 @@ protected:
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	/** A pawn possessed after its BeginPlay (respawn into a new pawn, late possession) still gets its view rig. */
+	UFUNCTION()
+	void OnPawnControllerChanged(APawn* Pawn, AController* OldController, AController* NewController);
+
 private:
 
 	/** One arm held up into the view: its bones, where its hand rests and the hand's measured geometry. */
@@ -273,6 +337,9 @@ private:
 		FName Upper, Lower, Hand;
 		/** Bone name suffix: "r" or "l". */
 		FString Suffix;
+		/** Mixamo bone names (RightArm, RightHandIndex1, ...), and their prefix ("" or "mixamorig:"). */
+		bool bMixamo = false;
+		FString MixamoPrefix;
 		/** +1 right arm, -1 left arm (mirrors the palm and which way "inside" is). */
 		float Side = 1.f;
 		bool bHoldsTool = false;
@@ -300,13 +367,36 @@ private:
 		/** Hand position in component space, eased towards the camera-space rest spot. */
 		FVector SmoothedGrip = FVector::ZeroVector;
 		bool bHasSmoothedGrip = false;
+
+		/** The tool arms keep the hands on screen from the real viewport (HandScreenDrop); story hands use their spot as given. */
+		bool bScreenDrop = true;
+		/** Story hands: this arm is wanted up, and how far it is up (0 = the animation's arm, 1 = on its spot). */
+		bool bInUse = false;
+		float Alpha = 0.f;
 	};
 
-	/** Copies this frame's animated pose to ViewBody, raises the arms (tool in the right fist) and sinks the feet. */
+	/** Copies this frame's animated pose to ViewBody, raises the arms (tool in the right fist, or the story hands). */
 	void PoseViewBody(float DeltaTime);
 
-	/** One arm, its wrist, fingers and (for the tool hand) the tool. */
-	void PoseArm(FViewArm& Arm, float DeltaTime);
+	/** One arm, its wrist, fingers and (for the tool hand) the tool, blended over the animated arm by Blend (0..1). */
+	void PoseArm(FViewArm& Arm, float DeltaTime, float Blend = 1.f);
+
+	/** Sets an arm up for IK on ViewBody (bones, rest spot, hand geometry). */
+	void SetupArm(FViewArm& Arm, bool bRight, const FVector& RestInView, const FVector& ElbowInView, const FVector& Fingers, const FVector& Thumb, bool bHoldsTool);
+
+	/** Creates ViewBody, the posable copy of the first-person mesh, the first time it is needed (the axe at BeginPlay,
+	 *  story hands on their first use): a hidden copy still costs render state, so none is made until then. */
+	bool EnsureViewBody(bool bWithTool);
+
+	/** Which meshes the owner sees this frame (one body, posture, hands, climbing view) and whether the first-person mesh
+	 *  animates; only changes are written. */
+	void UpdateBodyVisibility(USkeletalMeshComponent* Body, float DeltaTime);
+
+	/** The first-person camera still rides the first-person mesh's head (no view rig, or ygg.View.Rig 0). */
+	bool IsCameraOnBody() const;
+
+	/** FeetBody shows its torso and arms (one body) or only hips and legs. */
+	void SetFeetTorso(bool bShow);
 
 	/** Advances the procedural hand motion (walk bob/swing, breathing, turn lag, landing dip, sprint) for this frame. */
 	void UpdateHandMotion(float DeltaTime);
@@ -380,14 +470,45 @@ private:
 	/** The world body's relative location before sinking (differs from BodyBaseLocation with the template layout). */
 	FVector WorldBodyBaseLocation = FVector::ZeroVector;
 
-	UPROPERTY(Transient)
-	TObjectPtr<USpringArmComponent> CameraBoom;
-
-	FVector BoomBaseLocation = FVector::ZeroVector;
-
 	/** The body's relative location before any sinking. */
 	FVector BodyBaseLocation = FVector::ZeroVector;
 	float SinkDepth = 0.f;
+
+	// ---- One body, posture, hands in use (Chapter1_Camera_Spec.md 4.3, 5.8) ----
+	bool bOneBody = true;
+	/** ygg.View.OneBody (registered by the rig) is followed when it changes; -1 = not read yet. */
+	int32 LastOneBodyCvar = -1;
+	/** FeetBody's torso and arms are shown now. */
+	bool bFeetTorsoShown = false;
+	/** FeetBody's bones that leave the hips other than the thighs (the spine branch: torso, arms, head). */
+	TArray<FName> FeetTorsoBones;
+
+	/** The rig asked for a posture (not Walk); Lie and Crawl show no body at all. */
+	bool bPostureWanted = false;
+	bool bPostureHidesBody = false;
+	/** How far the eye is under standing height (cm): wanted by the rig, and followed (the mesh is lowered by this). */
+	float PostureDropTarget = 0.f;
+	float PostureDrop = 0.f;
+	/** Posed as far as the body is concerned: a posture, or still low while standing up. */
+	bool bPosedVisual = false;
+	/** SetPostureView has been called: the rig pushes its posture. Until then the rig is read every frame instead
+	 *  (GetView, GetEyeAboveFloor), so the body follows the eye whichever way the rig is written. */
+	bool bPostureFromRig = false;
+	TWeakObjectPtr<class UYggViewRigComponent> ViewRig;
+	float RigSearchTimer = 0.f;
+	/** The first-person meshes' own projection (EFirstPersonPrimitiveType), shadow and owner-only setting, given back
+	 *  when the posture ends. Kept as raw values so this header needs no primitive / skinned mesh includes. */
+	bool bArmsLookPosed = false;
+	uint8 ArmsPrimitiveType = 0;
+	uint8 ViewBodyPrimitiveType = 0;
+	bool bArmsCastShadow = false;
+	bool bArmsOnlyOwnerSee = false;
+	bool bViewBodyOnlyOwnerSee = true;
+
+	FName HandsItem = NAME_None;
+	bool bHandsWanted = false;
+	/** Story hands may pose ViewBody (it exists and carries no tool). */
+	bool bHandsReady = false;
 
 	/** What the owner sees of their own legs: a world-space copy of the world body (hips and legs only). The first-person
 	 *  body is drawn with its own FOV and pulled towards the camera, so its boots could never meet the ground. */
@@ -463,8 +584,8 @@ private:
 	/** The world body at its base spot, minus the powder sink and the slope drop (unless climbing, which places it itself). */
 	void ApplyWorldBodyOffset();
 
-	/** Shows WorldBody or the world body (ygg.Feet.WorldIK), keeps the copy looking like it, and hides FeetBody while the
-	 *  owner sees the whole body (the third-person climbing view). */
+	/** Shows WorldBody or the world body (ygg.Feet.WorldIK) and keeps the copy looking like it. (FeetBody's visibility,
+	 *  hidden while the owner sees the whole body in the third-person climbing view, is UpdateBodyVisibility's now.) */
 	void SyncWorldBody(USkeletalMeshComponent* Body);
 
 	/** Copies the animated pose onto a posable copy of the same mesh, in place (no allocation each frame). */

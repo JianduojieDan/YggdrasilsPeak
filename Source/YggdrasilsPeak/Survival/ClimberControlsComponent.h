@@ -52,6 +52,8 @@ private:
 	void OnEat();
 	void OnInteract();
 	void OnDrink();
+	/** A story choice is on screen (UYggStorySubsystem::IsChoiceOpen): eat / drink keys answer it instead. */
+	bool IsStoryChoiceOpen() const;
 	void OnPack();
 	void OnSettings();
 	void OnPauseMenu();

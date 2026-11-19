@@ -35,6 +35,8 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Containers/Ticker.h"
+#include "Rendering/DrawElements.h"
+#include "Styling/SlateBrush.h"
 
 static FAutoConsoleCommandWithWorldAndArgs CmdSettings(TEXT("ygg.Settings"), TEXT("ygg.Settings [tab 0-5]: opens or closes the settings (same as F2); a tab number opens that tab."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
@@ -312,20 +314,27 @@ void USettingsWidget::DefineTabs()
 	// ---- GAME
 	FTab Game{ TEXT("Game") };
 	{
-		// to-do #65: 90-110, where the player looks for it first
-		FRow R = FloatRow(TEXT("FIELD OF VIEW"), TEXT("How much of the mountain you see at once. 90° is close and steady; 110° shows the slopes around you."), TEXT("FieldOfView"), 0.f, 90.f, 110.f, 1.f,
+		// to-do #65: where the player looks for it first. 80-110 since 2026-11-19 (camera spec §5.7; 90-110 before)
+		FRow R = FloatRow(TEXT("FIELD OF VIEW"), TEXT("How much of the mountain you see at once. 80° is close and calm; 90° is the climber's own eyes; 110° shows the slopes around you."), TEXT("FieldOfView"), 0.f, FovMin, FovMax, 1.f,
 			[](float V) { return FString::Printf(TEXT("%d°"), FMath::RoundToInt(V)); }, [W]() { ApplyView(W()); });
 		R.GetF = [Self]()
 		{
 			const float F = FieldOfView();
-			if (F > 1.f) { return FMath::Clamp(F, 90.f, 110.f); }
+			if (F > 1.f) { return FMath::Clamp(F, FovMin, FovMax); }
 			const APlayerController* PC = Self.IsValid() ? Self->GetOwningPlayer() : nullptr;
 			const APawn* P = PC ? PC->GetPawn() : nullptr;
 			const UCameraComponent* C = P ? P->FindComponentByClass<UCameraComponent>() : nullptr;
-			return FMath::Clamp(C ? C->FieldOfView : 90.f, 90.f, 110.f);
+			return FMath::Clamp(C ? C->FieldOfView : 90.f, FovMin, FovMax);
 		};
 		Game.Rows.Add(R);
 	}
+	// how the camera feels (camera spec §5.11): stored here, read live by the view rig and the story
+	Game.Rows.Add(IntRow(TEXT("HEAD MOTION"), TEXT("How much your head moves with your body: the dip of each step, the breath, the landing. Reduced keeps a little of the steps and nothing else; Off holds the view still - the steps are still heard."),
+		{ TEXT("Full"), TEXT("Reduced"), TEXT("Off") }, TEXT("HeadMotion"), 0, 0, [W]() { ApplyView(W()); }));
+	Game.Rows.Add(IntRow(TEXT("STORY CAMERA"), TEXT("Guided: now and then the story draws your eyes - a turn toward a sudden sound, a slow nudge toward something you have not seen, the fall. Gentle never moves your view for you; the fall becomes a closing of the eyes."),
+		{ TEXT("Guided"), TEXT("Gentle") }, TEXT("StoryCamera"), 0, 0, [W]() { ApplyView(W()); }));
+	Game.Rows.Add(IntRow(TEXT("HEARTBEAT ZOOM"), TEXT("At a few moments, and in the thinnest air, the view closes in a little with your heartbeat. Off keeps the field of view still."),
+		{ TEXT("Off"), TEXT("On") }, TEXT("HeartbeatZoom"), 1, 0, [W]() { ApplyView(W()); }));
 	Game.Rows.Add(IntRow(TEXT("UNITS"), TEXT("Height in metres or in feet, on the HUD and in the menus."), { TEXT("Metres"), TEXT("Feet") }, TEXT("Units"), 0, 0, nullptr));
 	Game.Rows.Add(IntRow(TEXT("HUD"), TEXT("Everything shows every reading. Quiet keeps the screen empty until your body needs you - then only that."), { TEXT("Everything"), TEXT("Quiet") }, TEXT("Hud"), 0, 0, nullptr));
 	Game.Rows.Add(IntRow(TEXT("HUD SIZE"), TEXT("How large the readings are on the screen."), { TEXT("Small"), TEXT("Normal"), TEXT("Large") }, TEXT("HudSize"), 1, 0, nullptr));
@@ -352,8 +361,10 @@ void USettingsWidget::DefineTabs()
 			{ TEXT("DLSS"), TEXT("TSR") }, TEXT("Upscaler"), 0, 0, [W]() { ApplyGraphics(W()); }));
 		if (HasFrameGeneration())
 		{
-			Gfx.Rows.Add(IntRow(TEXT("FRAME GENERATION"), TEXT("DLSS adds frames between the rendered ones: much smoother, a little more delay. Needs the DLSS upscaler; RTX 40 and 50 cards."),
-				{ TEXT("Off"), TEXT("2×"), TEXT("3×"), TEXT("4×") }, TEXT("FrameGen"), 0, 0, [W]() { ApplyGraphics(W()); }));
+			// saved -1 auto, 0 off, 1..3 = 2x..4x: offset 1 puts Auto first (camera spec §5.10, 2026-11-19); the frame-limit
+			// clamp (YggSettings::ApplyGraphics) is told here because the row would otherwise seem to do nothing under a limit
+			Gfx.Rows.Add(IntRow(TEXT("FRAME GENERATION"), TEXT("DLSS adds frames between the rendered ones: smoother, a little more delay. Auto starts at 2× and rises to 3× or 4× only while the game holds 55 fps and the screen can show them. A frame limit of 120 allows 2× at most; 60 or 30 turns it off."),
+				{ TEXT("Auto"), TEXT("Off"), TEXT("2×"), TEXT("3×"), TEXT("4×") }, TEXT("FrameGen"), -1, 1, [W]() { ApplyGraphics(W()); }));
 		}
 		if (IConsoleManager::Get().FindConsoleVariable(TEXT("t.Streamline.Reflex.Enable")))
 		{
@@ -363,7 +374,8 @@ void USettingsWidget::DefineTabs()
 	}
 	Gfx.Rows.Add(IntRow(TEXT("RAY-TRACED LIGHT"), TEXT("Off is a little flatter and much lighter on the graphics card."), { TEXT("Off"), TEXT("On") }, TEXT("RayTracing"), 1, 0, [W]() { ApplyGraphics(W()); }));
 	Gfx.Rows.Add(IntRow(TEXT("FOOTPRINTS"), TEXT("Off saves the most. High draws the prints twice as sharp."), { TEXT("Off"), TEXT("Normal"), TEXT("High") }, TEXT("Footprints"), 1, 0, [W]() { ApplyGraphics(W()); }));
-	Gfx.Rows.Add(IntRow(TEXT("MOTION BLUR"), TEXT("The smear of fast turns."), { TEXT("Off"), TEXT("On") }, TEXT("MotionBlur"), 1, 0, [W]() { ApplyGraphics(W()); }));
+	// Off by default since 2026-11-19 (camera spec §5.10); Low is a short, faint trail
+	Gfx.Rows.Add(IntRow(TEXT("MOTION BLUR"), TEXT("The smear of fast turns. Off keeps every turn sharp; Low leaves a short, faint trail."), { TEXT("Off"), TEXT("Low") }, TEXT("MotionBlur"), 0, 0, [W]() { ApplyGraphics(W()); }));
 	Tabs.Add(Gfx);
 
 	// ---- DISPLAY
@@ -416,7 +428,7 @@ void USettingsWidget::DefineTabs()
 
 	// ---- CONTROLS
 	FTab Ctl{ TEXT("Controls") };
-	Ctl.Rows.Add(FloatRow(TEXT("MOUSE SPEED"), TEXT("How fast the view turns with the mouse."), TEXT("Sensitivity"), 1.f, 0.2f, 3.f, 0.05f,
+	Ctl.Rows.Add(FloatRow(TEXT("MOUSE SPEED"), TEXT("How fast the view turns with the mouse. A calmer speed keeps fast turns from smearing."), TEXT("Sensitivity"), DefaultSensitivity, 0.2f, 3.f, 0.05f,
 		[](float V) { return FString::Printf(TEXT("%.2f×"), V); }, [W]() { ApplyControls(W()); }));
 	Ctl.Rows.Add(IntRow(TEXT("INVERT LOOK"), TEXT("Push the mouse up to look down."), { TEXT("Off"), TEXT("On") }, TEXT("InvertY"), 0, 0, [W]() { ApplyControls(W()); }));
 	for (const FBinding& B : Bindings())
@@ -431,6 +443,8 @@ void USettingsWidget::DefineTabs()
 	// ---- ACCESSIBILITY
 	FTab Acc{ TEXT("Accessibility") };
 	Acc.Rows.Add(FloatRow(TEXT("INTERFACE SIZE"), TEXT("The HUD and the menus, larger or smaller."), TEXT("InterfaceScale"), 1.f, 0.8f, 1.3f, 0.05f, Pct, [W]() { ApplyAccessibility(W()); }));
+	Acc.Rows.Add(IntRow(TEXT("COMFORT DOT"), TEXT("A small steady dot in the middle of the screen: something still for the eyes to rest on if moving views make you feel unwell."),
+		{ TEXT("Off"), TEXT("On") }, TEXT("ComfortDot"), 0, 0, [W]() { ApplyView(W()); }));
 	Acc.Rows.Add(IntRow(TEXT("LIGHTNING FLASHES"), TEXT("Soft: the storm's flashes light the world far less and the bolts glow gently."), { TEXT("Full"), TEXT("Soft") }, TEXT("SoftFlashes"), 0, 0, nullptr));
 	Acc.Rows.Add(IntRow(TEXT("COLOUR VISION"), TEXT("Shifts the colours so red, green and blue warnings stay apart."),
 		{ TEXT("Off"), TEXT("Protan"), TEXT("Deutan"), TEXT("Tritan") }, TEXT("ColourVision"), 0, 0, [W]() { ApplyAccessibility(W()); }));
@@ -909,4 +923,71 @@ FReply USettingsWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPo
 {
 	if (!InMouseEvent.GetCursorDelta().IsNearlyZero()) { bMouseMoved = true; bPad = false; }
 	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
+}
+
+// ---- the comfort dot (camera spec §5.11)
+
+namespace
+{
+	TWeakObjectPtr<UYggComfortDot>& ComfortDotInstance() { static TWeakObjectPtr<UYggComfortDot> D; return D; }
+}
+
+void UYggComfortDot::Apply(UWorld* World, bool bOn)
+{
+	TWeakObjectPtr<UYggComfortDot>& Dot = ComfortDotInstance();
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	// a dot of another player or world (a level change, the start menu) is replaced
+	if (Dot.IsValid() && (!bOn || Dot->GetOwningPlayer() != PC || !Dot->IsInViewport()))
+	{
+		Dot->RemoveFromParent();
+		Dot.Reset();
+	}
+	if (!bOn || !PC || !PC->IsLocalController() || Dot.IsValid())
+	{
+		return;
+	}
+	UYggComfortDot* D = CreateWidget<UYggComfortDot>(PC, UYggComfortDot::StaticClass());
+	if (!D)
+	{
+		return;
+	}
+	D->SetVisibility(ESlateVisibility::HitTestInvisible);   // never takes a click or the focus
+	D->AddToViewport(5);                                    // over the HUD (0), under the pack (50), the story overlay (60) and the menus (80)
+	Dot = D;
+}
+
+bool UYggComfortDot::IsShown()
+{
+	const TWeakObjectPtr<UYggComfortDot>& Dot = ComfortDotInstance();
+	return Dot.IsValid() && Dot->IsInViewport();
+}
+
+int32 UYggComfortDot::NativePaint(const FPaintArgs& Args, const FGeometry& G, const FSlateRect& MyCullingRect, FSlateWindowElementList& Out, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
+{
+	const int32 L = Super::NativePaint(Args, G, MyCullingRect, Out, LayerId, InWidgetStyle, bParentEnabled) + 1;
+	// a menu with the cursor is up (pause, settings, the pack, the start menu): the dot steps aside
+	const APlayerController* PC = GetOwningPlayer();
+	if (!PC || PC->bShowMouseCursor)
+	{
+		return L;
+	}
+	static FSlateBrush Round = []()
+	{
+		FSlateBrush B;
+		B.DrawAs = ESlateBrushDrawType::RoundedBox;
+		B.OutlineSettings.RoundingType = ESlateBrushRoundingType::HalfHeightRadius;
+		B.TintColor = FSlateColor(FLinearColor::White);
+		return B;
+	}();
+	// about 5 px at 1080p, growing with the window; a soft dark ring keeps it readable on bright snow
+	const FVector2f S = FVector2f(G.GetLocalSize());
+	const float D = FMath::Max(4.f, 5.f * S.Y / 1080.f);
+	const FVector2f C = S * 0.5f;
+	auto Dot = [&](int32 Layer, float Size, const FLinearColor& Col)
+	{
+		FSlateDrawElement::MakeBox(Out, Layer, G.ToPaintGeometry(FVector2f(Size, Size), FSlateLayoutTransform(C - FVector2f(Size, Size) * 0.5f)), &Round, ESlateDrawEffect::None, Col);
+	};
+	Dot(L, D + 3.f, YggUI::WithA(YggUI::InkC, 0.35f));
+	Dot(L + 1, D, YggUI::WithA(YggUI::Snow, 0.75f));
+	return L + 1;
 }

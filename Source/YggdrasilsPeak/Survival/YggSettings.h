@@ -13,11 +13,13 @@ class APlayerController;
  *  Every player setting in one place (2026-11-12 menu redesign). Saved in GameUserSettings.ini [YggdrasilsPeak.Display]
  *  (window mode, resolution and vsync in the engine's own GameUserSettings), applied at every start (the start menu and
  *  each time the climber spawns) and live when changed in the settings menu (USettingsWidget).
- *  Game: units, HUD, hints.  Graphics: preset, upscaling, ray-traced light, footprints, motion blur.
- *  Display: window, resolution, vsync, frame limit, field of view, brightness.
+ *  Game: field of view, head motion, story camera, heartbeat zoom, units, HUD, hints.
+ *  Graphics: preset, upscaling, frame generation, ray-traced light, footprints, motion blur.
+ *  Display: window, resolution, vsync, frame limit, brightness.
  *  Sound: master, effects, ambience, voices, interface (sound classes in /Game/Audio/Classes), sound in the background.
  *  Controls: mouse sensitivity, invert look, key bindings of our own actions (RegisterKey / Rebind).
- *  Accessibility: interface size, softer lightning flashes, colour vision correction.
+ *  Accessibility: interface size, comfort dot, softer lightning flashes, colour vision correction.
+ *  The camera rows follow Docs/Development/Chapter1_Camera_Spec.md §5.7, §5.10, §5.11 (2026-11-19).
  */
 namespace YggSettings
 {
@@ -36,8 +38,22 @@ namespace YggSettings
 
 	// ---- display
 	int32 FrameCap();                        // 0 = 30, 1 = 60, 2 = 120, 3 = off
-	float FieldOfView();                     // degrees, 0 = the camera's own
+	float FieldOfView();                     // degrees, 0 = the camera's own (saved values are clamped to FovMin..FovMax when applied)
 	float Brightness();                      // -1..1 (0 = neutral)
+
+	// ---- view: how the camera feels (camera spec §5.3, §5.7, §5.11). The view rig and the story read these; the
+	// settings menu only stores them (and sets ygg.View.HeadMotion), so a change applies at once without a restart.
+	constexpr float FovMin = 80.f;           // the player's field of view range (was 90-110 until 2026-11-19)
+	constexpr float FovMax = 110.f;
+	int32 HeadMotionChoice();                // 0 full, 1 reduced, 2 off
+	float HeadMotion();                      // 1 / 0.4 / 0: the step bob, breathing and landing scale (ygg.View.HeadMotion)
+	bool StoryCameraGentle();                // Gentle: the story never moves the view (no nudges, no reflexes; the slip is a plain eyelid close)
+	bool HeartbeatZoom();                    // the plume's heartbeat FOV push and the altitude heart FOV term; false = the FOV stays still
+	bool ComfortDot();                       // a small steady dot in the centre of the screen (drawn by UYggComfortDot)
+
+	// ---- frame generation (camera spec §5.10)
+	int32 FrameGenChoice();                  // -1 auto, 0 off, 1..3 = 2x..4x (saved "FrameGen")
+	int32 FrameGenInUse();                   // what runs right now: 0 off, 1..3 = 2x..4x (Auto may step it while playing)
 
 	// ---- sound (0..1)
 	enum class ESound : uint8 { Master, Effects, Ambience, Voices, Interface, Num };
@@ -46,7 +62,10 @@ namespace YggSettings
 	bool SoundInBackground();
 
 	// ---- controls
-	float Sensitivity();                     // 1 = the game's default speed
+	/** The mouse speed when the player never chose one: 0.7 of the controller's scale (0.175 -> about 0.12 degrees per
+	 *  count; camera spec §5.7 - flicks of 600 deg/s on a 30 fps base fed the turning streaks). */
+	constexpr float DefaultSensitivity = 0.7f;
+	float Sensitivity();                     // multiplier on the controller's input scale (DefaultSensitivity when unset)
 	bool InvertY();
 
 	// ---- accessibility
@@ -59,7 +78,7 @@ namespace YggSettings
 	void ApplyAll(UWorld* World);            // everything (at a start)
 	void ApplyGraphics(UWorld* World);
 	void ApplyDisplay(UWorld* World);        // window, resolution, vsync, frame limit, brightness
-	void ApplyView(UWorld* World);           // field of view on the player's camera
+	void ApplyView(UWorld* World);           // field of view on the player's camera, head motion, the comfort dot
 	void ApplySound(UWorld* World);
 	void ApplyControls(UWorld* World);       // mouse speed and invert on the player controller
 	void ApplyAccessibility(UWorld* World);

@@ -125,3 +125,24 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UButton> ResetBtn;
 	UPROPERTY(Transient) TObjectPtr<UButton> BackBtn;
 };
+
+/**
+ *  The comfort dot (settings "Comfort dot", camera spec §5.11, 2026-11-19): a small steady anchor in the centre of the
+ *  screen for players whom moving views make unwell. Painted only (no widget tree, no ticking), over the HUD and under
+ *  the pack (50), the story overlay (60: the eyelids and the black cover it) and the menus (80); hidden while a menu
+ *  shows the mouse cursor. Added and removed by YggSettings::ApplyView, so it follows the setting at once.
+ */
+UCLASS()
+class YGGDRASILSPEAK_API UYggComfortDot : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	/** Shows the dot for the world's first player (made again after a level change), or removes it. */
+	static void Apply(UWorld* World, bool bOn);
+	/** Whether a dot is on screen now (for the settings self-test and the session monitor's settings list). */
+	static bool IsShown();
+
+protected:
+	virtual int32 NativePaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const override;
+};

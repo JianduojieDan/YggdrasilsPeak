@@ -7,6 +7,7 @@
 #include "SanityComponent.generated.h"
 
 class USoundBase;
+class UYggViewRigComponent;
 
 /**
  *  The mind (Phase1_Design_Plan: "Sanity and oxygen ... hypoxia distorts vision; is this path the parents' guidance,
@@ -74,6 +75,12 @@ private:
 
 	float TimeOfDay() const;
 	void Hallucinate();
+	/** The view rig (UYggViewRigComponent) owns the one exposure channel; created at runtime, looked up lazily. */
+	UYggViewRigComponent* FindViewRig();
+	TWeakObjectPtr<UYggViewRigComponent> ViewRig;
+	double NextViewRigLookup = 0.0;
+	/** The exposure bias last handed to the rig (sent only when it changes). */
+	float SentExposure = -1000.f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> Sky;

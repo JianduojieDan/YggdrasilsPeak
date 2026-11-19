@@ -2,6 +2,7 @@
 
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalConfig.h"
+#include "Survival/YggViewRig.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -345,7 +346,8 @@ void USurvivalComponent::StepSimulation(float Dt)
 
 void USurvivalComponent::RefreshSprintState()
 {
-	bSprinting = bSprintRequested && !bDead && !bExhausted && Stamina > 0.f && FootingSpeedMultiplier >= 1.f && IsMoving();
+	// no sprint while the view rig holds the pace below walking (a story pace, a posture): it would only burn stamina
+	bSprinting = bSprintRequested && !bDead && !bExhausted && Stamina > 0.f && FootingSpeedMultiplier >= 1.f && !bViewCapsSpeed && IsMoving();
 }
 
 void USurvivalComponent::UpdateWarnings()
@@ -493,11 +495,38 @@ void USurvivalComponent::ApplyMovementSpeed() const
 	}
 
 	const USurvivalConfig* C = GetCfg();
-	const float Target = (bSprinting ? C->SprintSpeed : C->WalkSpeed) * GetTerrainSpeedMultiplier();
+	const float Terrain = GetTerrainSpeedMultiplier();
+	float Target = (bSprinting ? C->SprintSpeed : C->WalkSpeed) * Terrain;
+	// The view rig has the last word (Chapter1_Camera_Spec 4.4): a story hold, a posture or an inspect is enforced in this
+	// one per-tick speed write, so a lock can no longer fail silently (the 2026-11-19 knee-height walk). Jumping is
+	// toggled by the rig itself.
+	bViewCapsSpeed = false;
+	if (const UYggViewRigComponent* Rig = FindViewRig())
+	{
+		const float Shaped = Rig->ShapeWalkSpeed(Target);
+		bViewCapsSpeed = Shaped < C->WalkSpeed * Terrain - 1.f;
+		Target = Shaped;
+	}
 	if (!FMath::IsNearlyEqual(Movement->MaxWalkSpeed, Target))
 	{
 		Movement->MaxWalkSpeed = Target;
 	}
+}
+
+UYggViewRigComponent* USurvivalComponent::FindViewRig() const
+{
+	if (!ViewRig.IsValid())
+	{
+		const UWorld* World = GetWorld();
+		const double Now = World ? World->GetRealTimeSeconds() : 0.0;
+		if (!GetOwner() || Now < NextViewRigLookup)
+		{
+			return nullptr;
+		}
+		NextViewRigLookup = Now + 0.5;
+		ViewRig = GetOwner()->FindComponentByClass<UYggViewRigComponent>();
+	}
+	return ViewRig.Get();
 }
 
 float USurvivalComponent::GetElevationMeters() const

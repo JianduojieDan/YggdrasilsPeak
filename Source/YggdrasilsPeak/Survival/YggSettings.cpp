@@ -2,11 +2,13 @@
 
 #include "Survival/YggSettings.h"
 
+#include "Survival/SettingsWidget.h"
 #include "Survival/SnowTrailComponent.h"
 #include "Environment/YggQualitySubsystem.h"
 #include "AudioDevice.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Camera/CameraComponent.h"
+#include "Containers/Ticker.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/UserInterfaceSettings.h"
@@ -88,6 +90,44 @@ namespace
 		}));
 
 	float BaseYaw = 0.f, BasePitch = 0.f;
+
+	/** Frame generation "Auto" (camera spec §5.10): 2x; 3x or 4x only after the rendered (base) rate has held 55 fps for
+	 *  10 s, never more generated frames than the frame limit or the display can show (a 120 limit or a 144 Hz screen:
+	 *  2x; a 60 Hz screen: off). A step down (base under 45 fps for 3 s) also lowers the ceiling for the session, so it
+	 *  cannot flap; at most two steps up per session. */
+	struct FSettingsFgAuto
+	{
+		bool bOn = false;            // Auto chosen, DLSS-G running, and a higher step is possible: the ticker watches
+		int32 InUse = 0;             // frames generated now (0 off, 1..3 = 2x..4x)
+		int32 Max = 1;               // the ceiling now: the frame limit, the display and FailMax
+		int32 FailMax = 3;           // lowered for the session by each step down (a step that could not hold its base rate)
+		float Fps = 0.f, Good = 0.f, Bad = 0.f, Hold = 0.f;
+		FTSTicker::FDelegateHandle Handle;
+	};
+	FSettingsFgAuto& SettingsFgAuto() { static FSettingsFgAuto S; return S; }
+
+	bool SettingsFgAutoTick(float Dt)
+	{
+		FSettingsFgAuto& A = SettingsFgAuto();
+		if (!A.bOn) { A.Handle.Reset(); return false; }
+		// the core ticker runs once per rendered frame: generated frames never reach the game thread, so this is the base rate
+		if (Dt <= 0.f || Dt > 0.5f) { A.Good = 0.f; return true; }      // a load or a big hitch: start counting again
+		A.Fps += (1.f / Dt - A.Fps) * FMath::Min(1.f, Dt * 2.f);        // about half a second of smoothing
+		A.Hold = FMath::Max(0.f, A.Hold - Dt);
+		A.Good = A.Fps >= 55.f ? A.Good + Dt : 0.f;
+		A.Bad = A.Fps < 45.f ? A.Bad + Dt : 0.f;
+		int32 Next = A.InUse;
+		if (A.Hold <= 0.f && A.Good >= 10.f && A.InUse >= 1 && A.InUse < A.Max) { Next = A.InUse + 1; A.Hold = 10.f; }
+		else if (A.Bad >= 3.f && A.InUse > 1) { Next = A.InUse - 1; A.FailMax = Next; A.Max = FMath::Min(A.Max, A.FailMax); A.Hold = 60.f; }
+		if (Next != A.InUse)
+		{
+			UE_LOG(LogTemp, Display, TEXT("Settings: frame generation auto %dx -> %dx (base %.0f fps, ceiling %dx)"), A.InUse + 1, Next + 1, A.Fps, A.Max + 1);
+			A.InUse = Next;
+			A.Good = A.Bad = 0.f;
+			CVar(TEXT("r.Streamline.DLSSG.FramesToGenerate"), float(Next));
+		}
+		return true;
+	}
 }
 
 namespace YggSettings
@@ -132,6 +172,21 @@ namespace YggSettings
 	float FieldOfView() { return GetFloat(TEXT("FieldOfView"), 0.f); }
 	float Brightness() { return FMath::Clamp(GetFloat(TEXT("Brightness"), 0.f), -1.f, 1.f); }
 
+	int32 HeadMotionChoice() { return FMath::Clamp(GetInt(TEXT("HeadMotion"), 0), 0, 2); }
+	float HeadMotion() { static const float Scale[] = { 1.f, 0.4f, 0.f }; return Scale[HeadMotionChoice()]; }
+	bool StoryCameraGentle() { return GetInt(TEXT("StoryCamera"), 0) == 1; }
+	bool HeartbeatZoom() { return GetInt(TEXT("HeartbeatZoom"), 1) == 1; }
+	bool ComfortDot() { return GetInt(TEXT("ComfortDot"), 0) == 1; }
+
+	// Auto is the default from 2026-11-19; a saved 0..3 (off, 2x..4x) keeps its meaning
+	int32 FrameGenChoice() { return FMath::Clamp(GetInt(TEXT("FrameGen"), -1), -1, 3); }
+	int32 FrameGenInUse()
+	{
+		const IConsoleVariable* On = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Streamline.DLSSG.Enable"));
+		const IConsoleVariable* N = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Streamline.DLSSG.FramesToGenerate"));
+		return On && N && On->GetInt() != 0 ? FMath::Clamp(N->GetInt(), 0, 3) : 0;
+	}
+
 	const TCHAR* SoundKey(ESound Which)
 	{
 		static const TCHAR* const Keys[] = { TEXT("VolMaster"), TEXT("VolEffects"), TEXT("VolAmbience"), TEXT("VolVoices"), TEXT("VolInterface") };
@@ -140,7 +195,7 @@ namespace YggSettings
 	float Volume(ESound Which) { return FMath::Clamp(GetFloat(SoundKey(Which), 1.f), 0.f, 1.f); }
 	bool SoundInBackground() { return GetInt(TEXT("SoundInBackground"), 1) == 1; }
 
-	float Sensitivity() { return FMath::Clamp(GetFloat(TEXT("Sensitivity"), 1.f), 0.2f, 3.f); }
+	float Sensitivity() { return FMath::Clamp(GetFloat(TEXT("Sensitivity"), DefaultSensitivity), 0.2f, 3.f); }
 	bool InvertY() { return GetInt(TEXT("InvertY"), 0) == 1; }
 
 	float InterfaceScale() { return FMath::Clamp(GetFloat(TEXT("InterfaceScale"), 1.f), 0.8f, 1.3f); }
@@ -182,8 +237,44 @@ namespace YggSettings
 		const bool bDLSS = HasDLSS() && GetInt(TEXT("Upscaler"), 0) == 0;
 		CVar(TEXT("r.AntiAliasingMethod"), 4.f);
 		if (HasDLSS()) { CVar(TEXT("r.NGX.DLSS.Enable"), bDLSS ? 1.f : 0.f); }
-		// DLSS frame generation (RTX 40/50): 0 off, 1..3 = 2x..4x frames; Reflex keeps the latency down (always with frame generation)
-		const int32 FrameGen = bDLSS && HasFrameGeneration() ? FMath::Clamp(GetInt(TEXT("FrameGen"), 0), 0, 3) : 0;
+		// DLSS frame generation (RTX 40/50): saved -1 auto, 0 off, 1..3 = 2x..4x frames; Reflex keeps the latency down
+		// (always with frame generation). Auto (the default since 2026-11-19, camera spec §5.10) starts at 2x.
+		const bool bCanFrameGen = bDLSS && HasFrameGeneration();
+		const int32 FgChoice = FrameGenChoice();
+		int32 FrameGen = !bCanFrameGen ? 0 : (FgChoice < 0 ? 1 : FgChoice);
+		// under a frame cap, generated frames come out of the base rate: 4x under 120 fps locked the real rate at 30, and every
+		// camera turn smeared (prayer-flag trails, Lumen seams at the screen edges, 2026-11-19 play-test). A cap allows at
+		// most as many generated frames as keep the real rate near 55+: 120 -> 2x, 60 -> off; no cap = the player's choice
+		static const float CapFps[] = { 30.f, 60.f, 120.f, 0.f };
+		const float Cap = CapFps[FrameCap()];
+		if (Cap > 0.f) { FrameGen = FMath::Min(FrameGen, FMath::Max(0, FMath::FloorToInt(Cap / 55.f) - 1)); }
+		{
+			// Auto: the display is a cap too (frames it cannot show only add delay): 60 Hz -> off, 120-144 Hz -> 2x,
+			// 165 Hz -> up to 3x, 240 Hz -> up to 4x. Above 2x only after the base rate proved it (SettingsFgAutoTick).
+			FSettingsFgAuto& A = SettingsFgAuto();
+			A.bOn = false;
+			if (bCanFrameGen && FgChoice < 0)
+			{
+				const int32 DisplayMax = FMath::Clamp(FPlatformMisc::GetMaxRefreshRate() / 55 - 1, 0, 3);
+				const int32 Ceiling = Cap > 0.f ? FMath::Min(FrameGen, DisplayMax) : DisplayMax;
+				FrameGen = FMath::Min(FrameGen, DisplayMax);
+				A.Max = FMath::Min(Ceiling, A.FailMax);
+				// another setting applied while Auto had stepped up keeps that step instead of starting over at 2x
+				if (A.InUse >= 1 && A.InUse <= A.Max) { FrameGen = A.InUse; }
+				A.InUse = FrameGen;
+				A.bOn = FrameGen >= 1 && A.Max > 1;
+				if (A.bOn && !A.Handle.IsValid())
+				{
+					A.Fps = 0.f; A.Good = A.Bad = 0.f; A.Hold = 5.f;
+					A.Handle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&SettingsFgAutoTick));
+				}
+			}
+			else
+			{
+				A.InUse = 0;
+				A.Max = 1;
+			}
+		}
 		if (HasFrameGeneration())
 		{
 			CVar(TEXT("r.Streamline.DLSSG.Enable"), FrameGen > 0 ? 1.f : 0.f);
@@ -198,13 +289,28 @@ namespace YggSettings
 		// a light sharpen after the upscaler (2026-11-13, user: the snow looked blurry): fine snow grain survives the rebuild
 		CVar(TEXT("r.Tonemapper.Sharpen"), Up == 1 ? 0.25f : 0.5f);
 		CVar(TEXT("r.Lumen.HardwareRayTracing"), float(FMath::Clamp(GetInt(TEXT("RayTracing"), 1), 0, 1)));
-		if (GetInt(TEXT("MotionBlur"), 1) == 0) { CVar(TEXT("r.MotionBlurQuality"), 0.f); }
-		else if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionBlurQuality")); C && C->GetInt() == 0) { C->Set(4, ECVF_SetByConsole); }
+		// motion blur (camera spec §5.10): Off by default since 2026-11-19 - the full post-process blur smeared every turn on a
+		// 30 fps base. Low = a short, faint trail: amount 0.15, at most 2% of the screen width (the engine's override cvars,
+		// set at console priority so the scalability groups cannot put the full blur back). A saved 1 ("On") is now Low.
+		const int32 MotionBlur = FMath::Clamp(GetInt(TEXT("MotionBlur"), 0), 0, 1);
+		if (MotionBlur == 0)
+		{
+			CVar(TEXT("r.MotionBlurQuality"), 0.f);
+			CVar(TEXT("r.MotionBlur.Amount"), -1.f);
+			CVar(TEXT("r.MotionBlur.Max"), -1.f);
+		}
+		else
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MotionBlurQuality")); C && C->GetInt() == 0) { C->Set(4, ECVF_SetByConsole); }
+			CVar(TEXT("r.MotionBlur.Amount"), 0.15f);
+			CVar(TEXT("r.MotionBlur.Max"), 2.f);
+		}
 		if (const UGameUserSettings* U = GEngine ? GEngine->GetGameUserSettings() : nullptr)
 		{
-			UE_LOG(LogTemp, Display, TEXT("Settings: tier %d (%s), shadows %d, view distance %d, effects %d, textures %d, upscaling %d via %s, frame generation %d, ray tracing %d, footprints %d, motion blur %d"),
+			UE_LOG(LogTemp, Display, TEXT("Settings: tier %d (%s), shadows %d, view distance %d, effects %d, textures %d, upscaling %d via %s, frame generation %d%s, ray tracing %d, footprints %d, motion blur %s"),
 				Q ? Q->GetTierInUse() : -1, Tier < 0 ? TEXT("auto") : TEXT("fixed"), U->GetShadowQuality(), U->GetViewDistanceQuality(), U->GetVisualEffectQuality(), U->GetTextureQuality(),
-				Up, bDLSS ? TEXT("DLSS") : TEXT("TSR"), FrameGen, GetInt(TEXT("RayTracing"), 1), GetInt(TEXT("Footprints"), 1), GetInt(TEXT("MotionBlur"), 1));
+				Up, bDLSS ? TEXT("DLSS") : TEXT("TSR"), FrameGen, FgChoice < 0 ? TEXT(" (auto)") : TEXT(""), GetInt(TEXT("RayTracing"), 1), GetInt(TEXT("Footprints"), 1),
+				MotionBlur ? TEXT("low") : TEXT("off"));
 		}
 	}
 
@@ -214,7 +320,8 @@ namespace YggSettings
 		for (const TCHAR* Name : { TEXT("sg.ShadowQuality"), TEXT("sg.ViewDistanceQuality"), TEXT("sg.EffectsQuality"), TEXT("sg.TextureQuality"),
 			TEXT("sg.PostProcessQuality"), TEXT("sg.GlobalIlluminationQuality"), TEXT("r.ScreenPercentage"), TEXT("r.NGX.DLSS.Enable"),
 			TEXT("r.Streamline.DLSSG.Enable"), TEXT("r.Streamline.DLSSG.FramesToGenerate"), TEXT("t.Streamline.Reflex.Enable"),
-			TEXT("r.Lumen.HardwareRayTracing"), TEXT("r.MotionBlurQuality"), TEXT("r.Nanite.MaxPixelsPerEdge"), TEXT("t.MaxFPS"), TEXT("r.VSync") })
+			TEXT("r.Lumen.HardwareRayTracing"), TEXT("r.MotionBlurQuality"), TEXT("r.MotionBlur.Amount"), TEXT("r.MotionBlur.Max"), TEXT("r.Nanite.MaxPixelsPerEdge"),
+			TEXT("t.MaxFPS"), TEXT("r.VSync"), TEXT("ygg.View.HeadMotion") })
 		{
 			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name)) { S.Add(Name, C->GetString()); }
 		}
@@ -261,6 +368,17 @@ namespace YggSettings
 		S.Add(TEXT("[game] fps counter"), FString::FromInt(GetInt(TEXT("FpsCounter"), 0)));
 		S.Add(TEXT("[game] soft flashes"), SoftFlashes() ? TEXT("1") : TEXT("0"));
 		S.Add(TEXT("[game] colour vision"), FString::FromInt(ColourVision()));
+		// the camera rows (2026-11-19): read live by the view rig and the story
+		S.Add(TEXT("[game] head motion"), FString::SanitizeFloat(HeadMotion()));
+		S.Add(TEXT("[game] story camera"), StoryCameraGentle() ? TEXT("gentle") : TEXT("guided"));
+		S.Add(TEXT("[game] heartbeat zoom"), HeartbeatZoom() ? TEXT("1") : TEXT("0"));
+		S.Add(TEXT("[game] comfort dot"), ComfortDot() ? TEXT("1") : TEXT("0"));
+		S.Add(TEXT("[game] comfort dot shown"), UYggComfortDot::IsShown() ? TEXT("1") : TEXT("0"));
+		{
+			const int32 InUse = FrameGenInUse();
+			const FString Now = InUse > 0 ? FString::Printf(TEXT("%dx"), InUse + 1) : FString(TEXT("off"));
+			S.Add(TEXT("[graphics] frame generation"), FrameGenChoice() < 0 ? FString::Printf(TEXT("auto (%s now)"), *Now) : FString::FromInt(FrameGenChoice()));
+		}
 		return S;
 	}
 
@@ -290,14 +408,20 @@ namespace YggSettings
 
 	void ApplyView(UWorld* World)
 	{
-		// the player's range is 90-110 degrees (to-do #65); older saves may hold 70-89
-		const float Fov = FieldOfView() > 1.f ? FMath::Clamp(FieldOfView(), 90.f, 110.f) : 0.f;
+		// head motion: the view rig scales its step bob, breathing and landing by this cvar (camera spec §5.3); a console
+		// value set for tuning lasts until the next apply (a spawn or a settings change)
+		CVar(TEXT("ygg.View.HeadMotion"), HeadMotion());
+		UYggComfortDot::Apply(World, ComfortDot());
+		// the player's range is 80-110 degrees (camera spec §5.7; 90-110 before 2026-11-19, to-do #65); older saves may hold 70-79
+		const float Fov = FieldOfView() > 1.f ? FMath::Clamp(FieldOfView(), FovMin, FovMax) : 0.f;
 		APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
 		APawn* P = PC ? PC->GetPawn() : nullptr;
 		if (!P || Fov <= 1.f)
 		{
 			return;
 		}
+		// the camera components hold the settings FOV; story FOV terms are added on top by the rig's camera modifier and never
+		// written here (the hands keep the BP camera's first-person FOV 70)
 		TArray<UCameraComponent*> Cams;
 		P->GetComponents<UCameraComponent>(Cams);
 		for (UCameraComponent* C : Cams) { C->SetFieldOfView(Fov); }
@@ -375,7 +499,8 @@ namespace YggSettings
 		auto Remove = [](std::initializer_list<const TCHAR*> Keys) { for (const TCHAR* K : Keys) { GConfig->RemoveKey(Sec, K, GGameUserSettingsIni); Cache().Remove(K); } };
 		switch (Tab)
 		{
-		case 0: Remove({ TEXT("Units"), TEXT("Hud"), TEXT("HudSize"), TEXT("FpsCounter"), TEXT("BodyFx"), TEXT("Hints"), TEXT("FieldOfView") }); break;
+		case 0: Remove({ TEXT("Units"), TEXT("Hud"), TEXT("HudSize"), TEXT("FpsCounter"), TEXT("BodyFx"), TEXT("Hints"), TEXT("FieldOfView"),
+			TEXT("HeadMotion"), TEXT("StoryCamera"), TEXT("HeartbeatZoom") }); break;
 		case 1: Remove({ TEXT("Graphics"), TEXT("Upscaling"), TEXT("Upscaler"), TEXT("FrameGen"), TEXT("Reflex"), TEXT("RayTracing"), TEXT("Footprints"), TEXT("MotionBlur"), TEXT("GfxShadows"), TEXT("GfxViewDistance"), TEXT("GfxEffects"), TEXT("GfxTextures") }); break;
 		case 2:
 			Remove({ TEXT("FrameCap"), TEXT("FrameLimit"), TEXT("Brightness") });
@@ -386,7 +511,7 @@ namespace YggSettings
 			Remove({ TEXT("Sensitivity"), TEXT("InvertY") });
 			for (const FBinding& B : Registry()) { Rebind(World, B.Action, B.Default); }
 			break;
-		case 5: Remove({ TEXT("InterfaceScale"), TEXT("SoftFlashes"), TEXT("ColourVision") }); break;
+		case 5: Remove({ TEXT("InterfaceScale"), TEXT("SoftFlashes"), TEXT("ColourVision"), TEXT("ComfortDot") }); break;
 		default: break;
 		}
 		GConfig->Flush(false, GGameUserSettingsIni);

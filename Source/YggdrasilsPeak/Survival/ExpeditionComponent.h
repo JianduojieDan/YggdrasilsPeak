@@ -170,6 +170,20 @@ private:
 	static bool ReadNumber(const UObject* Object, const TCHAR* Name, double& Out);
 	static UObject* ReadObject(const UObject* Object, const TCHAR* Name);
 	void Say(const FText& Message, float Seconds = 6.f);
+	/** Say() for the expedition's own ambient lines (rope, camp, checkpoint, storm, death zone): held back while a story
+	 *  chapter runs, which owns the screen ("Off the rope" in the dawn tent, 2026-11-19 audit). Returns whether it was shown. */
+	bool SayAmbient(const FText& Message, float Seconds = 6.f);
+	/** A story chapter is playing (UYggStorySubsystem::IsRunning). */
+	bool IsStoryRunning() const;
+	/** Death and continue (Chapter1_Camera_Spec 4.4): everything the story and the view rig hold is let go at once and the
+	 *  view is put back to plain standing, so no posture, hold or takeover survives a death or a respawn. */
+	void ReleaseStoryAndView();
+	/** The rig's HardReset after a teleport (a cut: springs snap, posture stand) and the camera-cut flag for the renderer. */
+	void ResetViewAfterTeleport();
+	/** The view's facing for HardReset: the control rotation with a normalised pitch and no roll. */
+	FRotator ViewFacing() const;
+	/** The view rig on this pawn (created at runtime by UFirstPersonBodyComponent), looked up lazily and cached. */
+	class UYggViewRigComponent* FindViewRig();
 
 	TArray<TWeakObjectPtr<ARouteLandmark>> Camps;
 	TArray<TWeakObjectPtr<AFixedRope>> Ropes;
@@ -204,10 +218,13 @@ private:
 	void FinishRest();
 	float CampCheckTimer = 0.f;
 	float DisplayedHypoxia = 0.f;
-	// The body on the view (UpdateScreenEffect): M_PP_Body on the camera and a camera modifier, driven by a heart rate
+	// The body on the view (UpdateScreenEffect): M_PP_Body on the camera, and the view rig's body layers (shiver, spent
+	// head hang, heart FOV, pack stoop; UYggViewRigComponent::SetBody), driven by a heart rate
 	UPROPERTY(Transient)
 	TObjectPtr<class UMaterialInstanceDynamic> BodyMID;
-	TWeakObjectPtr<class UYggBodyCameraModifier> BodyCam;
+	TWeakObjectPtr<class UYggViewRigComponent> ViewRig;
+	double NextViewRigLookup = 0.0;
+	TWeakObjectPtr<class UInventoryComponent> CachedPack;   // the pack weight for the stoop (not "Pack": locals use that name)
 	float HeartRate = 64.f;
 	float HeartPhase = 0.f;
 	float DisplayedFrost = 0.f;

@@ -34,9 +34,12 @@ public:
 	UPROPERTY(EditAnywhere, Category="Rumble")
 	float FirstDelay = 12.f;
 
-	/** View shake at the peak (degrees). */
+	/** View shake at the peak (degrees), and how long it takes to die away (seconds). */
 	UPROPERTY(EditAnywhere, Category="Rumble")
 	float ShakeDegrees = 1.6f;
+
+	UPROPERTY(EditAnywhere, Category="Rumble", meta=(ClampMin="0.1"))
+	float ShakeSeconds = 3.f;
 
 	UPROPERTY(EditAnywhere, Category="Rumble")
 	TArray<TObjectPtr<USoundBase>> Booms;

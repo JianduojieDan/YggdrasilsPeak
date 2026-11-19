@@ -6,6 +6,7 @@
 #include "Survival/FirstPersonBodyComponent.h"
 #include "Survival/SurvivalComponent.h"
 #include "Survival/SurvivalConfig.h"
+#include "Survival/YggViewRig.h"
 #include "Components/DecalComponent.h"
 #include "Environment/CrevasseCrossing.h"
 #include "Kismet/GameplayStatics.h"
@@ -429,6 +430,7 @@ void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 	}
 	if (!bEnabled)
 	{
+		OtherPrints.Reset();
 		return;
 	}
 
@@ -440,13 +442,21 @@ void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 	}
 	FillTrailMap(DeltaTime);
 
-	// Only feet in snow press into it; deep powder all the way, hard crust just a little.
-	if (GroundSoftness <= 0.f && CurrentSink <= 0.5f)
+	// Only feet in snow press into it; deep powder all the way, hard crust just a little. Other people's prints
+	// (StampOtherFoot) are drawn whether or not the player stands in snow.
+	const bool bOwnFeet = GroundSoftness > 0.f || CurrentSink > 0.5f;
+	if (!bOwnFeet && OtherPrints.Num() == 0)
 	{
 		SoftenTrailMap();
 		return;
 	}
-	const float Depth = FMath::Max(GroundSoftness, 0.15f);
+	float Depth = FMath::Max(GroundSoftness, 0.15f);
+	if (!bOwnFeet)
+	{
+		// the boot instances carry one depth per frame (canvas batching): the deepest waiting print sets it
+		Depth = 0.15f;
+		for (const FOtherPrint& O : OtherPrints) { Depth = FMath::Max(Depth, O.Depth); }
+	}
 	BootInstances[0]->SetScalarParameterValue(TEXT("Depth"), Depth);
 	BootInstances[1]->SetScalarParameterValue(TEXT("Depth"), Depth);
 	BrushInstance->SetScalarParameterValue(TEXT("Depth"), Depth * 0.75f);
@@ -461,8 +471,16 @@ void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 	FVector2D CanvasSize;
 	FDrawToRenderTargetContext Context;
 	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, TrailMap, Canvas, CanvasSize, Context);
+	for (int32 i = OtherPrints.Num() - 1; i >= 0; --i)
+	{
+		FOtherPrint& O = OtherPrints[i];
+		const FVector2D Pixel = (O.At - TrailCentre) * PixelsPerCm + CanvasSize * 0.5f;
+		Canvas->K2_DrawMaterial(BootInstances[O.bLeft ? 1 : 0], Pixel - BootSize * 0.5f, BootSize, FVector2D::ZeroVector, FVector2D::UnitVector, O.Yaw, FVector2D(0.5f, 0.5f));
+		if (--O.Frames <= 0) { OtherPrints.RemoveAtSwap(i); }
+	}
 	for (const FFootState& Foot : Feet)
 	{
+		if (!bOwnFeet) { break; }
 		const FVector FootLocation = Body->GetSocketLocation(Foot.Bone);
 		if (Foot.bPlanted)
 		{
@@ -480,6 +498,37 @@ void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 	}
 	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, Context);
 	SoftenTrailMap();
+}
+
+bool USnowTrailComponent::StampOtherFoot(const FVector& FootLocation, const FVector& Forward, bool bLeft, const AActor* Who)
+{
+	if (!bTrailReady || CVarSnowDeform.GetValueOnGameThread() == 0 || FootprintQuality <= 0 || OtherPrints.Num() >= 48)
+	{
+		return false;
+	}
+	const FVector2D Sole = FVector2D(FootLocation + Forward * SoleForwardCm);
+	if (FMath::Abs(Sole.X - TrailCentre.X) > TrailAreaCm * 0.5f || FMath::Abs(Sole.Y - TrailCentre.Y) > TrailAreaCm * 0.5f)
+	{
+		return false;
+	}
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(SnowOtherFoot), false, Who);
+	Params.AddIgnoredActor(GetOwner());
+	Params.bReturnPhysicalMaterial = true;
+	Params.bReturnFaceIndex = true;   // rock faces of the detail tiles are known by their index (IsRock)
+	FHitResult Hit;
+	if (!GetWorld()->LineTraceSingleByChannel(Hit, FootLocation + FVector(0.f, 0.f, 60.f), FootLocation - FVector(0.f, 0.f, 80.f), ECC_Visibility, Params)
+		|| !IsSnow(Hit))
+	{
+		return false;
+	}
+	FOtherPrint O;
+	O.At = Sole;
+	O.Yaw = FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X));
+	O.Depth = FMath::Max(SnowSoftness(Hit.ImpactPoint, Hit.ImpactNormal), 0.15f);
+	O.Frames = 3;
+	O.bLeft = bLeft;
+	OtherPrints.Add(O);
+	return true;
 }
 
 void USnowTrailComponent::SoftenTrailMap()
@@ -515,6 +564,24 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 			{
 				if (PendingSteps[i].Set) { PlayStepFrom(*PendingSteps[i].Set, PendingSteps[i].Location); }
 				PendingSteps.RemoveAtSwap(i);
+			}
+		}
+	}
+	// notify steps whose boot has landed now (the crunch is heard): the step bob listens
+	if (PendingStepEvents.Num() > 0)
+	{
+		const double Now = GetWorld()->GetTimeSeconds();
+		for (int32 i = 0; i < PendingStepEvents.Num(); )
+		{
+			if (PendingStepEvents[i].At <= Now)
+			{
+				const FPendingStepEvent Event = PendingStepEvents[i];
+				PendingStepEvents.RemoveAt(i);   // in order: left and right never swap
+				BroadcastStep(Event.bLeft, Event.Surface);
+			}
+			else
+			{
+				++i;
 			}
 		}
 	}
@@ -597,7 +664,7 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 				UE_LOG(LogTemp, Warning, TEXT("SnowTrail: a step from the cadence net (#%d), plant detection missed it: speed %.0f, left foot %.1f cm (low %.1f high %.1f), right %.1f (low %.1f high %.1f), sink %.1f"),
 					CadenceSteps, Velocity.Size2D(), Feet[0].Height, Feet[0].Lowest, Feet[0].Highest, Feet[1].Height, Feet[1].Lowest, Feet[1].Highest, CurrentSink);
 			}
-			PlayFootstep(Hit);
+			PlayFootstep(Hit, !bLastStepLeft);   // no foot known here: the other one from the last step
 		}
 		TimeSinceStep = 0.f;
 	}
@@ -646,6 +713,9 @@ void USnowTrailComponent::OnFootContact(bool bLeft, USkeletalMeshComponent* Mesh
 	if (!Set) { return; }
 	if (Delay <= 0.005f) { PlayStepFrom(*Set, Hit.ImpactPoint); }
 	else { PendingSteps.Add({ Now + Delay, Set, Hit.ImpactPoint }); }
+	// The step itself is when the boot lands, StepNotifyLead from now, on every surface: snow's crunch peaks there and the
+	// hard ground's clips hit there (their delay above is that lead minus each clip's onset).
+	PendingStepEvents.Add({ Now + StepNotifyLead, bLeft, SurfaceOf(Set) });
 }
 
 void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirection, float DeltaTime)
@@ -717,7 +787,7 @@ void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirect
 		Foot.LowSeconds = 0.f;
 		if (!NotifiesActive())
 		{
-			PlayFootstep(Hit);   // fallback for clips without foot-contact notifies
+			PlayFootstep(Hit, Foot.bLeft);   // fallback for clips without foot-contact notifies
 		}
 		StampPrint(Hit, WalkDirection, Foot.bLeft);
 	}
@@ -876,7 +946,7 @@ void USnowTrailComponent::PlayStepFrom(const TArray<TObjectPtr<USoundBase>>& Set
 	UGameplayStatics::PlaySoundAtLocation(this, Set[Pick], Location, Volume, FMath::FRandRange(0.92f, 1.08f));
 }
 
-void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
+void USnowTrailComponent::PlayFootstep(const FHitResult& Hit, bool bLeft)
 {
 	// the fallback paths (foot height, cadence net): no notify lead to make up for, so everything plays at once
 	TimeSinceStep = 0.f;
@@ -884,6 +954,34 @@ void USnowTrailComponent::PlayFootstep(const FHitResult& Hit)
 	if (const TArray<TObjectPtr<USoundBase>>* Set = PickStepSet(Hit, Delay))
 	{
 		PlayStepFrom(*Set, Hit.ImpactPoint);
+		BroadcastStep(bLeft, SurfaceOf(Set));
+	}
+}
+
+uint8 USnowTrailComponent::SurfaceOf(const TArray<TObjectPtr<USoundBase>>* Set) const
+{
+	return Set == &RubbleSteps ? EYggStepSurface::Rock
+		: Set == &IceSteps ? EYggStepSurface::Ice
+		: Set == &LadderSteps ? EYggStepSurface::Ladder
+		: EYggStepSurface::Snow;
+}
+
+void USnowTrailComponent::BroadcastStep(bool bLeft, uint8 Surface)
+{
+	bLastStepLeft = bLeft;
+	const AActor* Owner = GetOwner();
+	const float Speed = Owner ? float(Owner->GetVelocity().Size2D()) : 0.f;
+	OnStep.Broadcast(bLeft, Speed, Surface);
+	// the step bob (Chapter1_Camera_Spec.md 5.3): fed straight to the rig, which exists only on the locally controlled pawn;
+	// checked to be this owner's, so another walker's steps can never move the player's eye, and skipped when the rig
+	// listens to OnStep itself (one step, one bob)
+	const APawn* Pawn = Cast<APawn>(Owner);
+	if (Pawn && Pawn->IsLocallyControlled())
+	{
+		if (UYggViewRigComponent* Rig = UYggViewRigComponent::Find(this); Rig && Rig->GetOwner() == Owner && !OnStep.IsBoundToObject(Rig))
+		{
+			Rig->OnStep(bLeft, Speed, Surface);
+		}
 	}
 }
 

@@ -15,12 +15,21 @@ class FYggMonitorLog;
 class FYggMonitorWorker;
 class FYggMonitorWatchdog;
 class FRunnableThread;
+struct FYggCamChecks;
+class UYggViewRigComponent;
+class UCameraComponent;
+class APawn;
 
 /**
  *  Writes Saved/Monitor/<date_time>/:
  *    session.txt  hardware, command line, every setting at the start (and later changes in events.csv)
  *    frames.csv   one row per frame: time, frame/game/render/RHI/GPU ms, presented FPS (DLSS frame generation), draw
- *                 calls, triangles, camera place and direction, turning speed, mouse movement, loading/streaming, flags
+ *                 calls, triangles, camera place and direction, turning speed, mouse movement, loading/streaming, flags;
+ *                 (2026-11-19, camera spec §10.2) the view: roll, posture, eye above the floor (cm), eyelids, the lens
+ *                 offset over the settings FOV (story_fov), nudge, leases, camera cut (1 flagged, 2 an unflagged jump
+ *                 of the camera over 5 m, 3 a new pawn or level) and the scripted takeover ("-" = the rig cannot tell)
+ *    camera_checks.md  the camera spec's §11 automatic checks (V1, V2, V4-V7, V14, V16, invariants) with PASS/FAIL,
+ *                 rewritten every 30 s and at the end (Tools/Monitor/analyze_session.py can fold it into report.md)
  *    seconds.csv  one row per second: FPS (avg, min, 1% low), the body (SpO2, heart, core, stamina, health...), what the
  *                 climber does, realm, time of day, air, memory, keys pressed, paused or in a menu
  *    events.csv   keys down/up, hitches (with the log lines around them), expedition messages, realm and settings
@@ -70,6 +79,15 @@ private:
 	void PollChanges();
 	void DrainLog();
 	void DrainWorker();
+	/** The view rig of the player's pawn (found again when the pawn changes, retried once a second while missing). */
+	UYggViewRigComponent* FindRig(APawn* Pawn);
+	/** One frame of the camera checks (camera spec §11), from the values just written to frames.csv. */
+	void CameraFrame(double T, float Dt, bool bPaused, bool bCursor, bool bPawnView, const FVector& Loc, const FRotator& Rot, const FRotator& Delta,
+		float Speed, float Eye, float Lid, float StoryFov, int32 Nudging, int32 Cut, int32 Scripted, int32 Posture, bool bMouseStill, bool bPawnHidden);
+	/** A log line the camera checks count (cuts, repairs, expired leases, automatic blinks, nudges, teleports). */
+	void CameraLogLine(const FString& Line, double T);
+	/** camera_checks.md: the §11 checks as a table with PASS / FAIL / INFO and the moments behind each. */
+	FString CameraReport() const;
 
 	bool bOn = false;
 	FString Dir;
@@ -102,6 +120,21 @@ private:
 	FString PendingShot;
 	FDelegateHandle ShotHandle;
 	class IImageWrapperModule* ImageWrappers = nullptr;
+	// the view rig and the camera checks (2026-11-19)
+	TWeakObjectPtr<UYggViewRigComponent> Rig;
+	TWeakObjectPtr<APawn> RigPawn;
+	double NextRigFind = 0.0;
+	TArray<TWeakObjectPtr<UCameraComponent>> PawnCams;  // the pawn's cameras: the active one holds the settings FOV
+	double LevelT = -100.0;                             // when the current level appeared (its first 6 s are loading)
+	bool bCutLog = false;                               // a "camera cut" log line arrived this frame
+	bool bLastMouseStill = false, bLastCut = false;
+	FVector LastLoc = FVector::ZeroVector;              // last frame's camera place (an unflagged jump of over 5 m is a hard cut)
+	float LastLid = 0.f;                                // for the hitch events (a stall with the eyes open, V16)
+	bool bLastPlay = false;
+	int64 LastLeaseMask = -2;
+	FString LastLeaseText, LastAuditShape;
+	double LastCamReport = 0.0;
+	TSharedPtr<FYggCamChecks> Cam;                      // shared: its deleter is made in the .cpp where the type is complete
 
 	TSharedPtr<FYggMonitorInput> Input;
 	TSharedPtr<FYggMonitorLog> LogDevice;      // shared: its deleter is made in the .cpp where the type is complete

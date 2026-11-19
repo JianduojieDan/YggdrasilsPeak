@@ -6,27 +6,30 @@ m = unreal.load_asset(f"{D}/M_PrayerFlag") or at.create_asset("M_PrayerFlag", D,
 mel.delete_all_material_expressions(m)
 m.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED); m.set_editor_property("two_sided", True)
 m.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_TWO_SIDED_FOLIAGE)   # sunlight glows through the cloth
-c = mel.create_material_expression(m, unreal.MaterialExpressionCustom, -500, 0)
-c.set_editor_property("code", open("F:/UE_project/YggdrasilsPeak/Tools/Materials/M_PrayerFlag.hlsl").read())
-c.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT4)
-ins = []
-for n in ["UV", "Col", "Rand"]:
-    i = unreal.CustomInput(); i.set_editor_property("input_name", n); ins.append(i)
-c.set_editor_property("inputs", ins)
+# 2026-11-20: the cloth is a real printed lungta texture (Art/PrayerFlags/T_PrayerFlag_<colour>.png, from one Meshy image of five
+# flags: wind horse, four animals, mantra rows, frayed bottom threads in the alpha) instead of the old procedural print and
+# spiky edge (user: "the flags look fake"). Color stays as a tint (white = as printed).
+TD = f"{D}/Flags"
+TEX = {}
+for k in ("Blue", "White", "Red", "Green", "Yellow"):
+    tk = unreal.AssetImportTask(); tk.filename = f"F:/UE_project/YggdrasilsPeak/Art/PrayerFlags/T_PrayerFlag_{k}.png"
+    tk.destination_path = TD; tk.automated = True; tk.replace_existing = True; tk.save = True
+    at.import_asset_tasks([tk])
+    tx = unreal.load_asset(f"{TD}/T_PrayerFlag_{k}")
+    tx.set_editor_property("compression_settings", unreal.TextureCompressionSettings.TC_DEFAULT)
+    tx.set_editor_property("lod_group", unreal.TextureGroup.TEXTUREGROUP_WORLD)
+    unreal.EditorAssetLibrary.save_loaded_asset(tx); TEX[k] = tx
 uv = mel.create_material_expression(m, unreal.MaterialExpressionTextureCoordinate, -900, -100)
-col = mel.create_material_expression(m, unreal.MaterialExpressionVectorParameter, -900, 0); col.set_editor_property("parameter_name", "Color")
 pos = mel.create_material_expression(m, unreal.MaterialExpressionObjectPositionWS, -900, 150)
-fr = mel.create_material_expression(m, unreal.MaterialExpressionFrac, -750, 150)
-dv = mel.create_material_expression(m, unreal.MaterialExpressionDivide, -820, 150); dv.set_editor_property("const_b", 97.0)
-mel.connect_material_expressions(pos, "", dv, "A")
-mk = mel.create_material_expression(m, unreal.MaterialExpressionComponentMask, -680, 150); mk.set_editor_property("r", True)
-mel.connect_material_expressions(dv, "", fr, ""); mel.connect_material_expressions(fr, "", mk, "")
-mel.connect_material_expressions(uv, "", c, "UV"); mel.connect_material_expressions(col, "", c, "Col"); mel.connect_material_expressions(mk, "", c, "Rand")
-rgb = mel.create_material_expression(m, unreal.MaterialExpressionComponentMask, -200, 0)
-for k in "rgb": rgb.set_editor_property(k, True)
-a = mel.create_material_expression(m, unreal.MaterialExpressionComponentMask, -200, 100); [a.set_editor_property(k, k == "a") for k in ("r", "g", "b", "a")]  # alpha ONLY (r+g+a fed the red channel into the mask: holes, 2026-11-14)
-mel.connect_material_expressions(c, "", rgb, ""); mel.connect_material_expressions(c, "", a, "")
-mel.connect_material_property(rgb, "", unreal.MaterialProperty.MP_BASE_COLOR); mel.connect_material_property(a, "", unreal.MaterialProperty.MP_OPACITY_MASK)
+tex = mel.create_material_expression(m, unreal.MaterialExpressionTextureSampleParameter2D, -650, -50)
+tex.set_editor_property("parameter_name", "FlagTex"); tex.set_editor_property("texture", TEX["Blue"])
+mel.connect_material_expressions(uv, "", tex, "UVs")
+col = mel.create_material_expression(m, unreal.MaterialExpressionVectorParameter, -650, 150); col.set_editor_property("parameter_name", "Color")
+col.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
+rgb = mel.create_material_expression(m, unreal.MaterialExpressionMultiply, -350, 0)
+mel.connect_material_expressions(tex, "RGB", rgb, "A"); mel.connect_material_expressions(col, "", rgb, "B")
+mel.connect_material_property(rgb, "", unreal.MaterialProperty.MP_BASE_COLOR)
+mel.connect_material_property(tex, "A", unreal.MaterialProperty.MP_OPACITY_MASK)
 r = mel.create_material_expression(m, unreal.MaterialExpressionConstant, -200, 200); r.set_editor_property("r", 0.85)
 mel.connect_material_property(r, "", unreal.MaterialProperty.MP_ROUGHNESS)
 # light through the cloth: its own colour
@@ -55,11 +58,12 @@ mel.connect_material_property(w, "", unreal.MaterialProperty.MP_WORLD_POSITION_O
 mel.recompile_material(m); unreal.EditorAssetLibrary.save_loaded_asset(m)
 tk = unreal.AssetImportTask(); tk.filename = "F:/UE_project/YggdrasilsPeak/Saved/Realms/SM_PrayerFlag.glb"; tk.destination_path = D; tk.destination_name = "SM_PrayerFlag"; tk.automated = True; tk.replace_existing = True; tk.save = True
 at.import_asset_tasks([tk]); print(list(tk.imported_object_paths)[:4])
-COL = {"Blue": (0.07, 0.17, 0.36), "White": (0.62, 0.6, 0.53), "Red": (0.38, 0.06, 0.04), "Green": (0.06, 0.2, 0.09), "Yellow": (0.5, 0.33, 0.06)}
+COL = {"Blue": (1, 1, 1), "White": (0.95, 0.95, 0.93), "Red": (1, 1, 1), "Green": (1, 1, 1), "Yellow": (1, 1, 1)}   # tints over the printed texture
 for k, v in COL.items():
     n = f"MI_PrayerFlag_{k}"
     mi = unreal.load_asset(f"{D}/{n}") or at.create_asset(n, D, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
     mi.set_editor_property("parent", m)
     unreal.MaterialEditingLibrary.set_material_instance_vector_parameter_value(mi, "Color", unreal.LinearColor(v[0], v[1], v[2], 1))
+    unreal.MaterialEditingLibrary.set_material_instance_texture_parameter_value(mi, "FlagTex", TEX[k])
     unreal.EditorAssetLibrary.save_loaded_asset(mi)
 print("flags ok")

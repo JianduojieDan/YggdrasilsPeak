@@ -24,8 +24,9 @@
 #include "Camera/CameraComponent.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Environment/RealmSky.h"
-#include "Survival/YggBodyCameraModifier.h"
 #include "Survival/YggTelemetryComponent.h"
+#include "Survival/YggViewRig.h"
+#include "Story/YggStory.h"
 #include "Survival/YggSettings.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/Engine.h"
@@ -248,12 +249,12 @@ void UExpeditionComponent::UpdateWeather()
 	if (!bStormWarned && StormStrength > 0.45f)
 	{
 		bStormWarned = true;
-		Say(NSLOCTEXT("Expedition", "Storm", "A blizzard is coming in. Get to a camp or keep moving."), 7.f);
+		SayAmbient(NSLOCTEXT("Expedition", "Storm", "A blizzard is coming in. Get to a camp or keep moving."), 7.f);
 	}
 	else if (bStormWarned && StormStrength < 0.2f)
 	{
 		bStormWarned = false;
-		Say(NSLOCTEXT("Expedition", "StormOver", "The storm is passing."), 4.f);
+		SayAmbient(NSLOCTEXT("Expedition", "StormOver", "The storm is passing."), 4.f);
 	}
 }
 
@@ -321,14 +322,15 @@ void UExpeditionComponent::UpdateRope()
 	Survival->SetOnRope(bOnRope);
 	Character->GetCharacterMovement()->SetWalkableFloorAngle(bOnRope ? FMath::Max(RopeWalkableFloorAngle, DefaultWalkableFloorAngle) : DefaultWalkableFloorAngle);
 
+	// held back while a story chapter runs (the Balcony rope in the prologue, "Off the rope" after the dawn cut); the first
+	// clip-in is explained the next time it can be shown
 	if (bOnRope && !bRopeExplained)
 	{
-		bRopeExplained = true;
-		Say(NSLOCTEXT("Expedition", "RopeFirst", "Clipped to the fixed rope. Follow it up."), 7.f);
+		bRopeExplained = SayAmbient(NSLOCTEXT("Expedition", "RopeFirst", "Clipped to the fixed rope. Follow it up."), 7.f);
 	}
 	else if (!bOnRope)
 	{
-		Say(NSLOCTEXT("Expedition", "RopeOff", "Off the rope. Find the yellow line again."), 4.f);
+		SayAmbient(NSLOCTEXT("Expedition", "RopeOff", "Off the rope. Find the yellow line again."), 4.f);
 	}
 }
 
@@ -390,7 +392,7 @@ void UExpeditionComponent::UpdateCamps()
 	const bool bNew = LastCamp.Get() != Inside;
 	LastCamp = Inside;
 	SaveCheckpoint(Inside, Inside->LandmarkName);
-	Say(FText::Format(bNew ? NSLOCTEXT("Expedition", "CampNew", "{0} - shelter. Checkpoint saved.  [R] rest")
+	SayAmbient(FText::Format(bNew ? NSLOCTEXT("Expedition", "CampNew", "{0} - shelter. Checkpoint saved.  [R] rest")
 		: NSLOCTEXT("Expedition", "Camp", "{0} - shelter.  [R] rest"), FText::FromString(Inside->LandmarkName)), 5.f);
 }
 
@@ -401,6 +403,8 @@ void UExpeditionComponent::HandleDeath()
 	{
 		Character->GetCharacterMovement()->DisableMovement();
 	}
+	// nothing the story or the view held (a posture, a hold, the slip, the fly-out) outlives a death
+	ReleaseStoryAndView();
 
 	const FText Cause = Survival.IsValid() && !Survival->GetDeathCause().IsEmpty() ? Survival->GetDeathCause()
 		: NSLOCTEXT("Expedition", "Died", "You died.");
@@ -439,6 +443,9 @@ void UExpeditionComponent::ShowDeathScreen()
 
 void UExpeditionComponent::Respawn()
 {
+	// continue after a death: let go again (a story beat may have taken a lease while the death screen was up); the
+	// teleport below then snaps the view's springs (TeleportNear -> HardReset)
+	ReleaseStoryAndView();
 	if (LastCheckpoint.IsValid())
 	{
 		TeleportNear(LastCheckpoint.Get());
@@ -514,7 +521,7 @@ void UExpeditionComponent::UpdateTrailCheckpoints()
 			&& FVector::DistSquared2D(Here, Point->GetActorLocation()) < FMath::Square(Point->Radius))
 		{
 			SaveCheckpoint(Point.Get(), Point->CheckpointName);
-			Say(FText::Format(NSLOCTEXT("Expedition", "TrailCheckpoint", "{0} - checkpoint saved."), FText::FromString(Point->CheckpointName)), 4.f);
+			SayAmbient(FText::Format(NSLOCTEXT("Expedition", "TrailCheckpoint", "{0} - checkpoint saved."), FText::FromString(Point->CheckpointName)), 4.f);
 			return;
 		}
 	}
@@ -577,7 +584,7 @@ void UExpeditionComponent::LoadSavedExpedition()
 		Pack->SetItems(Save->Items);
 		Pack->SaveCheckpoint();
 	}
-	Say(FText::Format(NSLOCTEXT("Expedition", "Continue", "Continuing from {0}. (Console: ygg.NewGame for a fresh start.)"),
+	SayAmbient(FText::Format(NSLOCTEXT("Expedition", "Continue", "Continuing from {0}. (Console: ygg.NewGame for a fresh start.)"),
 		FText::FromString(Save->CampName)), 6.f);
 }
 
@@ -646,6 +653,7 @@ void UExpeditionComponent::TeleportNear(AActor* Where)
 	const FVector Target = Where->GetActorLocation() + FVector(-400.f, 0.f, Character->GetSimpleCollisionHalfHeight() + 150.f);
 	Character->TeleportTo(Target, Character->GetActorRotation(), false, true);
 	Character->GetCharacterMovement()->StopMovementImmediately();
+	ResetViewAfterTeleport();
 	// the climber spawns in the air at the level's start and falls; without this the teleport down to the camp counted
 	// as part of that fall: "A hard landing", -25 health on every continue (seen by the session monitor 2026-11-13)
 	if (UClimbingComponent* Climb = Character->FindComponentByClass<UClimbingComponent>()) { Climb->ForgetFall(); }
@@ -665,11 +673,18 @@ void UExpeditionComponent::UpdateScreenEffect(float DeltaTime)
 	const float Target = HypoxiaScreenEffect * FMath::Clamp((Survival->GetOxygenFatigueBelow() - Oxygen) / FMath::Max(Survival->GetOxygenFatigueBelow() - Survival->GetOxygenDamageBelow(), 1.f), 0.f, 1.f);
 	DisplayedHypoxia = FMath::FInterpTo(DisplayedHypoxia, Target, DeltaTime, 1.5f);
 
+	// test switches (ygg.Body.*, -1 = off) hold a state for screenshots
+	const auto Held = [](const TCHAR* Name, float Live) { const IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(Name); return V && V->GetFloat() >= 0.f ? V->GetFloat() : Live; };
+
+	// Thin air on the whole screen (Chapter1_Camera_Spec 5.9, "the screen dims"): the vignette rests at 0.2 (it was held at
+	// 0.4 or more, on top of the level's own) and the colour is only overridden while the air is thin, so while the body is
+	// fine the level's and Ultra Dynamic Sky's own grading win. Follows ygg.Body.Hypoxia too (the V9 dimming check).
+	const float ScreenHyp = Held(TEXT("ygg.Body.Hypoxia"), DisplayedHypoxia);
 	FPostProcessSettings& PP = Camera->PostProcessSettings;
 	PP.bOverride_VignetteIntensity = true;
-	PP.VignetteIntensity = FMath::Lerp(0.4f, 0.9f, DisplayedHypoxia);   // the tunnel in M_PP_Body does the rest
-	PP.bOverride_ColorSaturation = true;
-	const float Saturation = FMath::Lerp(1.f, 0.55f, DisplayedHypoxia);
+	PP.VignetteIntensity = FMath::Lerp(0.2f, 0.6f, ScreenHyp);   // the tunnel in M_PP_Body does the rest
+	PP.bOverride_ColorSaturation = ScreenHyp > 0.01f;
+	const float Saturation = FMath::Lerp(1.f, 0.55f, ScreenHyp);
 	PP.ColorSaturation = FVector4(Saturation, Saturation, Saturation, 1.f);
 	Camera->PostProcessBlendWeight = 1.f;
 
@@ -701,9 +716,7 @@ void UExpeditionComponent::UpdateScreenEffect(float DeltaTime)
 	DisplayedExhaust = FMath::FInterpTo(DisplayedExhaust, ExTarget, DeltaTime, 1.5f);
 	DisplayedFaint = FMath::FInterpTo(DisplayedFaint, FMath::Clamp((Survival->GetOxygenDamageBelow() - Oxygen) / 10.f, 0.f, 1.f), DeltaTime, 0.8f);
 
-	// test switches (ygg.Body.*, -1 = off) hold a state for screenshots
-	const auto Held = [](const TCHAR* Name, float Live) { const IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(Name); return V && V->GetFloat() >= 0.f ? V->GetFloat() : Live; };
-	float Hyp = Held(TEXT("ygg.Body.Hypoxia"), DisplayedHypoxia), Frost = Held(TEXT("ygg.Body.Frost"), DisplayedFrost);
+	float Hyp = ScreenHyp, Frost = Held(TEXT("ygg.Body.Frost"), DisplayedFrost);
 	float Ex = Held(TEXT("ygg.Body.Exhaust"), DisplayedExhaust), Faint = Held(TEXT("ygg.Body.Faint"), DisplayedFaint);
 	float Shiver = Held(TEXT("ygg.Body.Shiver"), FMath::Clamp((C->NormalTemperature - 1.2f - Core) / 2.2f, 0.f, 1.f));
 	// Settings > Game > Body effects: Full, Reduced (half strength, no shaking or swaying), Off (the HUD still warns)
@@ -739,26 +752,23 @@ void UExpeditionComponent::UpdateScreenEffect(float DeltaTime)
 		if (Entry) { Entry->Weight = Weight; }
 		else { PP.WeightedBlendables.Array.Add(FWeightedBlendable(Weight, BodyMID)); }
 	}
-	if (!BodyCam.IsValid())
+	// The body on the view itself goes through the view rig, the one writer of the view (Chapter1_Camera_Spec 5.4): it
+	// turns these into a shiver band-limited under the frame rate (the old 8-13 Hz one aliased into jitter at 30 fps),
+	// the spent head hang (no more continuous roll), the heart FOV above 7,000 m (raw lub-dub: the rig weighs it by
+	// max(hypoxia, exhaust x 0.7)) and the pack stoop. Body effects Reduced / Off keep "no shaking or swaying" as before;
+	// the rig's own Head motion setting scales the rest.
+	if (UYggViewRigComponent* Rig = FindViewRig())
 	{
-		const APawn* Pawn = Cast<APawn>(GetOwner());
-		if (APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr)
-		{
-			if (PC->PlayerCameraManager) { BodyCam = Cast<UYggBodyCameraModifier>(PC->PlayerCameraManager->AddNewCameraModifier(UYggBodyCameraModifier::StaticClass())); }
-		}
-	}
-	if (BodyCam.IsValid())
-	{
-		BodyCam->Shiver = Shiver;
-		BodyCam->Sway = BodyFx == 0 ? Ex * 0.8f : 0.f;
-		BodyCam->Pulse = Beat * HeartShown;
+		if (!CachedPack.IsValid()) { CachedPack = GetOwner()->FindComponentByClass<UInventoryComponent>(); }
+		const float PackKg = CachedPack.IsValid() ? CachedPack->GetLoadKg() : 0.f;
+		Rig->SetBody(Shiver, BodyFx == 0 ? Ex : 0.f, Beat, Hyp, PackKg);
 	}
 
 	// the death zone: said once on the way up, again after going back below 7,850 m
 	if (!bDeathZoneSaid && Snap.ElevationMeters >= 8000.f)
 	{
-		bDeathZoneSaid = true;
-		Say(NSLOCTEXT("Expedition", "DeathZone", "8,000 metres. The death zone: up here the body is slowly dying."), 8.f);
+		bDeathZoneSaid = true;   // also when held back by a story (the prologue on the Balcony): not said late, every frame
+		SayAmbient(NSLOCTEXT("Expedition", "DeathZone", "8,000 metres. The death zone: up here the body is slowly dying."), 8.f);
 	}
 	else if (bDeathZoneSaid && Snap.ElevationMeters < 7850.f)
 	{
@@ -770,6 +780,84 @@ void UExpeditionComponent::Say(const FText& Message, float Seconds)
 {
 	UE_LOG(LogSurvival, Log, TEXT("Expedition: %s"), *Message.ToString());
 	OnMessage.Broadcast(Message, Seconds);
+}
+
+bool UExpeditionComponent::SayAmbient(const FText& Message, float Seconds)
+{
+	if (IsStoryRunning())
+	{
+		// still in the log, so the session monitor sees what the expedition would have said
+		UE_LOG(LogSurvival, Log, TEXT("Expedition (held, story running): %s"), *Message.ToString());
+		return false;
+	}
+	Say(Message, Seconds);
+	return true;
+}
+
+bool UExpeditionComponent::IsStoryRunning() const
+{
+	const UWorld* World = GetWorld();
+	const UYggStorySubsystem* Story = World ? World->GetSubsystem<UYggStorySubsystem>() : nullptr;
+	return Story && Story->IsRunning();
+}
+
+UYggViewRigComponent* UExpeditionComponent::FindViewRig()
+{
+	// created at runtime by UFirstPersonBodyComponent::BeginPlay (local pawn only), maybe after this BeginPlay: looked up
+	// lazily, at most twice a second while it is missing
+	if (!ViewRig.IsValid() && GetOwner() && GetWorld())
+	{
+		const double Now = GetWorld()->GetRealTimeSeconds();
+		if (Now >= NextViewRigLookup)
+		{
+			NextViewRigLookup = Now + 0.5;
+			ViewRig = GetOwner()->FindComponentByClass<UYggViewRigComponent>();
+		}
+	}
+	return ViewRig.Get();
+}
+
+FRotator UExpeditionComponent::ViewFacing() const
+{
+	const APawn* Pawn = Cast<APawn>(GetOwner());
+	FRotator Facing = Pawn && Pawn->GetController() ? Pawn->GetController()->GetControlRotation()
+		: (GetOwner() ? GetOwner()->GetActorRotation() : FRotator::ZeroRotator);
+	// control pitch is stored 0..360: never hand that on (the story's backflips, spec rule R2)
+	Facing.Pitch = FRotator::NormalizeAxis(Facing.Pitch);
+	Facing.Yaw = FRotator::NormalizeAxis(Facing.Yaw);
+	Facing.Roll = 0.f;
+	return Facing;
+}
+
+void UExpeditionComponent::ReleaseStoryAndView()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UYggStorySubsystem* Story = World->GetSubsystem<UYggStorySubsystem>(); Story && Story->IsRunning())
+		{
+			Story->ReleaseAll();
+		}
+	}
+	if (UYggViewRigComponent* Rig = FindViewRig())
+	{
+		Rig->ReleaseAll(0.f);   // death lets go at once, no blend
+		Rig->HardReset(ViewFacing());
+	}
+}
+
+void UExpeditionComponent::ResetViewAfterTeleport()
+{
+	// every teleport is a cut (spec 6.7): no motion blur or temporal smear across it, and the eye's springs snap instead of
+	// gliding the whole distance
+	const APawn* Pawn = Cast<APawn>(GetOwner());
+	if (const APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr)
+	{
+		if (PC->PlayerCameraManager) { PC->PlayerCameraManager->SetGameCameraCutThisFrame(); }
+	}
+	if (UYggViewRigComponent* Rig = FindViewRig())
+	{
+		Rig->HardReset(ViewFacing());
+	}
 }
 
 // ---- Console: jump between camps for testing ----
@@ -804,6 +892,13 @@ void UExpeditionComponent::Rest()
 	APlayerController* PC = Character ? Cast<APlayerController>(Character->GetController()) : nullptr;
 	if (!Character || !Survival.IsValid() || bResting || Survival->IsDead())
 	{
+		return;
+	}
+	// a story chapter holds the clock, the camera and the body (the dawn tent is inside the Dingboche shelter): a rest
+	// would fade to black and jump the time under it
+	if (IsStoryRunning())
+	{
+		UE_LOG(LogSurvival, Log, TEXT("Expedition: rest ignored while the story runs"));
 		return;
 	}
 	if (!Survival->IsSheltered())

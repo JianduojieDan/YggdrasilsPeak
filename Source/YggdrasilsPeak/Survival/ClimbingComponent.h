@@ -180,6 +180,11 @@ private:
 	void OnClimbPressed();
 	void OnLetGoPressed();
 	void OnClimbReleased();
+	/** Not posed and not held by the story (the view rig): a grab or a jump may start. True without a rig. */
+	bool IsBodyFree() const;
+	/** The capsule's yaw is held to the face while climbing (bUseControllerRotationYaw off) and handed back on letting go:
+	 *  to the view rig's walking state when there is a rig (it owns that flag), else to the value from the grab. */
+	void HoldBodyYaw(bool bHold);
 
 	UFUNCTION()
 	void HandleLanded(const FHitResult& Hit);

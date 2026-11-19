@@ -399,6 +399,10 @@ def main():
         for k, v in rep.most_common(15):
             w(f'- {v:,} x  {k}')
 
+    # the game's own camera checks (YggSessionMonitor, spec V1-V16), one heading level down
+    if os.path.exists(D + '/camera_checks.md'):
+        out += [''] + [('#' + l if l.startswith('#') else l) for l in open(D + '/camera_checks.md', encoding='utf-8-sig').read().splitlines()]
+
     with open(D + '/report.md', 'w', encoding='utf-8') as f:
         f.write('\n'.join(out) + '\n')
 

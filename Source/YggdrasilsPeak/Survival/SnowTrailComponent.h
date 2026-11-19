@@ -14,6 +14,22 @@ class UNiagaraSystem;
 class UTextureRenderTarget2D;
 class USkeletalMeshComponent;
 
+/** One step lands: which foot (true = left), the walking speed (cm/s) and the surface (EYggStepSurface as uint8). Sent at
+ *  the moment the crunch is heard (Chapter1_Camera_Spec.md 5.3: the step bob is locked to the footstep sound). */
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnYggStep, bool /*bLeft*/, float /*SpeedCmS*/, uint8 /*Surface*/);
+
+/** The Surface of FOnYggStep: which footstep sounds played (the same ground the prints and the sinking read). */
+namespace EYggStepSurface
+{
+	enum Type : uint8
+	{
+		Snow = 0,
+		Ice = 1,
+		Rock = 2,      // moraine rubble and rock (the rig adds a rough micro-dip here)
+		Ladder = 3,
+	};
+}
+
 /**
  *  The owner's trail through the snow.
  *
@@ -41,6 +57,16 @@ public:
 	/** How long before the foot lands the notifies come (Tools/Anim/add_footstep_notifies.py places them so). The
 	 *  snow steps the user approved started this early: their crunch builds up and peaks as the boot lands. */
 	static constexpr float StepNotifyLead = 0.155f;
+
+	/** Another person's boot (story NPCs walking with the player): presses a print into the same trail map as the
+	 *  player's own, on the next few frames. FootLocation = the foot bone, Forward = where the person walks. Only the
+	 *  mountain's snow takes it (one short trace); outside the trail map (TrailAreaCm round the player) it is dropped. */
+	bool StampOtherFoot(const FVector& FootLocation, const FVector& Forward, bool bLeft, const AActor* Who);
+
+	/** Every step of the owner, at the moment its sound is heard: a notify's step when its boot lands (the snow crunch
+	 *  peaks there, the hard ground's clips hit there), the fallbacks (foot height, cadence net) at once. The view rig
+	 *  is fed directly (UYggViewRigComponent::OnStep) unless it has bound itself here: one step, one bob either way. */
+	FOnYggStep OnStep;
 
 	/** Decal material for one boot print (decal colour: R = left foot, A = depth 0..1). */
 	UPROPERTY(EditAnywhere, Category="Snow Trail")
@@ -249,7 +275,17 @@ private:
 
 	/** Samples the snow under the player and eases the body's sink depth towards it. */
 	void UpdateSinking(float DeltaTime);
-	void PlayFootstep(const FHitResult& Hit);
+	/** A fallback step (foot height, cadence net): its sound now, and OnStep for that foot. */
+	void PlayFootstep(const FHitResult& Hit, bool bLeft);
+	/** OnStep, and the view rig's step bob (only for the locally controlled owner's own rig). */
+	void BroadcastStep(bool bLeft, uint8 Surface);
+	/** Which EYggStepSurface a set of footstep sounds stands for. */
+	uint8 SurfaceOf(const TArray<TObjectPtr<USoundBase>>* Set) const;
+	/** The foot of the last step: the cadence net, which has no foot, alternates from it. */
+	bool bLastStepLeft = false;
+	/** Notify steps wait for their boot to land before OnStep (the moment the crunch is heard). */
+	struct FPendingStepEvent { double At = 0.0; bool bLeft = false; uint8 Surface = 0; };
+	TArray<FPendingStepEvent> PendingStepEvents;
 	float BaseTrailAreaCm = -1.f, BaseRecentreCm = -1.f;
 	int32 AppliedQuality = -1;
 public:
@@ -348,6 +384,9 @@ private:
 	TObjectPtr<USkeletalMeshComponent> Body;
 
 	FFootState Feet[2];
+	/** Prints from other people (StampOtherFoot), drawn into the trail map for a few frames. */
+	struct FOtherPrint { FVector2D At; float Yaw = 0.f; float Depth = 0.f; int32 Frames = 0; bool bLeft = false; };
+	TArray<FOtherPrint> OtherPrints;
 	int32 NextPrint = 0;
 	bool bStormFilling = false;
 

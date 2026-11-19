@@ -18,10 +18,16 @@ def skeleton():
         if p and EAL.does_asset_exist(p): return unreal.load_asset(p)
 
 
+# textures whose source changed (e.g. logos painted out of the shoe scans): Saved/ReimportTextures.txt, one name per line
+_RF = "F:/UE_project/YggdrasilsPeak/Saved/ReimportTextures.txt"
+REIMPORT = set(open(_RF).read().split()) if os.path.exists(_RF) else set()
+
+
 def tex(name, kind):
     path = f"{TEX}/{name}"
-    if not EAL.does_asset_exist(path):
-        src = f"{GSRC}/{name}.png" if (name in ("T_Pangden", "T_ScarfPrint", "T_White_Linear") or name.startswith("T_scan_")) else f"{FSRC}/{name}.jpg"
+    if not EAL.does_asset_exist(path) or name in REIMPORT:
+        REIMPORT.discard(name)
+        src = f"{GSRC}/{name}.png" if (name in ("T_Pangden", "T_ScarfPrint", "T_White_Linear", "T_Ripstop_N") or name.startswith("T_scan_")) else f"{FSRC}/{name}.jpg"
         t = unreal.AssetImportTask(); t.filename = src; t.destination_path = TEX; t.automated = True; t.replace_existing = True; t.save = True
         at.import_asset_tasks([t])
         tx = unreal.load_asset(path)
@@ -98,16 +104,82 @@ def master():   # (rough maps are linear masks: the default must be a linear whi
     ns = scalar("NormalStrength", 1.0, -650, 250)
     nl = E(unreal.MaterialExpressionLinearInterpolate, -450, 150)
     mel.connect_material_expressions(fl, "", nl, "A"); mel.connect_material_expressions(nor, "RGB", nl, "B"); mel.connect_material_expressions(ns, "", nl, "Alpha")
-    mel.connect_material_property(nl, "", unreal.MaterialProperty.MP_NORMAL)
+    # cloth that reads at 1-3 m (2026-11-15: "the costume has no texture at all"): the weave is far below a pixel there,
+    # so add what IS visible - soft wrinkles (Epic's MetaHuman memory-wrinkle normal, metres-tiled) combined with the
+    # weave (whiteout blend), and a slow heather/fading variation in colour and roughness
+    mh = "/Game/Story/Garments/Tex/MH/"
+    uvw = E(unreal.MaterialExpressionDivide, -1200, 700); wt = scalar("WrinkleTileM", 0.45, -1400, 700)
+    mel.connect_material_expressions(tc, "", uvw, "A"); mel.connect_material_expressions(wt, "", uvw, "B")
+    wr = tsp("Wrinkle", unreal.load_asset(mh + "memory_wrinkles_normal") or flat, unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL, uvw, -950, 700)
+    wsn = scalar("WrinkleStrength", 0.7, -950, 850)
+    wl = E(unreal.MaterialExpressionLinearInterpolate, -650, 700)
+    mel.connect_material_expressions(fl, "", wl, "A"); mel.connect_material_expressions(wr, "RGB", wl, "B"); mel.connect_material_expressions(wsn, "", wl, "Alpha")
+    m_a = E(unreal.MaterialExpressionComponentMask, -350, 150); m_a.set_editor_property("r", True); m_a.set_editor_property("g", True); m_a.set_editor_property("b", False); m_a.set_editor_property("a", False)
+    m_b = E(unreal.MaterialExpressionComponentMask, -350, 700); m_b.set_editor_property("r", True); m_b.set_editor_property("g", True); m_b.set_editor_property("b", False); m_b.set_editor_property("a", False)
+    z_a = E(unreal.MaterialExpressionComponentMask, -350, 250); z_a.set_editor_property("r", False); z_a.set_editor_property("g", False); z_a.set_editor_property("b", True); z_a.set_editor_property("a", False)
+    z_b = E(unreal.MaterialExpressionComponentMask, -350, 800); z_b.set_editor_property("r", False); z_b.set_editor_property("g", False); z_b.set_editor_property("b", True); z_b.set_editor_property("a", False)
+    mel.connect_material_expressions(nl, "", m_a, ""); mel.connect_material_expressions(wl, "", m_b, "")
+    mel.connect_material_expressions(nl, "", z_a, ""); mel.connect_material_expressions(wl, "", z_b, "")
+    xy = E(unreal.MaterialExpressionAdd, -200, 300); mel.connect_material_expressions(m_a, "", xy, "A"); mel.connect_material_expressions(m_b, "", xy, "B")
+    zz = E(unreal.MaterialExpressionMultiply, -200, 450); mel.connect_material_expressions(z_a, "", zz, "A"); mel.connect_material_expressions(z_b, "", zz, "B")
+    ap = E(unreal.MaterialExpressionAppendVector, -80, 350); mel.connect_material_expressions(xy, "", ap, "A"); mel.connect_material_expressions(zz, "", ap, "B")
+    nn = E(unreal.MaterialExpressionNormalize, 40, 350); mel.connect_material_expressions(ap, "", nn, "")
+    mel.connect_material_property(nn, "", unreal.MaterialProperty.MP_NORMAL)
+    # macro heather: +-MacroStrength in colour, a little in roughness
+    uvm = E(unreal.MaterialExpressionDivide, -1200, 1000); mt = scalar("MacroTileM", 0.7, -1400, 1000)
+    mel.connect_material_expressions(tc, "", uvm, "A"); mel.connect_material_expressions(mt, "", uvm, "B")
+    mac = tsp("Macro", unreal.load_asset(mh + "macro_heather_04") or white, unreal.MaterialSamplerType.SAMPLERTYPE_MASKS, uvm, -950, 1000)
+    mst = scalar("MacroStrength", 0.12, -950, 1150)
+    lo_m = E(unreal.MaterialExpressionSubtract, -700, 1150); one_m = E(unreal.MaterialExpressionConstant, -850, 1250); one_m.set_editor_property("r", 1.0)
+    mel.connect_material_expressions(one_m, "", lo_m, "A"); mel.connect_material_expressions(mst, "", lo_m, "B")
+    hi_m = E(unreal.MaterialExpressionAdd, -700, 1250); mel.connect_material_expressions(one_m, "", hi_m, "A"); mel.connect_material_expressions(mst, "", hi_m, "B")
+    mv = E(unreal.MaterialExpressionLinearInterpolate, -550, 1100)
+    mel.connect_material_expressions(lo_m, "", mv, "A"); mel.connect_material_expressions(hi_m, "", mv, "B"); mel.connect_material_expressions(mac, "R", mv, "Alpha")
+    bcm = E(unreal.MaterialExpressionMultiply, -150, -250); mel.connect_material_expressions(bc, "", bcm, "A"); mel.connect_material_expressions(mv, "", bcm, "B")
+    # stitches + seam shadow from UV channel 1 (garments seam_uv: U = metres along the seam, V = signed metres across)
+    def C(v, x, y):
+        e = E(unreal.MaterialExpressionConstant, x, y); e.set_editor_property("r", v); return e
+    def mask(src, ch, x, y):
+        e = E(unreal.MaterialExpressionComponentMask, x, y)
+        for k in "rgba": e.set_editor_property(k, k == ch)
+        mel.connect_material_expressions(src, "", e, ""); return e
+    def op(cls, a, b, x, y):
+        e = E(cls, x, y); mel.connect_material_expressions(a, "", e, "A"); mel.connect_material_expressions(b, "", e, "B"); return e
+    def one(cls, a, x, y):
+        e = E(cls, x, y); mel.connect_material_expressions(a, "", e, ""); return e
+    tc1 = E(unreal.MaterialExpressionTextureCoordinate, -1400, 1400); tc1.set_editor_property("coordinate_index", 1)
+    sd = mask(tc1, "g", -1250, 1450); sa = mask(tc1, "r", -1250, 1350)
+    ad = one(unreal.MaterialExpressionAbs, sd, -1100, 1450)
+    sw = scalar("StitchW", 0.0007, -1100, 1550); sl = scalar("StitchLen", 0.0032, -1100, 1300)
+    line = one(unreal.MaterialExpressionSaturate, one(unreal.MaterialExpressionOneMinus, op(unreal.MaterialExpressionDivide, ad, sw, -950, 1500), -800, 1500), -650, 1500)
+    fr = one(unreal.MaterialExpressionFrac, op(unreal.MaterialExpressionDivide, sa, sl, -950, 1350), -800, 1350)
+    dash = one(unreal.MaterialExpressionSaturate, op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionSubtract, C(0.6, -800, 1250), fr, -650, 1300), C(40.0, -650, 1220), -500, 1300), -350, 1300)
+    stitch = op(unreal.MaterialExpressionMultiply, line, dash, -200, 1400)
+    sb = scalar("SeamBand", 0.004, -950, 1650)
+    band = one(unreal.MaterialExpressionSaturate, one(unreal.MaterialExpressionOneMinus, op(unreal.MaterialExpressionDivide, ad, sb, -800, 1650), -650, 1650), -500, 1650)
+    sdk = scalar("StitchDark", 0.55, -350, 1500); ssh = scalar("SeamShade", 0.18, -350, 1700)
+    dark = op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, stitch, sdk, -150, 1500), op(unreal.MaterialExpressionMultiply, band, ssh, -150, 1650), 0, 1550)
+    keep = one(unreal.MaterialExpressionSaturate, one(unreal.MaterialExpressionOneMinus, dark, 120, 1550), 240, 1550)
+    bcs = op(unreal.MaterialExpressionMultiply, bcm, keep, 60, -250)
+    mel.connect_material_property(bcs, "", unreal.MaterialProperty.MP_BASE_COLOR)
     rs = scalar("RoughScale", 1.0, -650, 500)
     rm = E(unreal.MaterialExpressionMultiply, -450, 450); mel.connect_material_expressions(rgh, "R", rm, "A"); mel.connect_material_expressions(rs, "", rm, "B")
-    mel.connect_material_property(rm, "", unreal.MaterialProperty.MP_ROUGHNESS)
+    rm2 = E(unreal.MaterialExpressionMultiply, -300, 500); mel.connect_material_expressions(rm, "", rm2, "A"); mel.connect_material_expressions(mv, "", rm2, "B")
+    rm3 = op(unreal.MaterialExpressionAdd, rm2, op(unreal.MaterialExpressionMultiply, stitch, C(0.15, 0, 1300), 120, 1300), -150, 560)   # thread is matte
+    mel.connect_material_property(rm3, "", unreal.MaterialProperty.MP_ROUGHNESS)
     mel.recompile_material(m); EAL.save_loaded_asset(m, False)
     return m
 
 
 FUZZ = {"caban": 0.7, "polar_fleece": 0.9, "knitted_fleece": 0.85, "poly_wool_herringbone": 0.6, "jersey_melange": 0.35,
-        "rough_linen": 0.4, "@pangden": 0.5, "@scarfprint": 0.3, "hessian_230": 0.3, "floral_jacquard": 0.3, "quatrefoil_jacquard_fabric": 0.2}
+        "rough_linen": 0.4, "@pangden": 0.3, "@scarfprint": 0.3, "hessian_230": 0.3, "@nylon": 0.1, "bi_stretch": 0.2, "denim_fabric_05": 0.3, "floral_jacquard": 0.3, "quatrefoil_jacquard_fabric": 0.2}
+# how strongly each fabric wrinkles / varies (soft knit and fleece hold few creases; linen and softshell crease a lot)
+# research (cloth_look_ue.md): tiling wrinkles at 0.15-0.3 (0.55-0.85 made dark nylon look like crumpled foil in game)
+WRINKLE = {"@nylon": 0.22, "bi_stretch": 0.3, "polar_fleece": 0.15, "knitted_fleece": 0.12, "caban": 0.25,
+           "poly_wool_herringbone": 0.25, "brown_leather": 0.2, "quatrefoil_jacquard_fabric": 0.25, "floral_jacquard": 0.25,
+           "rough_linen": 0.35, "hessian_230": 0.15, "@pangden": 0.2, "@scarfprint": 0.3, "denim_fabric_05": 0.3, "": 0.2}
+MACRO = {"@pangden": 0.06, "@scarfprint": 0.08, "@nylon": 0.08, "bi_stretch": 0.1, "knitted_fleece": 0.14, "caban": 0.14,
+         "denim_fabric_05": 0.14, "": 0.08}
 M = master()
 sk_asset = skeleton()
 print("skeleton", sk_asset.get_path_name() if sk_asset else None)
@@ -127,6 +199,12 @@ for js in sorted(glob.glob(f"{GSRC}/SKM_G_*.json")):
             mel.set_material_instance_scalar_parameter_value(mi, "UseTexColor", 1.0)
             mel.set_material_instance_scalar_parameter_value(mi, "TileM", 1.0); mel.set_material_instance_scalar_parameter_value(mi, "DetailTileM", 1.0)
             mel.set_material_instance_scalar_parameter_value(mi, "AOStrength", 0.0)
+        elif fab == "@nylon":                 # down-jacket shell: bi_stretch colour, our ripstop grid normal (12 mm), even sheen
+            mel.set_material_instance_texture_parameter_value(mi, "Color", tex("T_bi_stretch_diff", "diff"))
+            mel.set_material_instance_texture_parameter_value(mi, "Normal", tex("T_Ripstop_N", "nor"))
+            mel.set_material_instance_texture_parameter_value(mi, "Rough", tex("T_White_Linear", "rough"))
+            mel.set_material_instance_scalar_parameter_value(mi, "TileM", d["tile_m"]); mel.set_material_instance_scalar_parameter_value(mi, "DetailTileM", 0.012)
+            mel.set_material_instance_scalar_parameter_value(mi, "NormalStrength", 0.45)
         elif fab == "@scarfprint":            # printed cotton head scarf (texture made by garments make_scarf_print)
             mel.set_material_instance_texture_parameter_value(mi, "Color", tex("T_ScarfPrint", "diff"))
             mel.set_material_instance_texture_parameter_value(mi, "Normal", tex("T_rough_linen_nor", "nor"))
@@ -146,8 +224,13 @@ for js in sorted(glob.glob(f"{GSRC}/SKM_G_*.json")):
         # Poly Haven colour maps carry their own hue: desaturate-by-tint keeps the designed colours (tint x ~1.6 since maps are mid-grey)
         tint = d["tint"]; gain = 1.0          # the material normalises the fabric to its average: tint = the real colour
         mel.set_material_instance_vector_parameter_value(mi, "Tint", unreal.LinearColor(tint[0] * gain, tint[1] * gain, tint[2] * gain, 1))
-        mel.set_material_instance_scalar_parameter_value(mi, "RoughScale", d["rough"] / (0.7 if fab else 1.0))
+        mel.set_material_instance_scalar_parameter_value(mi, "RoughScale", d["rough"] / (1.0 if fab in ("", "@nylon") or fab.startswith("@scan:") else 0.7))   # white rough map = absolute value
         mel.set_material_instance_scalar_parameter_value(mi, "Fuzz", FUZZ.get(fab, 0.0))
+        scan = fab.startswith("@scan:")
+        mel.set_material_instance_scalar_parameter_value(mi, "WrinkleStrength", 0.0 if scan else WRINKLE.get(fab, 0.6))
+        mel.set_material_instance_scalar_parameter_value(mi, "MacroStrength", 0.0 if scan else MACRO.get(fab, 0.12))
+        mel.set_material_instance_scalar_parameter_value(mi, "StitchDark", 0.0 if scan else 0.55)
+        mel.set_material_instance_scalar_parameter_value(mi, "SeamShade", 0.0 if scan else 0.18)
         mel.set_material_instance_scalar_parameter_value(mi, "Specular", 0.25 if FUZZ.get(fab, 0) > 0.5 else 0.5)
         EAL.save_loaded_asset(mi, False); mis[slot] = mi
     # skeletal mesh

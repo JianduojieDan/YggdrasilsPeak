@@ -43,6 +43,17 @@ public:
 	UFUNCTION(BlueprintPure, Category="Compass")
 	float GetPull() const { return Pull; }
 
+	/**
+	 *  The story takes the needle (chapter 1, the father's stone: {"compass": {"tremble": 1, "toward": "summit"}}): it swings
+	 *  off north to Target and trembles there (Tremble 0..1, more = harder, runes glowing), and the compass is held up while
+	 *  it lasts: a lure held in your own hand. Tremble 0 gives the needle back (north, or the summit pull) and lowers the
+	 *  compass again unless the player raised it.
+	 */
+	void SetStoryTarget(FVector Target, float Tremble);
+
+	UFUNCTION(BlueprintPure, Category="Compass")
+	bool HasStoryTarget() const { return StoryTremble > 0.f; }
+
 	/** World yaw of magnetic north (the map's north is -Y). */
 	UPROPERTY(EditAnywhere, Category="Compass")
 	float NorthYaw = -90.f;
@@ -101,4 +112,10 @@ private:
 	float NeedleSpeed = 0.f;
 	float Impulse = 0.f;
 	float ShakeTime = 0.f;
+
+	/** Story target (SetStoryTarget): where the needle is pulled, how hard it trembles (0 = none), and how far the pull
+	 *  has swung over from the normal bearing (eased, so the needle swings rather than snaps). */
+	FVector StoryTarget = FVector::ZeroVector;
+	float StoryTremble = 0.f;
+	float StoryPull = 0.f;
 };

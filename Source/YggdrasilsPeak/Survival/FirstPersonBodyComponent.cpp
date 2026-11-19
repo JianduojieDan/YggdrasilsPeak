@@ -12,10 +12,10 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
-#include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/Character.h"
 #include "Survival/ClimbingComponent.h"
 #include "Survival/SnowTrailComponent.h"
+#include "Survival/YggViewRig.h"
 #include "Engine/SkeletalMesh.h"
 #include "HAL/IConsoleManager.h"
 #include "TwoBoneIK.h"
@@ -146,6 +146,11 @@ void UFirstPersonBodyComponent::BeginPlay()
 	Super::BeginPlay();
 
 	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	// EnsureFor below only runs when a player already owns the pawn at BeginPlay; a later possession comes through here
+	if (Character)
+	{
+		Character->ReceiveControllerChangedDelegate.AddUniqueDynamic(this, &UFirstPersonBodyComponent::OnPawnControllerChanged);
+	}
 	USkeletalMeshComponent* Body = Character ? Character->GetMesh() : nullptr;
 	if (!Body || !Character->IsLocallyControlled())
 	{
@@ -166,36 +171,29 @@ void UFirstPersonBodyComponent::BeginPlay()
 	BodyBaseLocation = AnimatedBody->GetRelativeLocation();
 	WorldBodyBaseLocation = Body->GetRelativeLocation();
 	ClimbingComponent = Character->FindComponentByClass<UClimbingComponent>();
-
-	CameraBoom = Character->FindComponentByClass<USpringArmComponent>();
-	if (CameraBoom && HeadFollow > 0.f)
+	if (TemplateArms)
 	{
-		BoomBaseLocation = CameraBoom->GetRelativeLocation();
-		SetComponentTickEnabled(true);
+		// its own look, given back after a posture (drawn in world projection while posed)
+		ArmsPrimitiveType = uint8(TemplateArms->FirstPersonPrimitiveType);
+		bArmsCastShadow = TemplateArms->CastShadow;
+		bArmsOnlyOwnerSee = TemplateArms->bOnlyOwnerSee;
 	}
 
-	UCameraComponent* Camera = Character->FindComponentByClass<UCameraComponent>();
-	if (HeldToolMesh && Camera && AnimatedBody->GetBoneIndex(HandBone) != INDEX_NONE)
+	// the first-person camera (by name: the climbing component adds a second camera at run time)
+	UCameraComponent* Camera = nullptr;
+	TArray<UCameraComponent*> Cameras;
+	Character->GetComponents(Cameras);
+	for (UCameraComponent* Each : Cameras)
 	{
-		// The owner sees a posable copy (head hidden, right arm on the tool); the animated body is for everyone else.
-		ViewBody = NewObject<UPoseableMeshComponent>(Character, TEXT("FirstPersonViewBody"));
-		ViewBody->SetupAttachment(AnimatedBody->GetAttachParent(), AnimatedBody->GetAttachSocketName());
-		ViewBody->SetRelativeTransform(AnimatedBody->GetRelativeTransform());
-		ViewBody->SetSkinnedAssetAndUpdate(AnimatedBody->GetSkeletalMeshAsset());
-		ViewBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		ViewBody->SetOnlyOwnerSee(true);
-		// Culling uses the reference-pose box (an arms-only mesh: down at the hips), not where the arms are posed in front
-		// of the camera, so the hands vanished whenever the hips were out of view. Grow the box to cover the view.
-		ViewBody->SetBoundsScale(4.f);
-		ViewBody->SetCastShadow(false);
-		ViewBody->RegisterComponent();
-		ViewBody->HideBoneByName(HiddenBone, PBO_None);
-		for (int32 Slot = 0; Slot < AnimatedBody->GetNumMaterials(); ++Slot)
+		if (!Camera || Each->GetName().Contains(TEXT("FirstPerson")))
 		{
-			ViewBody->SetMaterial(Slot, AnimatedBody->GetMaterial(Slot));
+			Camera = Each;
 		}
-
-		// Not rendered for the owner, but its pose still drives the view body and the camera.
+	}
+	ViewCamera = Camera;   // the story hands need it too, not only the axe
+	if (HeldToolMesh && Camera && AnimatedBody->GetBoneIndex(HandBone) != INDEX_NONE && EnsureViewBody(true))
+	{
+		// Not rendered for the owner, but its pose still drives the view body.
 		AnimatedBody->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 		if (TemplateArms)
 		{
@@ -208,19 +206,8 @@ void UFirstPersonBodyComponent::BeginPlay()
 		}
 
 		// The tool rides in the view body's right fist; PoseArm places it every frame. The left hand rests empty.
-		ViewCamera = Camera;
-		Arms[0] = FViewArm();
-		Arms[0].Upper = UpperArmBone; Arms[0].Lower = LowerArmBone; Arms[0].Hand = HandBone; Arms[0].Suffix = TEXT("r");
-		Arms[0].Side = 1.f; Arms[0].bHoldsTool = true;
-		Arms[0].RestInView = GripInView; Arms[0].ElbowInView = ElbowDirectionInView;
-		Arms[0].FingerCurl = FingerCurl; Arms[0].ThumbCurl = ThumbCurl;
-		Arms[1] = FViewArm();
-		Arms[1].Upper = TEXT("upperarm_l"); Arms[1].Lower = TEXT("lowerarm_l"); Arms[1].Hand = TEXT("hand_l"); Arms[1].Suffix = TEXT("l");
-		Arms[1].Side = -1.f;
-		Arms[1].RestInView = LeftHandInView; Arms[1].ElbowInView = LeftElbowDirectionInView;
-		Arms[1].FingerCurl = LeftFingerCurl; Arms[1].ThumbCurl = LeftThumbCurl;
-		MeasureHand(Arms[0]);
-		MeasureHand(Arms[1]);
+		SetupArm(Arms[0], true, GripInView, ElbowDirectionInView, FingerCurl, ThumbCurl, true);
+		SetupArm(Arms[1], false, LeftHandInView, LeftElbowDirectionInView, LeftFingerCurl, LeftThumbCurl, false);
 
 		// Handle across the fist along the thumb side, head leaning forward by ToolTiltForward, pick along the knuckles.
 		const FViewArm& Tool = Arms[0];
@@ -258,6 +245,7 @@ void UFirstPersonBodyComponent::BeginPlay()
 			Camera->SetEnableFirstPersonScale(true);
 			Camera->SetFirstPersonScale(FirstPersonScale);
 		}
+		ViewBodyPrimitiveType = uint8(ViewBody->FirstPersonPrimitiveType);   // given back after a posture
 
 		SetComponentTickEnabled(true);
 	}
@@ -299,14 +287,29 @@ void UFirstPersonBodyComponent::BeginPlay()
 		FeetBody->RegisterComponent();
 		for (int32 Slot = 0; Slot < Body->GetNumMaterials(); ++Slot) { FeetBody->SetMaterial(Slot, Body->GetMaterial(Slot)); }
 		bBodyHiddenFromOwner = Body->bOwnerNoSee || Body->FirstPersonPrimitiveType == EFirstPersonPrimitiveType::WorldSpaceRepresentation;
-		// hips and legs only: hide every other branch that leaves the hips (spine, and with it arms and head)
+		// hips and legs only for now: hide every other branch that leaves the hips (spine, and with it arms and head);
+		// one body shows them again (SetFeetTorso), all but the neck and head, which stay hidden for good
 		const FName Hips = Body->GetParentBone(LeftLegBones[0]);
 		const FReferenceSkeleton& Ref = Body->GetSkeletalMeshAsset()->GetRefSkeleton();
 		const int32 HipsIndex = Ref.FindBoneIndex(Hips);
+		FeetTorsoBones.Reset();
 		for (int32 Bone = 0; Bone < Ref.GetNum(); ++Bone)
 		{
 			const FName Name = Ref.GetBoneName(Bone);
-			if (Ref.GetParentIndex(Bone) == HipsIndex && Name != LeftLegBones[0] && Name != RightLegBones[0]) { FeetBody->HideBoneByName(Name, PBO_None); }
+			if (Ref.GetParentIndex(Bone) == HipsIndex && Name != LeftLegBones[0] && Name != RightLegBones[0])
+			{
+				FeetTorsoBones.Add(Name);
+				FeetBody->HideBoneByName(Name, PBO_None);
+			}
+		}
+		bFeetTorsoShown = false;
+		// the neck (the head's parent, when it is one; FNames ignore case, so "head" finds Mixamo's "Head") and the head
+		const int32 HeadIndex = Ref.FindBoneIndex(HiddenBone);
+		if (HeadIndex != INDEX_NONE)
+		{
+			const int32 NeckIndex = Ref.GetParentIndex(HeadIndex);
+			const bool bNeck = NeckIndex != INDEX_NONE && Ref.GetBoneName(NeckIndex).ToString().Contains(TEXT("neck"));
+			FeetBody->HideBoneByName(bNeck ? Ref.GetBoneName(NeckIndex) : HiddenBone, PBO_None);
 		}
 		for (USkinnedMeshComponent* FirstPersonBody : { static_cast<USkinnedMeshComponent*>(TemplateArms.Get()), static_cast<USkinnedMeshComponent*>(ViewBody.Get()) })
 		{
@@ -356,30 +359,130 @@ void UFirstPersonBodyComponent::BeginPlay()
 		SetComponentTickEnabled(true);
 	}
 
-	if (!bShadowProxy || TemplateArms)
+	if (bShadowProxy && !TemplateArms)
 	{
-		return;
+		// Shadow-only copy with the head intact. It runs its own anim instance: a leader-pose follower would
+		// inherit the hidden head bone.
+		ShadowMesh = NewObject<USkeletalMeshComponent>(Character, TEXT("FirstPersonShadowMesh"));
+		ShadowMesh->SetupAttachment(Body->GetAttachParent());
+		ShadowMesh->SetRelativeTransform(Body->GetRelativeTransform());
+		ShadowMesh->SetSkeletalMesh(Body->GetSkeletalMeshAsset());
+		ShadowMesh->SetAnimInstanceClass(Body->GetAnimClass());
+		ShadowMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		ShadowMesh->SetOwnerNoSee(true);
+		ShadowMesh->bCastHiddenShadow = true;
+		ShadowMesh->SetCastShadow(true);
+		if (ViewBody && bFirstPersonRendering)
+		{
+			// The world-space stand-in for the first-person body: owner-no-see, casts the shadow (needed for VSM).
+			ShadowMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
+		}
+		ShadowMesh->RegisterComponent();
+
+		Body->SetCastShadow(false);
 	}
 
-	// Shadow-only copy with the head intact. It runs its own anim instance: a leader-pose follower would
-	// inherit the hidden head bone.
-	ShadowMesh = NewObject<USkeletalMeshComponent>(Character, TEXT("FirstPersonShadowMesh"));
-	ShadowMesh->SetupAttachment(Body->GetAttachParent());
-	ShadowMesh->SetRelativeTransform(Body->GetRelativeTransform());
-	ShadowMesh->SetSkeletalMesh(Body->GetSkeletalMeshAsset());
-	ShadowMesh->SetAnimInstanceClass(Body->GetAnimClass());
-	ShadowMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	ShadowMesh->SetOwnerNoSee(true);
-	ShadowMesh->bCastHiddenShadow = true;
-	ShadowMesh->SetCastShadow(true);
-	if (ViewBody && bFirstPersonRendering)
+	// one body, postures and hands are applied every frame from here on (UpdateBodyVisibility)
+	if (TemplateArms || FeetBody || ViewBody)
 	{
-		// The world-space stand-in for the first-person body: owner-no-see, casts the shadow (needed for VSM).
-		ShadowMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
+		SetComponentTickEnabled(true);
 	}
-	ShadowMesh->RegisterComponent();
 
-	Body->SetCastShadow(false);
+	// The eye: the view rig (camera off the head socket, eye composition, postures, leases), for this locally controlled
+	// player's pawn only (standalone, an AI controller counts as local too) and created at run time, so no Blueprint edit
+	// is needed. Last, so it finds this body set up.
+	if (Cast<APlayerController>(Character->GetController()))
+	{
+		UYggViewRigComponent::EnsureFor(Character);
+	}
+}
+
+bool UFirstPersonBodyComponent::EnsureViewBody(bool bWithTool)
+{
+	if (ViewBody)
+	{
+		return true;
+	}
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Character || !AnimatedBody || !AnimatedBody->GetSkeletalMeshAsset())
+	{
+		return false;
+	}
+	// The owner sees a posable copy (head hidden, arms posed by IK); the animated body is for everyone else.
+	ViewBody = NewObject<UPoseableMeshComponent>(Character, TEXT("FirstPersonViewBody"));
+	ViewBody->SetupAttachment(AnimatedBody->GetAttachParent(), AnimatedBody->GetAttachSocketName());
+	ViewBody->SetRelativeTransform(AnimatedBody->GetRelativeTransform());
+	ViewBody->SetSkinnedAssetAndUpdate(AnimatedBody->GetSkeletalMeshAsset());
+	ViewBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ViewBody->SetOnlyOwnerSee(true);
+	// Culling uses the reference-pose box (an arms-only mesh: down at the hips), not where the arms are posed in front
+	// of the camera, so the hands vanished whenever the hips were out of view. Grow the box to cover the view.
+	ViewBody->SetBoundsScale(4.f);
+	ViewBody->SetCastShadow(false);
+	if (!bWithTool)
+	{
+		// story hands: drawn like the first-person mesh it stands in for (its own projection, not a posture's; the camera's
+		// first-person FOV and scale stay the Blueprint's), and hidden until the first rise
+		ViewBody->SetFirstPersonPrimitiveType(TemplateArms ? EFirstPersonPrimitiveType(ArmsPrimitiveType) : AnimatedBody->FirstPersonPrimitiveType);
+		ViewBody->SetVisibility(false);
+	}
+	ViewBody->RegisterComponent();
+	ViewBody->HideBoneByName(HiddenBone, PBO_None);
+	if (!bWithTool && AnimatedBody->GetBoneIndex(LeftLegBones[0]) != INDEX_NONE)
+	{
+		// legs are FeetBody's (BeginPlay hides them on the first-person meshes it finds; this copy came later)
+		ViewBody->HideBoneByName(LeftLegBones[0], PBO_None);
+		ViewBody->HideBoneByName(RightLegBones[0], PBO_None);
+	}
+	for (int32 Slot = 0; Slot < AnimatedBody->GetNumMaterials(); ++Slot)
+	{
+		ViewBody->SetMaterial(Slot, AnimatedBody->GetMaterial(Slot));
+	}
+	ViewBodyPrimitiveType = uint8(ViewBody->FirstPersonPrimitiveType);
+	bViewBodyOnlyOwnerSee = ViewBody->bOnlyOwnerSee;
+	if (bArmsLookPosed)
+	{
+		// made in the middle of a posture (hands at the stream, kneeling): drawn like the posed mesh until it ends
+		ViewBody->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);
+		ViewBody->SetOnlyOwnerSee(true);
+	}
+	return true;
+}
+
+void UFirstPersonBodyComponent::SetupArm(FViewArm& Arm, bool bRight, const FVector& RestInView, const FVector& ElbowInView, const FVector& Fingers, const FVector& Thumb, bool bHoldsTool)
+{
+	Arm = FViewArm();
+	if (bRight)
+	{
+		Arm.Upper = UpperArmBone; Arm.Lower = LowerArmBone; Arm.Hand = HandBone; Arm.Suffix = TEXT("r");
+		Arm.Side = 1.f;
+	}
+	else
+	{
+		Arm.Upper = TEXT("upperarm_l"); Arm.Lower = TEXT("lowerarm_l"); Arm.Hand = TEXT("hand_l"); Arm.Suffix = TEXT("l");
+		Arm.Side = -1.f;
+	}
+	// Mixamo / AI-rigged skeletons (the climber): Arm / ForeArm / Hand, with or without the "mixamorig:" prefix
+	if (AnimatedBody && AnimatedBody->GetBoneIndex(Arm.Hand) == INDEX_NONE)
+	{
+		const TCHAR* SideName = bRight ? TEXT("Right") : TEXT("Left");
+		for (const TCHAR* Prefix : { TEXT(""), TEXT("mixamorig:") })
+		{
+			if (AnimatedBody->GetBoneIndex(FName(FString::Printf(TEXT("%s%sHand"), Prefix, SideName))) != INDEX_NONE)
+			{
+				Arm.Upper = FName(FString::Printf(TEXT("%s%sArm"), Prefix, SideName));
+				Arm.Lower = FName(FString::Printf(TEXT("%s%sForeArm"), Prefix, SideName));
+				Arm.Hand = FName(FString::Printf(TEXT("%s%sHand"), Prefix, SideName));
+				Arm.MixamoPrefix = Prefix;
+				Arm.bMixamo = true;
+				break;
+			}
+		}
+	}
+	Arm.bHoldsTool = bHoldsTool;
+	Arm.RestInView = RestInView; Arm.ElbowInView = ElbowInView;
+	Arm.FingerCurl = Fingers; Arm.ThumbCurl = Thumb;
+	MeasureHand(Arm);
 }
 
 void UFirstPersonBodyComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -387,22 +490,70 @@ void UFirstPersonBodyComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	ACharacter* Character = Cast<ACharacter>(GetOwner());
-	// The shadow copy keeps the head bone; the visible body may have it hidden.
-	USkeletalMeshComponent* HeadSource = ShadowMesh ? ShadowMesh.Get() : (Character ? Character->GetMesh() : nullptr);
-	if (CameraBoom && HeadSource && CameraBoom->GetAttachParent() && HeadFollow > 0.f)
+
+	// ygg.View.OneBody belongs to the rig (registered there at module start-up, so one look-up is enough); followed here
+	// when it changes, so the switch works whether or not the rig also calls SetOneBody (missing: SetOneBody alone decides)
+	static IConsoleVariable* const OneBodyCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("ygg.View.OneBody"));
+	if (OneBodyCvar)
 	{
-		// Boom location is relative to its parent (the capsule), so work in that space.
-		const FTransform& ParentXf = CameraBoom->GetAttachParent()->GetComponentTransform();
-		const FVector Head = ParentXf.InverseTransformPosition(HeadSource->GetSocketLocation(HiddenBone));
-		// The head already sinks with the body; the boom's resting spot has to sink with it.
-		const FVector Target = FMath::Lerp(BoomBaseLocation - FVector(0.f, 0.f, SinkDepth), Head + EyeOffset, HeadFollow);
-		CameraBoom->SetRelativeLocation(FMath::VInterpTo(CameraBoom->GetRelativeLocation(), Target, DeltaTime, FollowSpeed));
+		const int32 Value = OneBodyCvar->GetInt();
+		if (Value != LastOneBodyCvar)
+		{
+			LastOneBodyCvar = Value;
+			SetOneBody(Value != 0);
+		}
+	}
+
+	// Until the rig pushes its posture (SetPostureView), read it: its view and how far its eye is under standing height
+	// (156 cm, spec StandEyeCm). Walking, only a clearly low eye counts (pack stoop, slope and a hanging head reach ~10 cm).
+	if (!bPostureFromRig)
+	{
+		if (!ViewRig.IsValid() && (RigSearchTimer -= DeltaTime) <= 0.f)
+		{
+			RigSearchTimer = 1.f;
+			ViewRig = GetOwner() ? GetOwner()->FindComponentByClass<UYggViewRigComponent>() : nullptr;
+		}
+		if (const UYggViewRigComponent* Rig = ViewRig.Get())
+		{
+			const EYggView View = Rig->GetView();
+			// (no eye yet, or the rig switched off with the camera back on the head: nothing is low)
+			const float Eye = Rig->GetEyeAboveFloor();
+			const float Low = Eye > 1.f && !IsCameraOnBody() ? FMath::Max(0.f, 156.f - Eye) : 0.f;
+			bPostureWanted = View != EYggView::Walk;
+			bPostureHidesBody = View == EYggView::Lie || View == EYggView::Crawl;
+			PostureDropTarget = FMath::Min(bPostureWanted || Low > 25.f ? Low : 0.f, 150.f);
+		}
+	}
+
+	// The posture drop: followed at a bounded speed (exact when the rig sets it every frame, smooth when it sets it once).
+	// Standing up, the body stays posed until the eye is nearly up: the walking legs under a low eye were the boot that
+	// filled the screen.
+	PostureDrop = FMath::FInterpConstantTo(PostureDrop, PostureDropTarget, DeltaTime, PostureFollowCmPerS);
+	bPosedVisual = bPostureWanted || PostureDrop > PosedUntilCm;
+
+	// Story hands rise and lower per arm (the hand pose blends over the animated arm).
+	if (bHandsReady)
+	{
+		for (FViewArm& Arm : Arms)
+		{
+			const bool bUp = bHandsWanted && Arm.bInUse;
+			Arm.Alpha = FMath::FInterpConstantTo(Arm.Alpha, bUp ? 1.f : 0.f, DeltaTime, 1.f / (bUp ? HandsRiseSeconds : HandsLowerSeconds));
+			if (Arm.Alpha <= 0.f)
+			{
+				Arm.bHasSmoothedGrip = false;   // the next rise starts from the view, not from where the hand was
+			}
+		}
 	}
 
 	// Ground under each boot and the hips drop; the boots themselves are fitted below.
 	UpdateFootDrop(DeltaTime);
 
-	// After the camera has moved, so the fist sits at its spot in this frame's view.
+	if (Character)
+	{
+		UpdateBodyVisibility(Character->GetMesh(), DeltaTime);
+	}
+
+	// After the camera has moved (the rig ticks in post-physics), so the fist sits at its spot in this frame's view.
 	PoseViewBody(DeltaTime);
 
 	if (Character)
@@ -413,8 +564,134 @@ void UFirstPersonBodyComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	LogFeet(DeltaTime);
 }
 
+bool UFirstPersonBodyComponent::IsCameraOnBody() const
+{
+	const USceneComponent* Parent = ViewCamera ? ViewCamera->GetAttachParent() : nullptr;
+	if (!Parent)
+	{
+		return false;
+	}
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	return Parent == TemplateArms.Get() || Parent == AnimatedBody.Get() || Parent == ViewBody.Get() || (Character && Parent == Character->GetMesh());
+}
+
+void UFirstPersonBodyComponent::SetOneBody(bool bOn)
+{
+	bOneBody = bOn;   // applied by the next UpdateBodyVisibility
+}
+
+void UFirstPersonBodyComponent::SetPostureView(EYggView View, float DropCm)
+{
+	bPostureFromRig = true;   // pushed from now on, no more reading the rig
+	bPostureWanted = View != EYggView::Walk;
+	// lying in the bag and crawling out: nothing of yourself in view (spec 4.3)
+	bPostureHidesBody = View == EYggView::Lie || View == EYggView::Crawl;
+	// (a snapped posture set once arrives within PostureDropTarget / PostureFollowCmPerS: 0.6 s for lying, behind the eyelids)
+	PostureDropTarget = FMath::Clamp(DropCm, 0.f, 150.f);
+}
+
+bool UFirstPersonBodyComponent::DefaultHandsFor(FName Item, FVector& OutLeft, FVector& OutRight)
+{
+	OutLeft = OutRight = FVector::ZeroVector;
+	const FString Name = Item.ToString();
+	if (Name.Equals(TEXT("compass"), ESearchCase::IgnoreCase))
+	{
+		OutRight = FVector(40.f, 8.f, -22.f);
+	}
+	else if (Name.Equals(TEXT("photo"), ESearchCase::IgnoreCase))
+	{
+		OutLeft = FVector(38.f, -10.f, -16.f);
+		OutRight = FVector(38.f, 10.f, -16.f);
+	}
+	else if (Name.Equals(TEXT("bottle"), ESearchCase::IgnoreCase))
+	{
+		OutRight = FVector(38.f, 6.f, -24.f);
+	}
+	else if (Name.Equals(TEXT("khata"), ESearchCase::IgnoreCase))
+	{
+		OutLeft = FVector(42.f, -12.f, -30.f);
+		OutRight = FVector(42.f, 12.f, -30.f);
+	}
+	else if (Name.Equals(TEXT("dolma"), ESearchCase::IgnoreCase))
+	{
+		OutLeft = FVector(30.f, -25.f, -55.f);   // down to her hand; the IK stops short rather than stretch the arm
+	}
+	else
+	{
+		return false;
+	}
+	return true;
+}
+
+bool UFirstPersonBodyComponent::AreHandsUp() const
+{
+	return bHandsReady && (bHandsWanted || Arms[0].Alpha > 0.f || Arms[1].Alpha > 0.f);
+}
+
+void UFirstPersonBodyComponent::SetHandsInUse(FName Item, FVector Left, FVector Right)
+{
+	if (Item.IsNone())
+	{
+		bHandsWanted = false;   // each raised arm lowers over HandsLowerSeconds
+		return;
+	}
+	if (Left.IsNearlyZero() && Right.IsNearlyZero() && !DefaultHandsFor(Item, Left, Right))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FirstPersonBody: hands '%s' has no rest spots, hands stay down"), *Item.ToString());
+		bHandsWanted = false;
+		return;
+	}
+	if (HeldTool)
+	{
+		// the axe already holds both hands up in view; the story hands are not mixed into it
+		UE_LOG(LogTemp, Warning, TEXT("FirstPersonBody: hands '%s' ignored while a tool is held"), *Item.ToString());
+		return;
+	}
+	if (!bHandsReady)
+	{
+		if (!ViewCamera || !EnsureViewBody(false))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("FirstPersonBody: hands '%s' need the first-person mesh and camera; none here"), *Item.ToString());
+			return;
+		}
+		SetupArm(Arms[0], true, FVector::ZeroVector, ElbowDirectionInView, LeftFingerCurl, LeftThumbCurl, false);
+		SetupArm(Arms[1], false, FVector::ZeroVector, LeftElbowDirectionInView, LeftFingerCurl, LeftThumbCurl, false);
+		bHandsReady = true;
+	}
+	HandsItem = Item;
+	bHandsWanted = true;
+	// right = Arms[0], left = Arms[1]; an arm with no spot stays with the animation (and lowers if it was up)
+	const FVector Spots[2] = { Right, Left };
+	for (int32 i = 0; i < 2; ++i)
+	{
+		FViewArm& Arm = Arms[i];
+		Arm.bScreenDrop = false;   // the spot is meant as given (Dolma's hand is far below the screen's edge)
+		Arm.bInUse = !Spots[i].IsNearlyZero();
+		if (Arm.bInUse)
+		{
+			Arm.RestInView = Spots[i];
+		}
+	}
+}
+
+void UFirstPersonBodyComponent::OnPawnControllerChanged(APawn* Pawn, AController* OldController, AController* NewController)
+{
+	// safe to call again: it keeps an existing rig and re-attaches the modifier to the new camera manager
+	if (ACharacter* Character = Cast<ACharacter>(Pawn))
+	{
+		if (Cast<APlayerController>(NewController))
+		{
+			UYggViewRigComponent::EnsureFor(Character);
+		}
+	}
+}
+
 void UFirstPersonBodyComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (ACharacter* Character = Cast<ACharacter>(GetOwner()))
+	{
+		Character->ReceiveControllerChangedDelegate.RemoveDynamic(this, &UFirstPersonBodyComponent::OnPawnControllerChanged);
+	}
 	// the world body gets its own look back (the posed copy stood in for it)
 	if (bWorldBodyShown)
 	{
@@ -489,6 +766,21 @@ void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
 		FeetAlpha = 0.f;
 		return;
 	}
+	if (bPosedVisual)
+	{
+		// sitting, kneeling, lying, crawling: the standing legs are hidden from the owner and no boot is fitted (no traces);
+		// the fit and the hips drop ease out, as when climbing, and come back once standing
+		FeetAlpha = FMath::FInterpTo(FeetAlpha, 0.f, DeltaTime, 6.f);
+		FootDropTarget = 0.f;
+		FootDrop = FMath::FInterpTo(FootDrop, 0.f, DeltaTime, 4.f);
+		ViewDrop = FMath::FInterpTo(ViewDrop, 0.f, DeltaTime, 6.f);
+		for (FLegFit& Leg : Legs)
+		{
+			Leg.Alpha = FMath::FInterpTo(Leg.Alpha, 0.f, DeltaTime, 6.f);
+		}
+		ApplyWorldBodyOffset();
+		return;
+	}
 	if (SoleHeightCm < 0.f)
 	{
 		SoleHeightCm = MeasureSoleHeight();
@@ -502,8 +794,8 @@ void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
 	{
 		FloorGapCm = Movement->CurrentFloor.FloorDist;
 	}
-	// The first-person body (the camera rides on its head) comes down with the hips, minus the drop flat ground already has
-	// (the floor gap), so on flat ground the eye stays where it was and on a slope the legs stay under the jacket.
+	// ygg.Feet.ViewDrop (off): the first-person body comes down with the hips again, minus the drop flat ground already has
+	// (the floor gap). Only meaningful while the camera rides its head (no rig); the rig's eye takes half the drop itself.
 	auto FollowWithView = [this, DeltaTime]()
 	{
 		const float Target = TemplateArms && CVarFeetViewDrop.GetValueOnGameThread() != 0 ? FMath::Max(FootDrop - FloorGapCm, 0.f) : 0.f;
@@ -619,15 +911,30 @@ void UFirstPersonBodyComponent::ApplyWorldBodyOffset()
 	{
 		ShadowMesh->SetRelativeLocation(BodyBaseLocation - Down);
 	}
+	// The first-person body (template arms mesh, and the view body posed from it). It hangs on the world body, which is
+	// already lowered by the sink and the drop: lowering it by the sink again counted the powder twice (the old eye on
+	// its head sat up to 24 cm low). How far it should be down in the world:
+	//  - while the camera still rides its head (no rig, ygg.View.Rig 0): with the world body, plus ViewDrop
+	//  - under the rig's eye: as far as that eye (sink once, half the hips drop up to 10 cm, the posture drop), so the
+	//    shoulders stay under it; posed, PostureDrop takes it down to the low eye
+	const bool bParentIsBody = AnimatedBody && AnimatedBody->GetAttachParent() == Body;   // (the template: on the world body)
+	const float ParentDrop = bParentIsBody ? SinkDepth + FootDrop : 0.f;
+	const float WorldDrop = IsCameraOnBody()
+		? SinkDepth + (bParentIsBody ? FootDrop : 0.f) + ViewDrop + PostureDrop
+		: SinkDepth + FMath::Min(FootDrop * 0.5f, 10.f) + PostureDrop;
+	const FVector Placed = BodyBaseLocation + FVector(0.f, 0.f, ParentDrop - WorldDrop);
 	if (TemplateArms)
 	{
-		// the template's first-person body and the eye on its head, with the view body posed from it (ViewDrop)
-		const FVector Sunk = BodyBaseLocation - FVector(0.f, 0.f, SinkDepth + ViewDrop);
-		TemplateArms->SetRelativeLocation(Sunk);
-		if (ViewBody)
-		{
-			ViewBody->SetRelativeLocation(Sunk);
-		}
+		TemplateArms->SetRelativeLocation(Placed);
+	}
+	if (ViewBody && (TemplateArms || bParentIsBody || AnimatedBody.Get() != Body))
+	{
+		ViewBody->SetRelativeLocation(Placed);
+	}
+	else if (ViewBody)
+	{
+		// no template: the view body hangs beside the world body (on the capsule) and only sinks
+		ViewBody->SetRelativeLocation(BodyBaseLocation - FVector(0.f, 0.f, SinkDepth + PostureDrop));
 	}
 }
 
@@ -638,38 +945,43 @@ void UFirstPersonBodyComponent::SetSinkDepth(float Centimetres)
 		return;
 	}
 	SinkDepth = Centimetres;
-	const FVector Sunk = BodyBaseLocation - FVector(0.f, 0.f, SinkDepth + ViewDrop);   // ViewDrop stays 0 outside the template layout
-	const ACharacter* Character = Cast<ACharacter>(GetOwner());
-	if (Character && AnimatedBody != Character->GetMesh())
-	{
-		AnimatedBody->SetRelativeLocation(Sunk);   // the template's first-person mesh
-	}
-	if (ViewBody)
-	{
-		ViewBody->SetRelativeLocation(Sunk);
-	}
-	// The world body (shadow, what others see) and its shadow copy sink too, keeping the slope drop (this used to put the
-	// world body back to the sink alone until the next drop update, whichever of the two ticked first).
+	// The world body (shadow, what others see), its shadow copy and the first-person body sink, keeping the slope drop
+	// (one place for all of them; climbing places them itself).
 	ApplyWorldBodyOffset();
 }
 
 void UFirstPersonBodyComponent::PoseViewBody(float DeltaTime)
 {
-	if (!ViewBody || !AnimatedBody || !HeldTool)
+	if (!ViewBody || !AnimatedBody || !ViewBody->IsVisible())
+	{
+		return;   // a hidden copy needs no pose
+	}
+	if (HeldTool)
+	{
+		ViewBody->CopyPoseFromSkeletalComponent(AnimatedBody);
+		UpdateHandMotion(DeltaTime);
+		PoseArm(Arms[0], DeltaTime);
+		if (bShowLeftHand)
+		{
+			PoseArm(Arms[1], DeltaTime);
+		}
+		ViewBody->MarkRefreshTransformDirty();
+		return;
+	}
+	if (!bHandsReady)
 	{
 		return;
 	}
-
-	ViewBody->CopyPoseFromSkeletalComponent(AnimatedBody);
-	const TArray<FTransform>& Pose = AnimatedBody->GetComponentSpaceTransforms();
-
+	// story hands: the animated arms, with each raised arm blended onto its spot (eased in and out)
+	CopyBodyPose(ViewBody, AnimatedBody);
 	UpdateHandMotion(DeltaTime);
-	PoseArm(Arms[0], DeltaTime);
-	if (bShowLeftHand)
+	for (FViewArm& Arm : Arms)
 	{
-		PoseArm(Arms[1], DeltaTime);
+		if (Arm.Alpha > 0.f)
+		{
+			PoseArm(Arm, DeltaTime, FMath::SmoothStep(0.f, 1.f, Arm.Alpha));
+		}
 	}
-
 	ViewBody->MarkRefreshTransformDirty();
 }
 
@@ -748,15 +1060,126 @@ void UFirstPersonBodyComponent::SyncWorldBody(USkeletalMeshComponent* Body)
 			}
 		}
 	}
+}
+
+void UFirstPersonBodyComponent::SetFeetTorso(bool bShow)
+{
+	if (!FeetBody || bShow == bFeetTorsoShown)
+	{
+		return;
+	}
+	bFeetTorsoShown = bShow;
+	// the spine branch (torso, arms; the neck and head under it stay hidden on their own)
+	for (const FName& Bone : FeetTorsoBones)
+	{
+		if (bShow)
+		{
+			FeetBody->UnHideBoneByName(Bone);
+		}
+		else
+		{
+			FeetBody->HideBoneByName(Bone, PBO_None);
+		}
+	}
+}
+
+void UFirstPersonBodyComponent::UpdateBodyVisibility(USkeletalMeshComponent* Body, float DeltaTime)
+{
+	if (!Body)
+	{
+		return;
+	}
+	// the third-person climbing view hands the whole world body to the owner: nothing of ours may overlap it, and the
+	// climbing component owns the first-person meshes' visibility meanwhile
+	const bool bOwnerSeesBody = bBodyHiddenFromOwner && !Body->bOwnerNoSee
+		&& Body->FirstPersonPrimitiveType != EFirstPersonPrimitiveType::WorldSpaceRepresentation;
+	const bool bHideAll = bPosedVisual && bPostureHidesBody;
+	const bool bHands = !HeldTool && ViewBody && AreHandsUp();
+
 	if (FeetBody)
 	{
-		// the owner's own legs step aside while the owner sees the whole body (the third-person climbing view), or the
-		// two pairs of legs would overlap
-		const bool bOwnerSeesBody = bBodyHiddenFromOwner && !Body->bOwnerNoSee
-			&& Body->FirstPersonPrimitiveType != EFirstPersonPrimitiveType::WorldSpaceRepresentation;
-		if (FeetBody->IsVisible() == bOwnerSeesBody)
+		// the standing legs never show under a low eye; one body adds torso and arms while no hands are raised (raised, the
+		// first-person arms reach up and FeetBody goes back to hips and legs: no second pair of arms, no second torso)
+		const bool bShow = !bOwnerSeesBody && !bPosedVisual;
+		if (FeetBody->IsVisible() != bShow)
 		{
-			FeetBody->SetVisibility(!bOwnerSeesBody);
+			FeetBody->SetVisibility(bShow);
+		}
+		SetFeetTorso(bOneBody && !HeldTool && !bHands);
+	}
+	if (bOwnerSeesBody)
+	{
+		return;
+	}
+
+	// Posed, the first-person mesh is drawn like the world (world projection: lowered under the low eye it must meet the
+	// floor and the sleeping bag at their real depth), seen only by the owner, without a second shadow.
+	if (bPosedVisual != bArmsLookPosed)
+	{
+		bArmsLookPosed = bPosedVisual;
+		if (TemplateArms)
+		{
+			TemplateArms->SetFirstPersonPrimitiveType(bPosedVisual ? EFirstPersonPrimitiveType::None : EFirstPersonPrimitiveType(ArmsPrimitiveType));
+			TemplateArms->SetOnlyOwnerSee(bPosedVisual ? true : bArmsOnlyOwnerSee);
+			TemplateArms->SetCastShadow(bPosedVisual ? false : bArmsCastShadow);
+		}
+		if (ViewBody)
+		{
+			ViewBody->SetFirstPersonPrimitiveType(bPosedVisual ? EFirstPersonPrimitiveType::None : EFirstPersonPrimitiveType(ViewBodyPrimitiveType));
+			ViewBody->SetOnlyOwnerSee(bPosedVisual ? true : bViewBodyOnlyOwnerSee);
+			if (HeldTool)
+			{
+				HeldTool->SetFirstPersonPrimitiveType(bPosedVisual ? EFirstPersonPrimitiveType::None : EFirstPersonPrimitiveType::FirstPerson);
+			}
+		}
+	}
+
+	if (HeldTool)
+	{
+		// the axe layout: the view body (with the tool) is the first-person body; the template mesh stays hidden
+		const bool bShow = !bHideAll;
+		if (ViewBody && ViewBody->IsVisible() != bShow)
+		{
+			ViewBody->SetVisibility(bShow);
+			HeldTool->SetVisibility(bShow);
+		}
+		return;
+	}
+
+	if (TemplateArms)
+	{
+		// Shown: the two-projection body (one body off), or posed. Hands up, the posed copy stands in for it. Hidden and
+		// not needed (no hands copying it, no camera on its head), it stops animating: one skeletal evaluation saved.
+		const bool bShowArms = !bHideAll && !bHands && (bPosedVisual || !bOneBody);
+		const bool bNeedPose = bShowArms || bHands || IsCameraOnBody();
+		const EVisibilityBasedAnimTickOption Want = bNeedPose ? EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones
+			: EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
+		bool bFresh = true;
+		if (TemplateArms->VisibilityBasedAnimTickOption != Want)
+		{
+			TemplateArms->VisibilityBasedAnimTickOption = Want;
+			// it animates again from the next frame: its bones are still the pose it stopped in, so show it then
+			bFresh = !bNeedPose;
+		}
+		if (TemplateArms->IsVisible() != bShowArms && (bFresh || !bShowArms))
+		{
+			TemplateArms->SetVisibility(bShowArms);
+		}
+		if (ViewBody)
+		{
+			const bool bShowView = bHands && !bHideAll && bFresh;
+			if (ViewBody->IsVisible() != bShowView && (bShowView || !bHands || bHideAll))
+			{
+				ViewBody->SetVisibility(bShowView);
+			}
+		}
+	}
+	else if (ViewBody)
+	{
+		const bool bShowView = bHands && !bHideAll;
+		if (ViewBody->IsVisible() != bShowView)
+		{
+			ViewBody->SetVisibility(bShowView);
 		}
 	}
 }
@@ -907,9 +1330,9 @@ void UFirstPersonBodyComponent::LogFeet(float DeltaTime)
 		return FString::Printf(TEXT("%s %s gap %+.1f (anim %+.1f, lift %+.1f, target %+.1f from floor, height %.1f, planted %.2f, tilt %.0f)"), Name,
 			Leg.bHit ? (Leg.bSnow ? TEXT("snow") : TEXT("hard")) : TEXT("lost"), Leg.FinalGap, Leg.AnimGap, Leg.Lift, Leg.Offset, Leg.AnimHeight, Leg.Weight, Leg.TiltDeg);
 	};
-	UE_LOG(LogTemp, Display, TEXT("Feet: %s, slope %.0f deg (capsule lifted %.1f + floor gap %.1f) | hips drop %.1f (target %.1f) eye drop %.1f sink %.1f fit %.2f world-ik %d | %s | %s"),
+	UE_LOG(LogTemp, Display, TEXT("Feet: %s, slope %.0f deg (capsule lifted %.1f + floor gap %.1f) | hips drop %.1f (target %.1f) eye drop %.1f sink %.1f fit %.2f world-ik %d posed %d (drop %.0f) one-body %d | %s | %s"),
 		IsClimbing() ? TEXT("climbing") : (Movement->IsMovingOnGround() ? TEXT("ground") : (Movement->MovementMode == MOVE_None ? TEXT("stopped") : TEXT("air"))),
-		Slope, CapsuleLift, Movement->CurrentFloor.FloorDist, FootDrop, FootDropTarget, ViewDrop, SinkDepth, FeetAlpha, bWorldBodyShown ? 1 : 0, *Describe(Legs[0], TEXT("L")), *Describe(Legs[1], TEXT("R")));
+		Slope, CapsuleLift, Movement->CurrentFloor.FloorDist, FootDrop, FootDropTarget, ViewDrop, SinkDepth, FeetAlpha, bWorldBodyShown ? 1 : 0, bPosedVisual ? 1 : 0, PostureDrop, bOneBody ? 1 : 0, *Describe(Legs[0], TEXT("L")), *Describe(Legs[1], TEXT("R")));
 }
 
 void UFirstPersonBodyComponent::MeasureHand(FViewArm& Arm)
@@ -917,8 +1340,19 @@ void UFirstPersonBodyComponent::MeasureHand(FViewArm& Arm)
 	const FReferenceSkeleton& Ref = ViewBody->GetSkinnedAsset()->GetRefSkeleton();
 	const TArray<FTransform>& RefPose = Ref.GetRefBonePose();
 	const int32 Hand = Ref.FindBoneIndex(Arm.Hand);
+	// finger joint names: mannequin index_01_r, Mixamo RightHandIndex1
+	auto FingerBone = [&Arm](const TCHAR* Finger, int32 Joint) -> FName
+	{
+		if (Arm.bMixamo)
+		{
+			FString Name(Finger);
+			Name[0] = FChar::ToUpper(Name[0]);
+			return FName(FString::Printf(TEXT("%s%sHand%s%d"), *Arm.MixamoPrefix, Arm.Side > 0.f ? TEXT("Right") : TEXT("Left"), *Name, Joint));
+		}
+		return FName(FString::Printf(TEXT("%s_0%d_%s"), Finger, Joint, *Arm.Suffix));
+	};
 	// Reference-pose position of a bone below the hand, in hand-bone space.
-	auto InHand = [&](const TCHAR* Name) -> TOptional<FVector>
+	auto InHand = [&](const FName Name) -> TOptional<FVector>
 	{
 		const int32 Bone = Ref.FindBoneIndex(Name);
 		if (Bone == INDEX_NONE)
@@ -937,9 +1371,9 @@ void UFirstPersonBodyComponent::MeasureHand(FViewArm& Arm)
 		return Xf.GetLocation();
 	};
 
-	const TOptional<FVector> Middle = InHand(*(TEXT("middle_01_") + Arm.Suffix));
-	const TOptional<FVector> Index = InHand(*(TEXT("index_01_") + Arm.Suffix));
-	const TOptional<FVector> Pinky = InHand(*(TEXT("pinky_01_") + Arm.Suffix));
+	const TOptional<FVector> Middle = InHand(FingerBone(TEXT("middle"), 1));
+	const TOptional<FVector> Index = InHand(FingerBone(TEXT("index"), 1));
+	const TOptional<FVector> Pinky = InHand(FingerBone(TEXT("pinky"), 1));
 	if (Middle && Index && Pinky)
 	{
 		Arm.Length = Middle->Size();
@@ -983,7 +1417,7 @@ void UFirstPersonBodyComponent::MeasureHand(FViewArm& Arm)
 		TArray<int32>& Chain = Arm.Fingers.AddDefaulted_GetRef();
 		for (int32 Joint = 1; Joint <= 3; ++Joint)
 		{
-			Chain.Add(Ref.FindBoneIndex(*FString::Printf(TEXT("%s_0%d_%s"), Finger, Joint, *Arm.Suffix)));
+			Chain.Add(Ref.FindBoneIndex(FingerBone(Finger, Joint)));
 		}
 		if (Chain.Contains(INDEX_NONE))
 		{
@@ -1058,7 +1492,7 @@ FVector UFirstPersonBodyComponent::HandTargetInView(const FViewArm& Arm) const
 
 	// Rest height from the real screen shape, so a wide monitor (short vertical view) doesn't push the hands off the bottom.
 	UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
-	if (HandScreenDrop > 0.f && Viewport && ViewCamera)
+	if (HandScreenDrop > 0.f && Arm.bScreenDrop && Viewport && ViewCamera)
 	{
 		FVector2D Size;
 		Viewport->GetViewportSize(Size);
@@ -1095,7 +1529,7 @@ FQuat UFirstPersonBodyComponent::HandRotationFor(const FViewArm& Arm, const FVec
 	return Wanted * InHand.Inverse();
 }
 
-void UFirstPersonBodyComponent::PoseArm(FViewArm& Arm, float DeltaTime)
+void UFirstPersonBodyComponent::PoseArm(FViewArm& Arm, float DeltaTime, float Blend)
 {
 	const TArray<FTransform>& Pose = AnimatedBody->GetComponentSpaceTransforms();
 	const int32 Upper = AnimatedBody->GetBoneIndex(Arm.Upper);
@@ -1123,7 +1557,8 @@ void UFirstPersonBodyComponent::PoseArm(FViewArm& Arm, float DeltaTime)
 	}
 	else
 	{
-		SmoothedGrip = FMath::VInterpTo(SmoothedGrip, GripTarget, DeltaTime, HandFollowSpeed);
+		// story hands trail the view a little more (about 70 ms): weight through the body, not the lens
+		SmoothedGrip = FMath::VInterpTo(SmoothedGrip, GripTarget, DeltaTime, (Arm.bHoldsTool || HeldTool) ? HandFollowSpeed : HandsInUseFollowSpeed);
 		SmoothedGrip = GripTarget + (SmoothedGrip - GripTarget).GetClampedToMaxSize(3.f);
 	}
 
@@ -1178,9 +1613,18 @@ void UFirstPersonBodyComponent::PoseArm(FViewArm& Arm, float DeltaTime)
 		return FRotationMatrix::MakeFromXY(Dir, Side).ToQuat() * FRotationMatrix::MakeFromXY(RefDir, RefSide).ToQuat().Inverse() * RefRotation;
 	};
 	const int32 Clavicle = Ref.GetParentIndex(Upper);
-	const FTransform NewUpper(Aim((Elbow - Shoulder).GetSafeNormal(), Arm.RefUpperDir, Arm.RefUpperRotation), Shoulder, Pose[Upper].GetScale3D());
-	const FTransform NewLower(Aim((Reached - Elbow).GetSafeNormal(), Arm.RefLowerDir, Arm.RefLowerRotation), Elbow, Pose[Lower].GetScale3D());
-	const FTransform HandXf(HandRotation, Reached, Pose[Hand].GetScale3D());
+	FTransform NewUpper(Aim((Elbow - Shoulder).GetSafeNormal(), Arm.RefUpperDir, Arm.RefUpperRotation), Shoulder, Pose[Upper].GetScale3D());
+	FTransform NewLower(Aim((Reached - Elbow).GetSafeNormal(), Arm.RefLowerDir, Arm.RefLowerRotation), Elbow, Pose[Lower].GetScale3D());
+	FTransform HandXf(HandRotation, Reached, Pose[Hand].GetScale3D());
+	if (Blend < 1.f)
+	{
+		// rising or lowering: between the animated arm (this frame's pose, component space) and the posed one; the fingers
+		// curl with it
+		const float A = FMath::Clamp(Blend, 0.f, 1.f);
+		NewUpper.Blend(Pose[Upper], FTransform(NewUpper), A);
+		NewLower.Blend(Pose[Lower], FTransform(NewLower), A);
+		HandXf.Blend(Pose[Hand], FTransform(HandXf), A);
+	}
 	ViewBody->BoneSpaceTransforms[Upper] = NewUpper.GetRelativeTransform(Pose[Clavicle]);
 	ViewBody->BoneSpaceTransforms[Lower] = NewLower.GetRelativeTransform(NewUpper);
 	ViewBody->BoneSpaceTransforms[Hand] = HandXf.GetRelativeTransform(NewLower);
@@ -1218,12 +1662,12 @@ void UFirstPersonBodyComponent::PoseArm(FViewArm& Arm, float DeltaTime)
 			const int32 Parent = Ref.GetParentIndex(Bone);
 			const FTransform ParentXf = Parent == Hand ? HandXf : ViewBoneUnderHand(Parent, Hand, HandXf);
 			FTransform Xf = ViewBody->BoneSpaceTransforms[Bone] * ParentXf;
-			Xf.SetRotation(FQuat(Axis, Sign * FMath::DegreesToRadians(Curl[Joint])) * Xf.GetRotation());
+			Xf.SetRotation(FQuat(Axis, Sign * FMath::DegreesToRadians(Curl[Joint] * FMath::Clamp(Blend, 0.f, 1.f))) * Xf.GetRotation());
 			ViewBody->BoneSpaceTransforms[Bone] = Xf.GetRelativeTransform(ParentXf);
 		}
 	}
 
-	if (Arm.bHoldsTool)
+	if (Arm.bHoldsTool && HeldTool)
 	{
 		HeldTool->SetRelativeTransform(ToolInHand * HandXf);
 	}

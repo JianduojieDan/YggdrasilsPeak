@@ -1,0 +1,73 @@
+Create realistic 3D game assets for a first-person game set on the real Everest trek in Nepal (the Khumbu valley, Dingboche village and the Thukla pass, 4,400 to 4,850 m), present day, spring. The look is photoreal and lived-in: used, faded, dusty, weathered gear, never brand-new or stylised. All people are Sherpa or Nepali locals and foreign trekkers.
+
+Rules for every asset:
+- Real-world scale in metres. One asset per file, GLB or FBX.
+- PBR textures (base colour, normal, roughness, metallic where there is metal), with NO baked lighting or shadows in the base colour. 2K textures for large or hero assets, 1K for small props.
+- Clean, game-ready topology: small props 1-5k triangles, medium props 5-15k, tents 15-30k, characters 40-60k.
+- No logos, no text, no brand look-alikes.
+- Characters and clothing in A-pose (arms about 45 degrees down), feet on the ground, rigged for a standard humanoid skeleton. Clothing as separate pieces where possible.
+
+CAMP
+1. Two-person expedition dome tent: geodesic 4-season dome with crossing poles, vestibule, guy lines and snow flaps; faded and a little dirty. Orange, yellow, red and green versions; door open and door closed; with a modelled interior (inner tent and floor). Floor 2.2 x 1.4 m, 1.1 m tall.
+2. Large expedition mess dome tent: geodesic, one big door, small windows, guy lines, base weighted with rocks. 5-6 m across, 2.5-3 m tall.
+3. Expedition kitchen tent: tall frame or ridge tent of canvas or blue tarp, smoke-stained near the top, low stone wall at the base. 4 x 3 m, 2.4 m tall.
+4. Toilet tent: narrow tall pop-up tent, dull blue. 1.2 x 1.2 x 2.0 m.
+5. Expedition duffel bags: 90-120 litre waterproof duffels, packed lumpy, straps and handles, scuffed; yellow, blue, orange and red, plus one old orange duffel with patches. 85 cm long, 42 cm across.
+6. Blue plastic expedition barrel: 60 litre blue drum with a black clamp-ring lid, scuffed, a strap around it. 0.39 m across, 0.62 m tall.
+7. Mummy down sleeping bag (half unzipped, rumpled, 2.1 m) and a closed-cell foam sleeping mat (1.8 x 0.5 m).
+8. Porter load: two or three duffels stacked and roped together, with a flat forehead strap (namlo) over a folded cloth. About 90 cm tall.
+9. Porter T-stick (tokma): wooden walking stick with a T-shaped top for resting a load. 1.1 m.
+10. Doko basket: conical woven bamboo basket holding a kerosene can and crates. 80 cm tall, 55 cm wide at the top, 28 cm at the base.
+11. Camp stove set: kerosene camp stove with a big dented aluminium pot and a sooty kettle on it.
+12. Camp kitchen set: large aluminium cooking pots, a pressure cooker, a two-burner gas stove on a metal stand.
+13. Folding camp chairs and a folding aluminium camp table.
+14. Small solar panel on a metal stand, dusty, with a cable. 1 x 0.6 m.
+
+THUKLA MEMORIALS
+15. Memorial chortens: stepped dry-stone chortens and cairns built for climbers who died on Everest; grey granite with lichen; some with a carved stone or metal plaque, some with a wooden stick on top for prayer flags. Four variants, 1 to 3 m tall.
+16. A new memorial stone: freshly cut, sharp-edged grey stone with one flat smooth blank face (no text), on a small stone base. 0.6 x 0.3 x 0.8 m.
+17. Khata: a white silk ceremonial scarf with a woven pattern and fringed ends, 1.8 m long and 35 cm wide. Three versions: folded flat in two hands, draped around a neck, tied around a stone.
+
+PEOPLE
+18. Dolma, an 8-year-old Sherpa girl (full character): real child proportions, red wind-chapped cheeks, two black braids; a faded fuchsia puffer jacket one size too big, navy track pants with two side stripes, a striped red, teal and yellow knit hat with ear flaps, small hiking boots; dusty. 1.25 m tall.
+19. A Sherpa man of about 48 in a one-piece red 8,000 m expedition down suit (full character): hood down, no oxygen mask, climbing harness, charcoal and slate-blue high-altitude boots with built-in gaiters. Sitting in the snow. 1.68 m tall.
+20. Sangye, a Sherpa man of about 22 (full character): a red down jacket patched at one elbow, dark softshell trekking trousers, thin gloves, mid-height trekking boots. 1.70 m tall.
+21. Clothing only (no body), to fit realistic human characters:
+   a. Older Sherpa guide: faded mustard hooded down jacket a few seasons old, dark softshell trousers, faded maroon knit beanie with a pompom.
+   b. Expedition leader, man in his 40s: well-used dark olive insulated hooded jacket, charcoal softshell trousers, charcoal beanie.
+   c. Woman trekker, first-timer: faded red rented down jacket one size too big, mid-grey trekking trousers, teal beanie.
+   d. Woman trekker in a new, expensive, matching kit: navy puffer jacket and navy trousers, cream beanie, neck buff.
+   e. Nepali porter: cheap oversized black puffer with the hood up over a folded beige head cloth, olive cargo trousers rolled to mid-calf, grey buff over the mouth.
+   f. Nepali porter: faded red cheap puffer over a grey hoodie, navy track pants, a cap.
+   g. Sherpa woman of about 50: a long sleeveless dark brown-charcoal wrap dress to the ankles with no gold trim (angi), a mauve padded jacket over it, a narrow many-coloured striped front apron (pangden), a darker back apron, a woven red sash with a round embossed silver buckle, a bright floral headscarf tied at the back of the neck.
+
+SHERPA HOUSE KITCHEN
+22. Large copper water vessels: wide-bellied, dented, dark patina, brass bands. Three variants, 40-60 cm across, 50-70 cm tall.
+23. Small plain brass offering bowls for a Buddhist altar, 8 cm across.
+24. Footed Tibetan brass butter lamp, wax-stained, 10 cm tall.
+25. Long low Tibetan wooden table (choktse) with painted panels, smoke-darkened. 120 x 45 cm, 35 cm high.
+26. Simple wooden standing photo frame for a 15 x 20 cm photo.
+27. Strips of dried yak meat hanging on wooden slats, and cubes of dried yak cheese (chhurpi) on strings.
+28. Yak-dung fuel: a heap of dried dung patties, and round patties drying flat on the ground (20 cm each).
+29. Tall wooden prayer pole with a long faded vertical prayer banner (tarchen). 5 m.
+
+ACCESSORIES
+30. Wraparound glacier sunglasses with side shields, and a plain pair of sport sunglasses. 140 mm wide.
+31. Neck buff (tube scarf): one around the neck, one pulled up over the nose.
+32. Handheld walkie-talkie radio with antenna, on a chest strap. 6 x 3.5 x 12 cm.
+33. Trekking daypacks, 30-50 litres, three styles and colours.
+34. Telescopic trekking poles with wrist straps. 120 cm.
+35. Headlamp with an elastic head band.
+36. One-litre wide-mouth water bottle in an insulated sleeve. 9 x 21 cm.
+37. Action camera on a chest harness, and a handheld phone gimbal.
+
+TRAIL
+38. A frozen mountain stream opening: a shelf of clear and white ice around a hole with dark running water underneath. 1.5 m across.
+
+OPTIONAL
+39. Small story objects: a string of 108 wooden prayer beads; a summit certificate in a plastic sleeve; three photo prints; a child's folded crayon drawing; a folded red down jacket with an elbow patch.
+40. Red zipped first-aid pouch (20 x 14 x 8 cm) and a fingertip pulse oximeter (6 x 3.5 x 3 cm).
+41. Khumbu stone lodges: one and two storeys, blue-painted window frames, corrugated tin roofs in green, blue, red and rust, exterior only. Three variants, 10-14 x 6-8 m.
+42. Dry-stone field walls as modular pieces, 2-3 m long, 1 m tall.
+43. Mani stones: flat stones carved with a Buddhist mantra and painted, piled on a long low wall (4 m long, 1.2 m tall), and a small whitewashed trail chorten.
+44. A domestic yak with long hair, a wooden pack saddle with loads and a bell at the neck, rigged for walking. 1.4 m at the shoulder.

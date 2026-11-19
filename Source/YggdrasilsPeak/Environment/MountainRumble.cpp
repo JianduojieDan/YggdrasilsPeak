@@ -4,6 +4,7 @@
 
 #include "Survival/CompassComponent.h"
 #include "Survival/ExpeditionComponent.h"
+#include "Survival/YggViewRig.h"
 #include "Components/BoxComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/Controller.h"
@@ -64,8 +65,17 @@ void AMountainRumble::Strike()
 	{
 		UGameplayStatics::PlaySoundAtLocation(this, Booms[FMath::RandRange(0, Booms.Num() - 1)], Under, 1.6f, FMath::FRandRange(0.85f, 1.05f));
 	}
-	Shake = 1.f;
-	ShakeTime = 0.f;
+	// The ground trembles. With the view rig it is the rig's shake (one writer of the view, R1; the control rotation is
+	// never touched, so the mouse and the story keep their own); without it, the old shake of the control rotation.
+	if (UYggViewRigComponent* Rig = Pawn->FindComponentByClass<UYggViewRigComponent>())
+	{
+		Rig->AddShake(ShakeDegrees, ShakeSeconds);
+	}
+	else
+	{
+		Shake = 1.f;
+		ShakeTime = 0.f;
+	}
 	if (UCompassComponent* Compass = Pawn->FindComponentByClass<UCompassComponent>())
 	{
 		Compass->Kick(0.8f, Count <= 2);
@@ -94,7 +104,7 @@ void AMountainRumble::Tick(float DeltaSeconds)
 	if (Controller && (Shake > 0.f || !Applied.IsZero()))
 	{
 		ShakeTime += DeltaSeconds;
-		Shake = FMath::Max(0.f, Shake - DeltaSeconds / 3.f);
+		Shake = FMath::Max(0.f, Shake - DeltaSeconds / FMath::Max(ShakeSeconds, 0.1f));
 		const float A = ShakeDegrees * Shake * Shake;
 		const FRotator Want(FMath::PerlinNoise1D(ShakeTime * 11.f) * A, FMath::PerlinNoise1D(ShakeTime * 9.f + 7.f) * A * 0.6f, FMath::PerlinNoise1D(ShakeTime * 13.f + 3.f) * A * 0.8f);
 		FRotator R = Controller->GetControlRotation();

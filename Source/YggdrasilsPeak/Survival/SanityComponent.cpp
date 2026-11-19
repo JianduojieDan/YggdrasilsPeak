@@ -6,6 +6,7 @@
 #include "Survival/CompassComponent.h"
 #include "Survival/ExpeditionComponent.h"
 #include "Survival/SurvivalComponent.h"
+#include "Survival/YggViewRig.h"
 #include "Camera/CameraComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/Character.h"
@@ -196,13 +197,50 @@ void USanityComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	Distortion = FMath::FInterpTo(Distortion, Target, DeltaTime, 0.5f);
 	Pulse = FMath::FInterpTo(Pulse, 0.f, DeltaTime, 0.6f);
 	const float Breath = Sanity < 35.f ? (0.5f + 0.5f * FMath::Sin(Time * 0.9f)) * FMath::Clamp((35.f - Sanity) / 35.f, 0.f, 1.f) : 0.f;
+	// Overrides only while there is something to show (Chapter1_Camera_Spec 5.9): a clear mind leaves the level's and Ultra
+	// Dynamic Sky's own fringe and grain alone.
 	FPostProcessSettings& PP = Camera->PostProcessSettings;
-	PP.bOverride_SceneFringeIntensity = true;
-	PP.SceneFringeIntensity = Distortion * 2.2f + Pulse * 3.f + Breath * 1.f;   // more would read as a glitch, not a mind
-	PP.bOverride_FilmGrainIntensity = true;
-	PP.FilmGrainIntensity = Distortion * 0.35f + Pulse * 0.3f;
-	// exposure only while it breathes, so the level's own exposure is left alone otherwise
+	const float Fringe = Distortion * 2.2f + Pulse * 3.f + Breath * 1.f;   // more would read as a glitch, not a mind
+	PP.bOverride_SceneFringeIntensity = Fringe > 0.01f;
+	PP.SceneFringeIntensity = Fringe;
+	const float Grain = Distortion * 0.35f + Pulse * 0.3f;
+	PP.bOverride_FilmGrainIntensity = Grain > 0.01f;
+	PP.FilmGrainIntensity = Grain;
+	// exposure only while it breathes, so the level's own exposure is left alone otherwise. It goes through the view rig's
+	// one exposure channel (with the steady exposure and the story's overshoots), not the camera's own settings; without a
+	// rig (another pawn, a test map) it falls back to the camera, gated the same way.
 	const float Dim = 0.35f * Breath + 0.4f * Pulse;
-	PP.bOverride_AutoExposureBias = Dim > 0.01f;
-	PP.AutoExposureBias = -Dim;
+	const float Ev = Dim > 0.01f ? -Dim : 0.f;
+	if (UYggViewRigComponent* Rig = FindViewRig())
+	{
+		if (PP.bOverride_AutoExposureBias) { PP.bOverride_AutoExposureBias = false; PP.AutoExposureBias = 0.f; }   // from before the rig was found
+		if (!FMath::IsNearlyEqual(Ev, SentExposure, 0.002f))
+		{
+			static const FName SanitySource(TEXT("sanity"));
+			SentExposure = Ev;
+			Rig->SetExposureBias(SanitySource, Ev);
+		}
+	}
+	else
+	{
+		PP.bOverride_AutoExposureBias = Dim > 0.01f;
+		PP.AutoExposureBias = -Dim;
+	}
+}
+
+UYggViewRigComponent* USanityComponent::FindViewRig()
+{
+	// created at runtime by UFirstPersonBodyComponent::BeginPlay (local pawn only), maybe after this BeginPlay: looked up
+	// lazily, at most twice a second while it is missing
+	if (!ViewRig.IsValid() && GetOwner() && GetWorld())
+	{
+		const double Now = GetWorld()->GetRealTimeSeconds();
+		if (Now >= NextViewRigLookup)
+		{
+			NextViewRigLookup = Now + 0.5;
+			ViewRig = GetOwner()->FindComponentByClass<UYggViewRigComponent>();
+			SentExposure = -1000.f;   // a new rig hears the current value at once
+		}
+	}
+	return ViewRig.Get();
 }

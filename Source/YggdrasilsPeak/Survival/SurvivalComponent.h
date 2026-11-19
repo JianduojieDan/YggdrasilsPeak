@@ -8,6 +8,7 @@
 #include "SurvivalComponent.generated.h"
 
 class USurvivalConfig;
+class UYggViewRigComponent;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogSurvival, Log, All);
 
@@ -267,4 +268,13 @@ private:
 	bool bSprinting = false;
 	bool bExhausted = false;
 	bool bDead = false;
+
+	/** The view rig shapes the walk speed (Chapter1_Camera_Spec 4.4 / 5.1: 0 while posed, held or inspecting, the crawl
+	 *  speed, a story pace cap). It is created at runtime by UFirstPersonBodyComponent, maybe after this BeginPlay, so it is
+	 *  looked up lazily (at most twice a second while missing) and cached. */
+	UYggViewRigComponent* FindViewRig() const;
+	mutable TWeakObjectPtr<UYggViewRigComponent> ViewRig;
+	mutable double NextViewRigLookup = 0.0;
+	/** The rig held the speed below plain walking last frame: sprinting would cost stamina and breath for nothing. */
+	mutable bool bViewCapsSpeed = false;
 };

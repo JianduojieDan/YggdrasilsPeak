@@ -6,6 +6,7 @@
 #include "Survival/ExpeditionComponent.h"
 #include "Survival/SnowTrailComponent.h"
 #include "Survival/SurvivalComponent.h"
+#include "Survival/YggViewRig.h"
 #include "Animation/AnimSequence.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -16,11 +17,16 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "HAL/IConsoleManager.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "LandscapeProxy.h"
 #include "Materials/MaterialInterface.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
+
+static TAutoConsoleVariable<int32> CVarClimbCamera(TEXT("ygg.Climb.Camera"), 1,
+	TEXT("1 = grabbing a face pulls the view out over the shoulder (ClimbArm); 0 = climbing stays in the eyes, never swapping ")
+	TEXT("the camera (chapter 1 sets 0 at its start and gives the old value back at its end: one camera owner, the view rig)."));
 
 namespace
 {
@@ -114,6 +120,10 @@ void UClimbingComponent::OnClimbPressed()
 {
 	if (!bClimbing)
 	{
+		if (!IsBodyFree())
+		{
+			return;   // sitting, kneeling or held by the story: neither a grab nor a jump
+		}
 		// Space is also jump: this mapping sits above the character's own, so jump from here when there is no
 		// face to grab (otherwise the jump never arrives)
 		if (!TryGrab())
@@ -212,6 +222,10 @@ bool UClimbingComponent::TryGrab()
 	{
 		return false;
 	}
+	if (!IsBodyFree())
+	{
+		return false;
+	}
 	// look along the view (flattened): the face you are looking at
 	FRotator View = Character->GetControlRotation();
 	View.Pitch = 0.f;
@@ -233,8 +247,7 @@ bool UClimbingComponent::TryGrab()
 	Move->StopMovementImmediately();
 	Move->SetMovementMode(MOVE_Flying);
 	Move->BrakingDecelerationFlying = 0.f;
-	bSavedUseControllerYaw = Character->bUseControllerRotationYaw;
-	Character->bUseControllerRotationYaw = false;
+	HoldBodyYaw(true);
 	if (Survival)
 	{
 		Survival->SetSprintRequested(false);
@@ -242,8 +255,10 @@ bool UClimbingComponent::TryGrab()
 	}
 	bTrackingFall = false;
 	CurrentClip = nullptr;
-	// look up the face a little (the camera pulls out over the shoulder; LookUpOnGrab is the pitch to start from)
-	if (AController* Controller = Character->GetController())
+	// look up the face a little (the camera pulls out over the shoulder; LookUpOnGrab is the pitch to start from). In the
+	// eyes (ygg.Climb.Camera 0) the view is never turned for you: a pitch snap the body did not make.
+	AController* Controller = CVarClimbCamera.GetValueOnGameThread() != 0 ? Character->GetController() : nullptr;
+	if (Controller)
 	{
 		FRotator R = Controller->GetControlRotation();
 		const float Pitch = FRotator::NormalizeAxis(R.Pitch);
@@ -271,7 +286,7 @@ void UClimbingComponent::LetGo(bool bPushOff)
 	bClimbing = false;
 	bToppingOut = false;
 	Surface = EClimbSurface::None;
-	Character->bUseControllerRotationYaw = bSavedUseControllerYaw;
+	HoldBodyYaw(false);
 	if (USurvivalComponent* Survival = Character->FindComponentByClass<USurvivalComponent>())
 	{
 		Survival->SetClimbing(false);
@@ -282,6 +297,35 @@ void UClimbingComponent::LetGo(bool bPushOff)
 	FallApexZ = Character->GetActorLocation().Z;
 	bTrackingFall = true;
 	RestoreAnimation();
+}
+
+bool UClimbingComponent::IsBodyFree() const
+{
+	// sitting, kneeling, crawling, or held still by the story (a Move lease, an inspect): the view rig shapes walking to 0
+	const AActor* Owner = GetOwner();
+	const UYggViewRigComponent* Rig = Owner ? Owner->FindComponentByClass<UYggViewRigComponent>() : nullptr;
+	return !Rig || (Rig->GetView() == EYggView::Walk && Rig->ShapeWalkSpeed(1.f) > 0.f);
+}
+
+void UClimbingComponent::HoldBodyYaw(bool bHold)
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Character)
+	{
+		return;
+	}
+	const UYggViewRigComponent* Rig = Character->FindComponentByClass<UYggViewRigComponent>();
+	if (bHold)
+	{
+		// the capsule turns to the face, not with the view
+		bSavedUseControllerYaw = Character->bUseControllerRotationYaw;
+		Character->bUseControllerRotationYaw = false;
+		return;
+	}
+	// Letting go. With the view rig, it owns bUseControllerRotationYaw (Chapter1_Camera_Spec.md 5.5): the value saved at the
+	// grab may be the rig's own temporary "off" (its turn dead zone while standing still), so hand back the walking state
+	// (the body follows the view; the rig turns it off again when it wants). Without the rig, the value from the grab.
+	Character->bUseControllerRotationYaw = Rig ? true : bSavedUseControllerYaw;
 }
 
 void UClimbingComponent::SpendStamina(float Amount)
@@ -394,7 +438,8 @@ void UClimbingComponent::UpdateClimbView(float DeltaTime)
 	{
 		return;
 	}
-	const bool bWant = bClimbing;
+	// ygg.Climb.Camera 0: the arm never pulls out (and glides home if it was out when it was switched off)
+	const bool bWant = bClimbing && CVarClimbCamera.GetValueOnGameThread() != 0;
 	const float Length = FMath::FInterpTo(ClimbArm->TargetArmLength, bWant ? ClimbCameraDistance : 0.f, DeltaTime, bWant ? 3.f : 6.f);
 	ClimbArm->TargetArmLength = Length;
 	ClimbArm->SocketOffset = ClimbCameraOffset * (Length / FMath::Max(ClimbCameraDistance, 1.f));
@@ -591,6 +636,9 @@ void UClimbingComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		LetGo(false);
 		return;
 	}
+	// the capsule faces the wall (set below): nothing else may hand the yaw back to the view meanwhile (the rig's turn
+	// dead zone or a HardReset would turn the climber away from the face)
+	Character->bUseControllerRotationYaw = false;
 
 	// pulling up over a ledge: an eased move up, then over
 	if (bToppingOut)
@@ -609,7 +657,7 @@ void UClimbingComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			bClimbing = false;
 			bToppingOut = false;
 			Surface = EClimbSurface::None;
-			Character->bUseControllerRotationYaw = bSavedUseControllerYaw;
+			HoldBodyYaw(false);
 			Move->SetMovementMode(MOVE_Walking);
 			if (Survival)
 			{

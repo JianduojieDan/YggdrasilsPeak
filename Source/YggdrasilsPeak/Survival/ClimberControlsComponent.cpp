@@ -10,6 +10,7 @@
 #include "Survival/ExpeditionComponent.h"
 #include "Survival/InventoryComponent.h"
 #include "Survival/SurvivalComponent.h"
+#include "Story/YggStory.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "EnhancedInputComponent.h"
@@ -153,8 +154,22 @@ void UClimberControlsComponent::OnSprintStopped()
 	}
 }
 
+bool UClimberControlsComponent::IsStoryChoiceOpen() const
+{
+	// Keys 1-3 answer an open story choice (the story reads them itself) and must not also eat a ration or drink: the
+	// promise and the load choice each used up supplies in the 2026-11-19 play-test. Enhanced Input runs before the
+	// tickable story subsystem, so on the answering frame the choice is still open here.
+	const UWorld* World = GetWorld();
+	UYggStorySubsystem* Story = World ? World->GetSubsystem<UYggStorySubsystem>() : nullptr;
+	return Story && Story->IsChoiceOpen();
+}
+
 void UClimberControlsComponent::OnEat()
 {
+	if (IsStoryChoiceOpen())
+	{
+		return;
+	}
 	if (UInventoryComponent* Pack = GetOwner()->FindComponentByClass<UInventoryComponent>())
 	{
 		Pack->Use(TEXT("Ration"));
@@ -163,6 +178,10 @@ void UClimberControlsComponent::OnEat()
 
 void UClimberControlsComponent::OnDrink()
 {
+	if (IsStoryChoiceOpen())
+	{
+		return;
+	}
 	if (UInventoryComponent* Pack = GetOwner()->FindComponentByClass<UInventoryComponent>())
 	{
 		Pack->Use(TEXT("Water"));

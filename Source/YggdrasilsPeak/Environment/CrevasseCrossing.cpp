@@ -9,6 +9,7 @@
 #include "GameFramework/Controller.h"
 #include "Survival/ExpeditionComponent.h"
 #include "Survival/SurvivalComponent.h"
+#include "Survival/YggViewRig.h"
 
 ACrevasseCrossing::ACrevasseCrossing()
 {
@@ -126,6 +127,12 @@ void ACrevasseCrossing::Tick(float DeltaSeconds)
 	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
 	if (!Controller)
 	{
+		return;
+	}
+	if (Pawn->FindComponentByClass<UYggViewRigComponent>())
+	{
+		// The view rig keeps the control rotation's roll at 0 (its watchdog would undo this every frame, and log it), so the
+		// ladder's sway waits for a rig layer (Chapter1_Camera_Spec.md 10.3 P2); the slow footing (SetOnLadder) still applies.
 		return;
 	}
 	// The ladder flexes under each step and the wind pushes: two slow sines, stronger when moving and in wind.

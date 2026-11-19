@@ -28,10 +28,12 @@ TAG = ("_" + argv[3]) if len(argv) > 3 else ""
 DEST = os.path.join(OUT, "Export", "Garments")
 
 # fabric ids = Poly Haven sets in Downloads/polyhaven_fabric_2026-11-14 ("" = flat colour); tile = metres per repeat
-FAB = {"nylon": ("stretch_poplin", 0.18, 0.42), "softshell": ("jersey_melange", 0.25, 0.75), "fleece": ("polar_fleece", 0.22, 0.95),
-       "knit": ("knitted_fleece", 0.12, 0.95), "wool": ("caban", 0.35, 0.9), "tweed": ("poly_wool_herringbone", 0.3, 0.9),
-       "leather": ("brown_leather", 0.35, 0.6), "rubber": ("", 1.0, 0.85), "brocade": ("quatrefoil_jacquard_fabric", 0.16, 0.55),
-       "floral": ("floral_jacquard", 0.2, 0.7), "linen": ("rough_linen", 0.3, 0.9), "pangden": ("@pangden", 1.0, 0.85), "scarfprint": ("@scarfprint", 0.12, 0.85),
+FAB = {  # real Poly Haven tile sizes (~0.27 m; they were tiled 2-3x too small and the weave vanished, 2026-11-15)
+       "nylon": ("@nylon", 0.265, 0.45), "softshell": ("bi_stretch", 0.265, 0.62), "fleece": ("polar_fleece", 0.273, 0.9),
+       "knit": ("knitted_fleece", 0.266, 0.9), "wool": ("caban", 0.274, 0.85), "tweed": ("poly_wool_herringbone", 0.27, 0.85),
+       "leather": ("brown_leather", 0.40, 0.6), "rubber": ("", 1.0, 0.85), "brocade": ("quatrefoil_jacquard_fabric", 0.28, 0.45),
+       "floral": ("floral_jacquard", 0.25, 0.7), "linen": ("rough_linen", 0.27, 0.85), "pangden": ("@pangden", 1.0, 0.75),
+       "scarfprint": ("@scarfprint", 0.12, 0.75), "twill": ("denim_fabric_05", 0.27, 0.75),
        "webbing": ("hessian_230", 0.08, 0.8), "metal": ("", 1.0, 0.3)}
 
 OUTFITS = {
@@ -57,7 +59,7 @@ OUTFITS = {
     # porters
     # trekking porter (Pheriche, Nov 2022 photo): cheap black puffer, olive cargo trousers rolled to mid-calf, dark socks,
     # black low trainers, dark beanie
-    "porter_a": dict(boots=("scan", "reebok_dmx_rainwalker"), pants=dict(style="softshell", main=(0.09, 0.085, 0.05), rolled=True),
+    "porter_a": dict(boots=("scan", "reebok_dmx_rainwalker"), pants=dict(style="softshell", main=(0.09, 0.085, 0.05), rolled=True, fabric="twill"),
                      jacket=dict(style="down", main=(0.02, 0.02, 0.022), panel=(0.02, 0.02, 0.022), trim=(0.01, 0.01, 0.012)),
                      hat=dict(style="beanie", main=(0.03, 0.03, 0.035), pom=False)),
     "porter_b": dict(boots=("trainer", (0.30, 0.24, 0.18)), pants=dict(style="softshell", main=(0.20, 0.20, 0.21)),
@@ -279,7 +281,126 @@ def wrap_over(o, objs, gap, cy, only=None):
     me.update(); return n
 
 
-def push_out(o, tree, gap, only=None):
+def neck_profile(z0, z1, NT=48):
+    """Neck radius around the neck axis per angle (body + face meshes between z0 and z1): collars are built on it."""
+    ax = Vector((B["neck_01"].x, B["neck_01"].y))
+    rad = [0.0] * NT
+    for src in (body, face):
+        for v in src.data.vertices:
+            c = v.co
+            if z0 <= c.z <= z1:
+                d = Vector((c.x - ax.x, c.y - ax.y))
+                if d.length < 0.11:
+                    j = int((math.atan2(d.y, d.x) % (2 * math.pi)) / (2 * math.pi) * NT) % NT
+                    rad[j] = max(rad[j], d.length)
+    good = [r for r in rad if r > 0]; fill = sum(good) / len(good) if good else 0.06
+    rad = [r if r > 0 else fill for r in rad]
+    for _ in range(3):
+        rad = [(rad[(j - 1) % NT] + 2 * rad[j] + rad[(j + 1) % NT]) / 4 for j in range(NT)]
+    def r_at(x, y):
+        th = math.atan2(y - ax.y, x - ax.x) % (2 * math.pi); jf = th / (2 * math.pi) * NT; j0 = int(jf) % NT; u = jf - int(jf)
+        return rad[j0] * (1 - u) + rad[(j0 + 1) % NT] * u
+    return ax, r_at
+
+
+def close_neckline(o, loop_vs, gap0, band=0.10, slope=0.55):
+    """A body-copy garment opens at the collarbones (39 cm wide): pull the opening and a band below it in towards the
+    neck so the yoke slopes up to a collar base gap0 off the neck - the collar then rises from THERE (it rose from the
+    wide opening and read as a ragged funnel round a bare neck, user 2026-11-15)."""
+    me = o.data
+    zs = [me.vertices[i].co.z for i in loop_vs]
+    ax, r_at = neck_profile(min(zs) - 0.02, BODY_TOP)
+    kd = KDTree(len(loop_vs))
+    for k, i in enumerate(loop_vs): kd.insert(me.vertices[i].co, k)
+    kd.balance()
+    for v in me.vertices:
+        d = kd.find(v.co)[2]
+        if d > band: continue
+        dx, dy = v.co.x - ax.x, v.co.y - ax.y; L = math.hypot(dx, dy)
+        if L < 1e-4: continue
+        target = r_at(v.co.x, v.co.y) + gap0 + slope * d          # the garment widens going down from the collar
+        if L > target:
+            w = 1.0 - smoothstep(0.0, band, d) * 0.85 if d > 0 else 1.0
+            nl = L + (target - L) * w
+            v.co.x = ax.x + dx / L * nl; v.co.y = ax.y + dy / L * nl
+    # the opening's height: a smooth tilted ring (low at the throat, higher at the nape), no peaks over the shoulders
+    order = loop_order(me, loop_vs)
+    for _ in range(12):
+        zs = [me.vertices[i].co.z for i in order]; n = len(zs)
+        for k, i in enumerate(order):
+            me.vertices[i].co.z = 0.25 * zs[k - 1] + 0.5 * zs[k] + 0.25 * zs[(k + 1) % n]
+    me.update()
+    return ax, r_at
+
+
+def loop_order(me, loop_vs):
+    """Vertices of a closed boundary loop in walking order."""
+    vs = set(loop_vs); adj = {i: [] for i in vs}
+    for e in me.edges:
+        a, b = e.vertices
+        if a in vs and b in vs: adj[a].append(b); adj[b].append(a)
+    start = next(iter(vs)); order = [start]; prev = None; cur = start
+    while True:
+        nxt = [j for j in adj[cur] if j != prev and (j not in order[-2:] or len(order) < 2)]
+        nxt = [j for j in nxt if j not in order] or []
+        if not nxt: break
+        prev, cur = cur, nxt[0]; order.append(cur)
+    return order if len(order) >= len(vs) * 0.8 else list(loop_vs)
+
+
+def stand_collar(o, first_new, ax, r_at, gap_base, gap_top, z_base, h):
+    """Collar vertices (index >= first_new) at the neck radius + a gap that narrows towards the top: a stand collar."""
+    me = o.data
+    for v in me.vertices[first_new:]:
+        dx, dy = v.co.x - ax.x, v.co.y - ax.y; L = math.hypot(dx, dy)
+        if L < 1e-4: continue
+        t = max(0.0, min(1.0, (v.co.z - z_base) / max(h, 1e-3)))
+        R = r_at(v.co.x, v.co.y) + gap_base + (gap_top - gap_base) * t
+        v.co.x = ax.x + dx / L * R; v.co.y = ax.y + dy / L * R
+    me.update()
+
+
+SEAM_FAR = 0.03
+
+
+def seam_uv(o, seams, edge_inset=None):
+    """Second UV channel "UVSeam" = (metres along the nearest seam, signed metres across it) - the garment material
+    draws stitch dashes and a seam shadow from it (research: at 1-3 m stitches/seams sell cloth, the weave does not).
+    seams: callables co -> (signed distance, along) or None; edge_inset: stitching that far in from every open edge."""
+    me = o.data
+    best = []
+    for v in me.vertices:
+        bd, ba = SEAM_FAR, 0.0
+        for f in seams:
+            r = f(v.co)
+            if r is not None and abs(r[0]) < abs(bd): bd, ba = r
+        best.append([bd, ba])
+    if edge_inset is not None:
+        pts = []
+        for edges, vs in boundary_loops(o):
+            acc, prev = 0.0, None
+            for i in loop_order(me, vs):
+                if prev is not None: acc += (me.vertices[i].co - me.vertices[prev].co).length
+                pts.append((me.vertices[i].co.copy(), acc)); prev = i
+        if pts:
+            kd = KDTree(len(pts))
+            for k, (c, a) in enumerate(pts): kd.insert(c, k)
+            kd.balance()
+            for i, v in enumerate(me.vertices):
+                c, k, dist = kd.find(v.co); d = dist - edge_inset
+                if abs(d) < abs(best[i][0]): best[i] = [d, pts[k][1]]
+    uv = me.uv_layers.get("UVSeam") or me.uv_layers.new(name="UVSeam")
+    for l in me.loops:
+        d, a = best[l.vertex_index]
+        uv.data[l.index].uv = (a, max(-SEAM_FAR, min(SEAM_FAR, d)))
+
+
+def around(c, cy, r=0.16):
+    """Arc-length-like coordinate round the body's vertical axis (for dashes along horizontal seams)."""
+    return math.atan2(c.y - cy, c.x) * r
+
+
+def push_out(o, tree, gap, only=None, tangent=0.5):
     """Keep every vertex at least `gap` outside the surfaces in tree (no clipping in the rest pose)."""
     me = o.data; n = 0
     for v in me.vertices:
@@ -288,8 +409,42 @@ def push_out(o, tree, gap, only=None):
         if hit[0] is None: continue
         loc, nrm = hit[0], hit[1]
         d = (v.co - loc).dot(nrm)
-        if d < gap: v.co = loc + nrm * gap + (v.co - loc - nrm * (v.co - loc).dot(nrm)) * 0.5; n += 1
+        if d < gap: v.co = loc + nrm * gap + (v.co - loc - nrm * (v.co - loc).dot(nrm)) * tangent; n += 1
     me.update(); return n
+
+
+def despike(o, lim=0.0025, it=4, only=None):
+    """Vertices standing more than lim out of (or into) their 1-ring ALONG THE NORMAL go back towards the ring
+    average (score-line slivers are in-plane and stay). Returns how many moved in the first pass."""
+    me = o.data; first = None
+    for _ in range(it):
+        me.update(); nb, bnd = neighbours(me); n = 0
+        P = [v.co.copy() for v in me.vertices]
+        for v in me.vertices:
+            i = v.index
+            if bnd[i] or not nb[i] or (only and not only(i, P[i])): continue
+            avg = sum((P[j] for j in nb[i]), Vector()) / len(nb[i])
+            d = (P[i] - avg).dot(v.normal)
+            if abs(d) > lim: v.co = P[i] - v.normal * (d - math.copysign(lim, d) * 0.5); n += 1
+        if first is None: first = n
+    me.update(); return first
+
+
+def push_relax(o, tree, gap, it=4, only=None):
+    """push_out, then relax the vertices it moved (+ their 1-ring) and push again normal-only: a plain push leaves
+    single vertices standing proud where the nearest point jumps (shoulder tops, armpits) - spikes."""
+    me = o.data; me.update(); old = [v.co.copy() for v in me.vertices]
+    push_out(o, tree, gap, only=only, tangent=1.0)
+    moved = {v.index for v in me.vertices if (v.co - old[v.index]).length > 1e-5}
+    nb, bnd = neighbours(me)
+    zone = set(moved)
+    for i in moved: zone.update(nb[i])
+    for _ in range(it):
+        P = {i: sum((me.vertices[j].co for j in nb[i]), Vector()) / len(nb[i]) for i in zone if nb[i] and not bnd[i]}
+        for i, a in P.items(): me.vertices[i].co = me.vertices[i].co.lerp(a, 0.5)
+    me.update()
+    push_out(o, tree, gap * 0.8, only=only, tangent=1.0)
+    return len(moved)
 
 
 def boundary_loops(o):
@@ -391,6 +546,87 @@ def finish(o, thickness=0.005):
     o.data.update()
 
 
+def smooth_normals(me, it=8):
+    """Vertex normals averaged over the 1-ring `it` times: an offset along these never folds over at creases."""
+    nb, _ = neighbours(me)
+    N = [v.normal.copy() for v in me.vertices]
+    for _ in range(it):
+        M = []
+        for i, n in enumerate(N):
+            s = n + sum((N[j] for j in nb[i]), Vector())
+            M.append(s.normalized() if s.length > 1e-8 else n)
+        N = M
+    return N
+
+
+def thicken(o, t, hem_w=0.011, roll=4, hem_bulge=0.0015, t_fn=None):
+    """Real cloth thickness (director 2026-11-20: paper-thin single sheets, no hem, no lining):
+    - an inner shell (the lining) offset t inward along SMOOTHED normals, same UVs / weights / colours, faces reversed;
+    - every open edge closed by a rolled hem: a half-round of `roll` segments from the outer edge to the inner one,
+      bulging out of the cloth, so a cuff/hem/collar edge reads as a padded, turned edge;
+    - the outer band within hem_w of an edge sits hem_bulge proud (the turned-up hem allowance, stitched at edge_inset).
+    No Solidify: with even thickness it blew the garments into km-long spikes at creases. t_fn(i, co) overrides t."""
+    me = o.data; me.update()
+    N = smooth_normals(me)
+    nb, bnd = neighbours(me)
+    bv = [i for i, b in enumerate(bnd) if b]
+    if not bv: return
+    kd = KDTree(len(bv))
+    for k, i in enumerate(bv): kd.insert(me.vertices[i].co, k)
+    kd.balance()
+    for v in me.vertices:
+        d = kd.find(v.co)[2]
+        if d < hem_w: v.co = v.co + N[v.index] * hem_bulge * (1.0 - smoothstep(hem_w * 0.65, hem_w, d))
+    me.update()
+    T = [t_fn(v.index, v.co) if t_fn else t for v in me.vertices]
+    bm = bmesh.new(); bm.from_mesh(me); bm.verts.ensure_lookup_table(); bm.faces.ensure_lookup_table()
+    orig_v = bm.verts[:]; orig_f = bm.faces[:]
+    bedges = [e for e in bm.edges if e.is_boundary and e.link_faces]
+    uvls = list(bm.loops.layers.uv.values()); cols = list(bm.loops.layers.color.values())
+    dup = bmesh.ops.duplicate(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:])
+    vmap = dup["vert_map"]
+    new_f = [g for g in dup["geom"] if isinstance(g, bmesh.types.BMFace)]
+    for v in orig_v:
+        vmap[v].co = v.co - N[v.index] * T[v.index]
+    bmesh.ops.reverse_faces(bm, faces=new_f)
+    # out-of-cloth direction at each boundary vertex (in the surface plane, away from its face)
+    E = {}
+    for e in bedges:
+        a, b = e.verts; f = e.link_faces[0]
+        p = (b.co - a.co).cross(f.normal)
+        if p.dot(f.calc_center_median() - (a.co + b.co) * 0.5) > 0: p = -p
+        if p.length > 1e-9:
+            p.normalize(); E[a] = E.get(a, Vector()) + p; E[b] = E.get(b, Vector()) + p
+    ring = {}
+    for v, e_dir in E.items():
+        inner = vmap[v]; ax = v.co - inner.co; h = ax.length
+        if h < 1e-6: ring[v] = [v] * roll + [inner]; continue
+        ax /= h; e_dir = e_dir - ax * e_dir.dot(ax)
+        e_dir = e_dir.normalized() if e_dir.length > 1e-6 else Vector((0, 0, 0))
+        mid = (v.co + inner.co) * 0.5; pts = [v]
+        for k in range(1, roll):
+            ang = math.pi * k / roll
+            pts.append(bm.verts.new(mid + ax * (h * 0.5) * math.cos(ang) + e_dir * (h * 0.55) * math.sin(ang), v))
+        ring[v] = pts + [inner]
+    for e in bedges:
+        a, b = e.verts; f = e.link_faces[0]
+        if a not in ring or b not in ring: continue
+        la = next(l for l in f.loops if l.vert is a); lb = next(l for l in f.loops if l.vert is b)
+        ma = (a.co + vmap[a].co) * 0.5; mb = (b.co + vmap[b].co) * 0.5
+        for k in range(roll):
+            q = (ring[a][k], ring[b][k], ring[b][k + 1], ring[a][k + 1])
+            if len(set(q)) < 4: continue
+            try: nf = bm.faces.new(q, f)
+            except ValueError: continue
+            nf.normal_update()
+            if nf.normal.dot(nf.calc_center_median() - (ma + mb) * 0.5) < 0: nf.normal_flip()
+            for l in nf.loops:
+                src = la if l.vert in ring[a] else lb
+                for lay in uvls: l[lay].uv = src[lay].uv
+                for lay in cols: l[lay] = tuple(c * (0.82 if lay.name == "Col" else 1.0) for c in src[lay][:3]) + (1.0,)
+    bm.to_mesh(me); bm.free(); me.update()
+
+
 def decimate_to(o, edge):
     """Thin the copied body faces to ~edge-sized faces before shaping (hands/feet/face are very dense)."""
     me = o.data; area = sum(p.area for p in me.polygons)
@@ -444,6 +680,7 @@ def pillow(t, period):
 
 # ---------------------------------------------------------------- pieces
 PIECES = []
+THICK = {"down": 0.011, "shell": 0.007, "fleece": 0.008}     # cloth thickness per jacket style (outer -> lining), m
 
 
 def score(o, co, no, only=None):
@@ -521,7 +758,9 @@ def make_scan_boots(name):
     tex_path = os.path.join(DEST, f"T_scan_{name}.png")
     gso_tex = os.path.join(folder, "materials", "textures", "texture.png")
     if os.path.exists(gso_tex):                          # Google Scanned Objects: the texture is a file next to the OBJ
-        import shutil; shutil.copyfile(gso_tex, tex_path); tex = None
+        import shutil; tex = None
+        if not (os.path.exists(tex_path) and os.path.getsize(tex_path) == os.path.getsize(gso_tex)):   # same file: skip
+            shutil.copyfile(gso_tex, tex_path)                                                           # (a locked copy aborted the run)
     if tex is not None:
         if tex.packed_file or not os.path.exists(bpy.path.abspath(tex.filepath)):
             tex.filepath_raw = tex_path; tex.file_format = 'PNG'; tex.save()
@@ -727,6 +966,89 @@ def make_boots(kind, tint):
     return top
 
 
+def fold_noise(th, z):
+    """Cheap smooth irregularity so folds are not machine-perfect rings."""
+    return 0.55 * math.sin(th * 3 + z * 21) + 0.3 * math.sin(th * 7.3 - z * 13.7) + 0.15 * math.sin(th * 13.1 + z * 37)
+
+
+def leg_fold(co, hem):
+    """Displacement (m, along the normal) of trouser folds: compression rings behind the knee (deeper at the back),
+    a stack of irregular rings above the hem, horizontal drag folds under the seat."""
+    s = 1.0 if co.x > 0 else -1.0; ax = Vector((0.11 * s, B["pelvis"].y))
+    th = math.atan2(co.y - ax.y, co.x - ax.x)
+    back = 1.0 if (co.y - B["pelvis"].y) * FRONT < 0 else 0.35
+    ph = fold_noise(th, co.z) * 1.4
+    knee = 0.006 * back * gaussian(co.z, Z_KNEE + 0.01, 0.055) * math.sin(co.z * 2 * math.pi / 0.034 + ph)
+    stack = 0.006 * smoothstep(hem + 0.13, hem + 0.02, co.z) * math.sin(co.z * 2 * math.pi / 0.03 + ph * 1.6)
+    seat = 0.003 * back * gaussian(co.z, Z_CROTCH - 0.05, 0.035) * math.sin(co.z * 2 * math.pi / 0.03 + ph * 0.6)
+    return knee + stack + seat
+
+
+def leg_hull(side, z0, z1, step=0.02, NT=48, fall=0.98):
+    """Per-leg outline in horizontal slices (convex support radius around each slice's centre), smoothed, and from
+    the seat down never shrinking faster than `fall` per slice: a trouser leg hangs from the seat and the knee
+    instead of shrink-wrapping the calf and hamstrings (body-suit look, director 2026-11-20)."""
+    pts = [v.co for v in body.data.vertices if BPART[v.index] in ("thigh", "calf", "pelvis", "other") and v.co.x * side > 0.004]
+    zs, cen, rows = [], [], []
+    z = z0
+    while z <= z1 + 1e-6:
+        band = [c for c in pts if abs(c.z - z) < step * 0.75]
+        if len(band) > 10:
+            cx = sum(c.x for c in band) / len(band); cy = sum(c.y for c in band) / len(band)
+            rad = [max((c.x - cx) * math.cos(2 * math.pi * j / NT) + (c.y - cy) * math.sin(2 * math.pi * j / NT) for c in band) for j in range(NT)]
+            zs.append(z); cen.append(Vector((cx, cy))); rows.append(rad)
+        z += step
+    for _ in range(2):
+        rows = [[(r[(j - 1) % NT] + 2 * r[j] + r[(j + 1) % NT]) / 4 for j in range(NT)] for r in rows]
+    K = len(rows)
+    for _ in range(3):
+        cen = [(cen[max(k - 1, 0)] + cen[k] * 2 + cen[min(k + 1, K - 1)]) / 4 for k in range(K)]
+        rows = [[(rows[max(k - 1, 0)][j] + 2 * rows[k][j] + rows[min(k + 1, K - 1)][j]) / 4 for j in range(NT)] for k in range(K)]
+    for k in range(K - 2, -1, -1):
+        rows[k] = [max(rows[k][j], rows[k + 1][j] * fall) for j in range(NT)]
+    def f(co):
+        if not zs: return None
+        kf = max(0.0, min(K - 1.001, (co.z - zs[0]) / step)); k = int(kf); t = kf - k
+        c = cen[k].lerp(cen[min(k + 1, K - 1)], t)
+        th = math.atan2(co.y - c.y, co.x - c.x) % (2 * math.pi); jf = th / (2 * math.pi) * NT; j0 = int(jf) % NT; j1 = (j0 + 1) % NT; u = jf - int(jf)
+        r0 = rows[k][j0] * (1 - u) + rows[k][j1] * u; k1 = min(k + 1, K - 1)
+        r1 = rows[k1][j0] * (1 - u) + rows[k1][j1] * u
+        return c, r0 * (1 - t) + r1 * t
+    return f
+
+
+def drape_legs(o, style, spec, hem):
+    """Trousers on their hanging outline (leg_hull + ease) below the crotch, on the torso outline over the seat: the
+    crotch, hamstrings and calves stop showing through. The ease grows towards the hem (cloth falls past the ankle)."""
+    me = o.data; me.update()
+    fall = 0.985 if spec.get("rolled") or style == "down" else 0.975
+    hulls = {s: leg_hull(SIDE[s], hem - 0.04, Z_CROTCH + 0.04, fall=fall) for s in ("l", "r")}
+    seat, scy = torso_hull(Z_CROTCH - 0.02, Z_PELVIS + 0.14)
+    base = 0.026 if style == "down" else (0.016 if spec.get("rolled") else 0.010)
+    for v in me.vertices:
+        c = v.co; s = "l" if c.x > 0 else "r"
+        wn = 1.0 - smoothstep(0.55, 0.9, abs(v.normal.z))         # crotch/seat undersides: leave to the smoothing
+        ease = base + 0.010 * smoothstep(Z_KNEE, hem, c.z)
+        wl = smoothstep(Z_CROTCH + 0.01, Z_CROTCH - 0.05, c.z) * wn
+        if wl > 0:
+            h = hulls[s](c)
+            if h:
+                cc, r = h; d = Vector((c.x - cc.x, c.y - cc.y)); L = d.length
+                if L > 1e-4:
+                    tgt = cc + d * ((r + ease) / L)
+                    if tgt.x * SIDE[s] < 0.006: tgt.x = 0.006 * SIDE[s]          # never past the centre line
+                    v.co.x += (tgt.x - c.x) * wl * 0.9; v.co.y += (tgt.y - c.y) * wl * 0.9
+        ws = smoothstep(Z_CROTCH - 0.03, Z_CROTCH + 0.04, c.z) * wn * smoothstep(Z_PELVIS + 0.12, Z_PELVIS + 0.04, c.z)
+        if ws > 0:
+            r = seat(c)
+            if r:
+                d = Vector((c.x, c.y - scy)); L = d.length
+                if L > 1e-4 and L < r + ease:
+                    k = (r + ease * 0.8) / L; v.co.x += (d.x * k - d.x) * ws; v.co.y += (d.y * k - d.y) * ws
+    me.update()
+    laplace(o, 6, 0.5)
+
+
 def make_pants(spec, boot_top):
     style = spec["style"]
     waist = Z_PELVIS + 0.115
@@ -747,17 +1069,19 @@ def make_pants(spec, boot_top):
         flare = 0.022 * smoothstep(Z_KNEE - 0.1, hem, c.z)
         return base + flare + 0.012 * smoothstep(Z_PELVIS - 0.08, Z_PELVIS - 0.25, c.z) * (style != "down")
     inflate(o, off); laplace(o, 10, 0.5)
+    drape_legs(o, style, spec, hem)
     ao = [1.0] * len(o.data.vertices)
     if style == "down":
         inflate(o, lambda i, c, n: 0.013 * pillow(c.z, 0.10) ** 0.6)
         ao = [0.6 + 0.4 * pillow(v.co.z, 0.10) ** 0.5 for v in o.data.vertices]
-    else:   # soft folds where the fabric bunches: behind the knee, over the boots
-        inflate(o, lambda i, c, n: 0.004 * math.sin(c.z * 2 * math.pi / 0.032) * (gaussian(c.z, Z_KNEE, 0.05) + gaussian(c.z, hem + 0.04, 0.04)))
-        ao = [1.0 - 0.18 * (gaussian(v.co.z, Z_KNEE, 0.05) + gaussian(v.co.z, hem + 0.04, 0.04)) * (0.5 + 0.5 * math.sin(v.co.z * 2 * math.pi / 0.032)) for v in o.data.vertices]
+    else:   # soft folds where the fabric bunches: behind the knee, stacked over the shoes, under the seat
+        fl = [leg_fold(v.co, hem) for v in o.data.vertices]
+        inflate(o, lambda i, c, n: fl[i])
+        ao = [1.0 - 0.22 * max(0.0, -fl[v.index]) / 0.004 - 0.05 for v in o.data.vertices]
     push_out(o, bvh_of(LAYERS), 0.006)
     laplace(o, 3, 0.45)                      # the scanned shoe collars are ragged: settle the hem over them
     push_out(o, bvh_of(LAYERS), 0.004)
-    main = slot("pants", "main", "nylon" if style == "down" else "softshell", spec["main"])
+    main = slot("pants", "main", spec.get("fabric", "nylon" if style == "down" else "softshell"), spec["main"])
     belt = slot("pants", "belt", "webbing", (0.03, 0.03, 0.03))
     assign_mats(o, [main, belt], lambda i, c: 1 if c.z > waist - 0.035 else 0)
     # hem: turn the cuff inward so the opening has a thickness; waist band tucks in
@@ -766,9 +1090,14 @@ def make_pants(spec, boot_top):
         if cz < Z_KNEE:
             c = loop_centre(o, vs)
             if spec.get("rolled"): extrude_loop(o, edges, [(-0.003, 0.007), (0.05, 0.002), (0.003, -0.007)], c, (0, 0, 1))   # the rolled cuff: a flat folded band (1.2 cm read as a rubber ring)
-            else: extrude_loop(o, edges, [(-0.006, -0.006)], c, (0, 0, 1))
+            # plain hem: no inward lip any more - thicken() gives it a rolled, lined edge
     ao += [0.7] * (len(o.data.vertices) - len(ao))
-    set_vcol(o, ao); uv_metres(o); finish(o, 0.004)
+    set_vcol(o, ao); uv_metres(o)
+    py_ = B["pelvis"].y
+    seam_uv(o, [lambda c: (c.z - (waist - 0.035), around(c, py_)),                        # waistband
+                lambda c: (c.y - py_, c.z) if c.z < Z_CROTCH + 0.02 else None,            # side seams + inseams
+                lambda c: (c.x, c.z) if (c.y - py_) * FRONT > 0 and c.z > Z_CROTCH else None], edge_inset=0.012)   # fly
+    finish(o, 0.004); o["thick"] = 0.007 if spec.get("rolled") else 0.006
     PIECES.append(o); LAYERS.append(o)
     return waist
 
@@ -779,9 +1108,11 @@ def dbg_loops(o, tag):
         print("DBG", tag, len(vs), "x", round(min(X), 3), round(max(X), 3), "z", round(min(Z), 3), round(max(Z), 3))
 
 
-def torso_hull(z0, z1, step=0.02, NT=64):
+def torso_hull(z0, z1, step=0.02, NT=64, fall=None, z_fall=None):
     """Convex outline of the torso (no arms) in horizontal slices: cloth hangs straight over hollows (under the chest,
-    the spine groove, the waist) the way a real jacket does. Returns f(co) -> hull radius at co's height/angle, centre y."""
+    the spine groove, the waist) the way a real jacket does. Returns f(co) -> hull radius at co's height/angle, centre y.
+    fall: below z_fall the outline may shrink at most by this factor per slice going down - cloth FALLS from the bust,
+    belly and shoulder blades instead of tucking in under them (gravity drape, 2026-11-20)."""
     pts = [v.co for v in body.data.vertices if BPART[v.index] in ("chest", "pelvis", "thigh", "other", "neck") and abs(v.co.x) < 0.24]
     cy = B["spine_03"].y
     zs, rows = [], []
@@ -799,6 +1130,10 @@ def torso_hull(z0, z1, step=0.02, NT=64):
         z += step
     for _ in range(2):      # smooth between slices too
         rows = [[(rows[max(k - 1, 0)][j] + 2 * rows[k][j] + rows[min(k + 1, len(rows) - 1)][j]) / 4 for j in range(NT)] for k in range(len(rows))]
+    if fall:
+        for k in range(len(rows) - 2, -1, -1):
+            if zs[k] < (z_fall if z_fall is not None else z1):
+                rows[k] = [max(rows[k][j], rows[k + 1][j] * fall) for j in range(NT)]
     def f(co):
         if not zs: return None
         k = max(0, min(len(zs) - 2, int((co.z - zs[0]) / step)))
@@ -817,6 +1152,197 @@ def neck_bvh(above=0.10):
     t = BVHTree.FromBMesh(bm); bm.free(); return t
 
 
+def neck_axis(z):
+    """Centre of the neck at height z: the neck leans forward, so the axis runs neck_01 -> head, not straight up."""
+    a, b = B["neck_01"], B["head"]
+    t = max(0.0, min(1.0, (z - a.z) / max(b.z - a.z, 1e-3)))
+    return Vector((a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t))
+
+
+_NECK_TREE = []
+
+
+def neck_radius(z, th, fallback=0.06):
+    """Distance from the neck axis to the OUTERMOST skin (body + face) at height z, angle th: rays shot inwards from
+    15 cm out, max over a few heights/angles so the body/face seam cannot leak a ray through. (Outward rays leaked
+    through the seam, vertex bins were too sparse on the face mesh and put the collar inside the neck.) The old collars
+    used the widest radius of the whole neck base at every height, so their top stood 2-3 cm off the neck: the dark
+    gap the director saw (2026-11-20)."""
+    if not _NECK_TREE:
+        bm = bmesh.new()
+        for src in (body, face):
+            t = bmesh.new(); t.from_mesh(src.data)
+            bmesh.ops.delete(t, geom=[f for f in t.faces if all(v.co.z > BODY_TOP + 0.14 or v.co.z < BODY_TOP - 0.16 for v in f.verts)], context='FACES')
+            me = bpy.data.meshes.new("_nk"); t.to_mesh(me); t.free(); bm.from_mesh(me); bpy.data.meshes.remove(me)
+        _NECK_TREE.append(BVHTree.FromBMesh(bm)); bm.free()
+    tree = _NECK_TREE[0]; best = 0.0
+    for dz in (-0.003, 0.0, 0.003):
+        c = neck_axis(z + dz)
+        for da in (-0.035, 0.0, 0.035):
+            d = Vector((math.cos(th + da), math.sin(th + da), 0.0)); o = Vector((c.x, c.y, z + dz)) + d * 0.15
+            hit = tree.ray_cast(o, -d, 0.149)
+            if hit[0] is not None: best = max(best, 0.15 - (hit[0] - o).length)
+    return best if best > 0.0 else fallback
+
+
+def collar_rings(o, edges, vs, h_front, h_back, clr_top, t, mat_index, ease=0.010, rings=6, n_ext=3, pad=0.016, ext_mat=None):
+    """Stand collar on the neckline loop, built like a real one: a near-vertical tube whose LINING touches the neck
+    at the top edge (clearance clr_top, after thicken() offsets the lining t inwards) and stands `ease` wider at its
+    seam. The seam sits where that tube meets the body (high on the trapezius at the sides, at the jugular notch in
+    front); the jacket's opening is lower and wider (it is a copy of the body's neck seam), so n_ext new rows first
+    carry the yoke over the trapezius to the seam (pad above the skin), then `rings` rows rise as the stand. New rows
+    only: moving the jacket's own neckline instead crumpled the yoke and its baffle lines. Top edge: h_front above the
+    seam at the throat, h_back at the nape, a smooth line between."""
+    me = o.data
+    th_front = -math.pi / 2 if FRONT < 0 else math.pi / 2
+    def ang(co):
+        c = neck_axis(co.z); return math.atan2(co.y - c.y, co.x - c.x)
+    def backness(th): return 0.5 - 0.5 * math.cos(th - th_front)
+    def seam_for(th, z0, h):
+        """lowest z >= z0 where the tube (top edge h higher) clears the body: the seam; R at seam and top"""
+        z = z0
+        while True:
+            R_top = neck_radius(z + h, th) + clr_top + t; R_base = R_top + ease
+            if z >= z0 + 0.15 or neck_radius(z, th) + 0.004 + t <= R_base: return z, R_base, R_top
+            z += 0.002
+    loop = loop_order(me, vs)
+    zf = min(me.vertices[i].co.z for i in loop); zbk = max(me.vertices[i].co.z for i in loop)
+    sf = seam_for(th_front, zf, h_front)[0]; sb = seam_for(th_front + math.pi, zbk, h_back)[0]
+    zt_f, zt_b = sf + h_front, sb + h_back
+    def z_top(th): return zt_f + (zt_b - zt_f) * backness(th)
+    plan = {}
+    for i in loop:
+        co = me.vertices[i].co; th = ang(co); c = neck_axis(co.z)
+        zs, _, _ = seam_for(th, co.z, max(z_top(th) - co.z, 0.03))
+        zs = min(zs, z_top(th) - 0.03)                 # at least 3 cm of stand everywhere
+        Rt = neck_radius(z_top(th), th) + clr_top + t; Rb = max(Rt + ease, neck_radius(zs, th) + 0.004 + t)
+        plan[i] = (co.z, (Vector((co.x, co.y)) - c).length, th, zs, Rb, Rt)
+    nc = len(me.vertices); total = n_ext + rings; H = 1.0; dz = H / total
+    extrude_loop(o, edges, [(dz, 0.0)] * total, Vector((0, 0, 0)), (0, 0, 1), mat_index=mat_index)
+    key = lambda co: (round(co.x, 5), round(co.y, 5))
+    by_xy = {key(me.vertices[i].co): plan[i] for i in loop}
+    stand = set()
+    for v in me.vertices[nc:]:
+        p = by_xy.get(key(v.co))
+        if p is None: continue
+        z0, R0, th, zs, Rb, Rt = p
+        k = int(round((v.co.z - z0) / dz))
+        if k > n_ext: stand.add(v.index)
+        if k <= n_ext:                       # over the trapezius to the seam
+            u = smoothstep(0.0, 1.0, k / n_ext)
+            z = z0 + (zs - z0) * u; R = R0 + (Rb - R0) * u
+            clr0 = max(R0 - neck_radius(z0, th), pad)      # the yoke's own clearance at the old opening: no dip below it
+            R = max(R, neck_radius(z, th) + clr0 * (1.0 - u) + (0.004 + t) * u)
+            R = min(R, R0 + 0.002)   # the inward ray also meets the deltoid at these heights: never wider than the opening
+        else:                                # the stand
+            f = (k - n_ext) / rings
+            zt = z_top(th); z = zs + f * (zt - zs)
+            R = Rb + (Rt - Rb) * smoothstep(0.0, 1.0, f)
+            R = min(max(R, neck_radius(z, th) + clr_top + t), Rb + 0.015)
+        c = neck_axis(z)
+        v.co = Vector((c.x + math.cos(th) * R, c.y + math.sin(th) * R, z))
+    me.update()
+    if ext_mat is not None:     # the rows over the trapezius are the garment's own cloth, only the stand is collar
+        for pl in me.polygons:
+            if any(i >= nc for i in pl.vertices) and not any(i in stand for i in pl.vertices): pl.material_index = ext_mat
+    cz = [v.co.z for v in me.vertices[nc:]]
+    print("COLLAR verts", len(me.vertices) - nc, "z", round(min(cz), 3), round(max(cz), 3), "top front/back", round(zt_f, 3), round(zt_b, 3),
+          "seam z range", round(min(p[3] for p in plan.values()), 3), round(max(p[3] for p in plan.values()), 3))
+    return nc
+
+
+def blend_weights_up(o, first, z0, z1):
+    """New collar vertices take the nearest body vertex's weights more and more towards the top (neck bones), so a
+    turning head carries the collar's top edge with the neck instead of cutting through it."""
+    bw = [{GROUPS[g.group]: g.weight for g in v.groups} for v in body.data.vertices]
+    for v in o.data.vertices[first:]:
+        k = smoothstep(z0, z1, v.co.z)
+        if k <= 0: continue
+        own = {o.vertex_groups[g.group].name: g.weight for g in v.groups}
+        _, bi, _ = KD.find(v.co); tgt = bw[bi]
+        for name in set(own) | set(tgt):
+            w = own.get(name, 0.0) * (1 - k) + tgt.get(name, 0.0) * k
+            if w > 0.001: vg(o, name).add([v.index], w, 'REPLACE')
+            elif name in own: o.vertex_groups[name].remove([v.index])
+
+
+def drape_sleeves(o, sleeve, sag, amp, hem=None):
+    """Gravity + wear on a sleeve and body: in the A-pose the underside of a loose sleeve hangs (moved straight down
+    by `sag` where the cloth faces down), compression folds ring the inside of the elbow and bunch above the cuff,
+    and (hem given) a shell blouses in soft horizontal folds just above its hem. Displacements along the normal."""
+    me = o.data; me.update()
+    nb, _ = neighbours(me)
+    sw = smooth_field([sleeve[v.index] * max(0.0, -v.normal.z) ** 1.5 * smoothstep(0.06, 0.18, arm_t(v.co, "l" if v.co.x > 0 else "r"))
+                       for v in me.vertices], nb, 6)   # smooth (a per-vertex normal test spiked the bumpy shoulder); none in the armpit
+    for v in me.vertices: v.co.z -= sag * sw[v.index]
+    me.update(); spikes(o, "sag")
+    def fold(i, c, n):
+        sl = sleeve[i]; d = 0.0
+        if sl > 0.01:
+            s = "l" if c.x > 0 else "r"; ch = arm_chain(s)
+            L1 = (ch[1] - ch[0]).length; L2 = (ch[2] - ch[1]).length; t = arm_t(c, s)
+            ph = fold_noise(math.atan2(c.z - ch[1].z, c.y - ch[1].y), t) * 1.3
+            inner = 1.0 if n.z > -0.2 and (c - ch[1]).dot(Vector((0, FRONT, 0))) > -0.01 else 0.45   # crook of the elbow
+            d += amp * inner * gaussian(t, L1 + 0.01, 0.05) * math.sin(t * 2 * math.pi / 0.032 + ph)
+            d += amp * smoothstep(L1 + L2 - 0.16, L1 + L2 - 0.05, t) * math.sin(t * 2 * math.pi / 0.028 + ph * 1.5)
+            d *= sl
+        if hem is not None:
+            th = math.atan2(c.y - B["spine_03"].y, c.x); body_w = (1 - sl)
+            d += amp * 0.8 * body_w * smoothstep(hem + 0.16, hem + 0.04, c.z) * math.sin(c.z * 2 * math.pi / 0.038 + fold_noise(th, c.z) * 1.5)
+            # gravity folds: soft vertical waves hanging from the chest/shoulder blades, fading out at the hem band
+            d += amp * 0.7 * body_w * smoothstep(Z_CHEST - 0.04, Z_CHEST - 0.18, c.z) * smoothstep(hem + 0.02, hem + 0.10, c.z) * math.sin(th * 0.16 * 2 * math.pi / 0.085 + 0.8 * math.sin(c.z * 9 + th * 2))
+        s_ = "l" if c.x > 0 else "r"           # nothing in the armpit: the push-out then flips verts between arm and side
+        return d * (1.0 - gaussian((c - (B[f"upperarm_{s_}"] - Vector((0, 0, 0.07)))).length, 0, 0.08))
+    inflate(o, fold)
+
+
+def spikes(o, tag, lim=0.003):
+    """Debug (YGG_DBG=1): vertices standing out of their 1-ring by more than lim, with where they are."""
+    if not os.environ.get("YGG_DBG"): return
+    me = o.data; me.update(); nb, bnd = neighbours(me); out = []
+    bm = bmesh.new(); bm.from_mesh(me); fl = []
+    for f in bm.faces:
+        ns = [g.normal for e in f.edges for g in e.link_faces if g is not f]
+        if ns and f.normal.dot(sum(ns, Vector())) < 0: fl.append(tuple(round(x, 3) for x in f.calc_center_median()))
+    bm.free(); print("FLIPPED", tag, len(fl), fl[:6])
+    for v in me.vertices:
+        if bnd[v.index] or not nb[v.index]: continue
+        avg = sum((me.vertices[j].co for j in nb[v.index]), Vector()) / len(nb[v.index])
+        d = abs((v.co - avg).dot(v.normal))
+        if d > lim and v.co.z > Z_CHEST - 0.15 and abs(v.co.x) < 0.25: out.append((round(d, 4), tuple(round(x, 3) for x in v.co)))
+    out.sort(reverse=True); print("SPIKES", tag, len(out), out[:4])
+
+
+def yoke_off_shoulders(o):
+    """The pulled-in yoke stays off the shoulders: push faded in over 10 cm (a hard z cut-off creased the shoulder
+    slope), then relax the yoke and push again normal-only (the nearest-point push left thin spikes at the clavicle)."""
+    me = o.data; me.update(); n0 = len(me.vertices)
+    old = [v.co.copy() for v in me.vertices]
+    push_out(o, bvh_of([body]), 0.010, only=lambda i, c: c.z > Z_CHEST - 0.10)
+    for v in me.vertices: v.co = old[v.index].lerp(v.co, smoothstep(Z_CHEST - 0.10, Z_CHEST, old[v.index].z))
+    me.update()
+    nb, bnd = neighbours(me)
+    for _ in range(3):
+        P = [v.co.copy() for v in me.vertices]
+        for v in me.vertices:
+            i = v.index
+            if v.co.z > Z_CHEST - 0.03 and not bnd[i] and nb[i]:
+                v.co = P[i].lerp(sum((P[j] for j in nb[i]), Vector()) / len(nb[i]), 0.5)
+    me.update()
+    push_out(o, bvh_of([body]), 0.008, only=lambda i, c: c.z > Z_CHEST, tangent=1.0)
+
+
+def hug(o, first, gap):
+    """Vertices from `first` on that are farther than gap from the body move in to gap (cuffs onto the wrists)."""
+    me = o.data; wt = bvh_of([body])
+    for v in me.vertices[first:]:
+        h = wt.find_nearest(v.co)
+        if h[0] is None: continue
+        off = v.co - h[0]; L = off.length
+        if L > gap: v.co = h[0] + off * (gap / L)
+    me.update()
+
+
 def make_jacket(spec, waist):
     style = spec["style"]
     hem = Z_PELVIS - (0.05 if style == "down" else 0.09)
@@ -828,19 +1354,24 @@ def make_jacket(spec, waist):
         w = B[f"hand_{s}"]; d = (B[f"hand_{s}"] - B[f"lowerarm_{s}"]).normalized()
         cut(o, w - d * 0.02, d, only=lambda c, s=s: c.x * SIDE[s] > 0.2)
     decimate_to(o, 0.028); subdivide(o)
-    me = o.data
+    me = o.data; spikes(o, "subdiv")
     sleeve = sleeve_field(o)
     base_t, base_s, amp_t, amp_s, per_t, per_s = {"down": (0.032, 0.024, 0.016, 0.013, 0.115, 0.085),
                                                   "shell": (0.018, 0.016, 0, 0, 1, 1), "fleece": (0.014, 0.012, 0, 0, 1, 1)}[style]
     def side_of(c): return "l" if c.x > 0 else "r"
     inflate(o, lambda i, c, n: base_t * (1 - sleeve[i]) + base_s * sleeve[i] + 0.010 * smoothstep(Z_PELVIS + 0.05, hem, c.z))
     laplace(o, 28 if style == "down" else 20, 0.6)       # lose the body's muscles/breasts: cloth bridges hollows
+    spikes(o, "laplace")
     # torso: put every vertex on the convex outline of its slice + the padding, so it hangs straight and clean
-    hull, hcy = torso_hull(cut_z - 0.06, BODY_TOP - 0.06)
+    hull, hcy = torso_hull(cut_z - 0.06, BODY_TOP - 0.06, fall={"down": 0.995, "shell": 0.99, "fleece": 0.985}[style], z_fall=Z_CHEST)
     pad = {"down": 0.040, "shell": 0.022, "fleece": 0.017}[style]
+    # only where the cloth faces sideways: on the shoulder tops slices are ill-defined (keep the smoothed shape);
+    # below the chest everything goes to the outline (under-bust/belly faces point down and kept the body's shape).
+    # The weight field is smoothed: per-vertex normal tests left creases on the shoulder slope
+    W = smooth_field([(1.0 - min(1.0, sleeve[v.index] * 1.6)) * smoothstep(BODY_TOP - 0.02, BODY_TOP - 0.10, v.co.z) * max(smoothstep(0.75, 0.35, abs(v.normal.z)), smoothstep(Z_CHEST - 0.02, Z_CHEST - 0.10, v.co.z))
+                      for v in me.vertices], neighbours(me)[0], 5)
     for v in me.vertices:
-        # only where the cloth faces sideways: on the shoulder tops slices are ill-defined (keep the smoothed shape)
-        w = (1.0 - min(1.0, sleeve[v.index] * 1.6)) * smoothstep(BODY_TOP - 0.02, BODY_TOP - 0.10, v.co.z) * smoothstep(0.75, 0.35, abs(v.normal.z))
+        w = W[v.index]
         if w <= 0.0: continue
         r = hull(v.co)
         if r is None: continue
@@ -850,19 +1381,45 @@ def make_jacket(spec, waist):
         v.co.x = v.co.x + (target.x - d.x) * w; v.co.y = v.co.y + (target.y - d.y) * w
     me.update()
     laplace(o, 6, 0.5)
-    push_out(o, bvh_of(LAYERS), base_s * 0.75)
+    push_relax(o, bvh_of(LAYERS), base_s * 0.75)
     laplace(o, 3, 0.5)
+    hf, hb = {"down": (0.058, 0.072), "shell": (0.058, 0.072), "fleece": (0.042, 0.054)}[style]
+    ease = {"down": 0.012, "shell": 0.009, "fleece": 0.007}[style]
+    spikes(o, "hull+push")
+    drape_sleeves(o, sleeve_field(o), {"down": 0.006, "shell": 0.011, "fleece": 0.009}[style],
+                  {"down": 0.003, "shell": 0.0065, "fleece": 0.005}[style], hem if style != "down" else None)
+    spikes(o, "drape")
     sleeve = sleeve_field(o)
-    def puff(c, sl):
-        tor = pillow(c.z, per_t) ** 0.55; slv = pillow(arm_t(c, side_of(c)), per_s) ** 0.55
+    def puff(c, sl):   # full rounded tubes with tight valleys (^0.35): sewn-through baffles, not soft lumps
+        tor = pillow(c.z, per_t) ** 0.35; slv = pillow(arm_t(c, side_of(c)), per_s) ** 0.35
         return tor * (1 - sl) + slv * sl
     def is_front(c): return (c.y - B["spine_03"].y) * FRONT > 0
     if style == "down":
+        # stitch lines first: an edge row exactly in every baffle valley, so each seam is a crisp crease after the puff
+        k0 = int(hem / per_t) - 1
+        for k in range(k0, int(BODY_TOP / per_t) + 2):
+            for dz in (-0.006, 0.0, 0.006):      # the seam + a row on each tube wall: clean walls, no pinched zigzags
+                score(o, (0, 0, k * per_t + dz), (0, 0, 1), only=lambda c: abs(c.x) < 0.2)
+        for sd in ("l", "r"):
+            ch = arm_chain(sd); seg = [(a, b, (b - a).length) for a, b in zip(ch, ch[1:])]
+            total = sum(L for _, _, L in seg); t = per_s
+            while t < total - 0.02:
+                acc = 0.0
+                for a, b, L in seg:
+                    if acc + L >= t:
+                        pnt = a + (b - a) * ((t - acc) / L); dn = (b - a).normalized()
+                        for dt in (-0.005, 0.0, 0.005):
+                            score(o, pnt + dn * dt, (b - a), only=lambda c, sd=sd, a=a, b=b: c.x * SIDE[sd] > 0.2 and (c - a).dot((b - a).normalized()) > -0.03 and (c - b).dot((a - b).normalized()) > -0.03)
+                        break
+                    acc += L
+                t += per_s
+        sleeve = sleeve_field(o)
         inflate(o, lambda i, c, n: (amp_t * (1 - sleeve[i]) + amp_s * sleeve[i]) * puff(c, sleeve[i]))
     else:
         yoke = Z_CHEST - 0.015
-        inflate(o, lambda i, c, n: -0.002 * gaussian(c.z, yoke, 0.006) * (1 - sleeve[i]))
-    push_out(o, bvh_of(LAYERS), 0.008 if style == "down" else 0.006)
+        pass   # (the 2 mm yoke dent creased the sloped shoulders into gashes; the seam reads from AO + stitches)
+    push_relax(o, bvh_of(LAYERS), 0.008 if style == "down" else 0.006); spikes(o, "push2")
+    print("DESPIKE jacket", despike(o, 0.003 if style == "down" else 0.0025, only=lambda i, c: c.z > Z_CHEST - 0.2)); spikes(o, "despiked")
     # clean lines: centre-front zip, shoulder yoke (down) and its sleeve continuation
     torso = lambda c: abs(c.x) < 0.17
     score(o, (0.009, 0, 0), (1, 0, 0), only=lambda c: torso(c) and is_front(c))
@@ -877,48 +1434,74 @@ def make_jacket(spec, waist):
         if torso(c) and is_front(c) and abs(c.x) < 0.009 and c.z > hem: return 2
         if style == "down" and c.z > yz: return 1
         return 0
-    mats_by_face(o, [main, panel, trim], tag)
-    n0 = len(me.vertices)
+    mats_by_face(o, [main, panel, trim], tag); spikes(o, "scores")
+    n0 = len(me.vertices); collar_first = None
     for edges, vs in boundary_loops(o):
         c = loop_centre(o, vs)
         print("LOOP", round(c.x, 3), round(c.z, 3), len(vs), "x", round(min(o.data.vertices[i].co.x for i in vs), 3), round(max(o.data.vertices[i].co.x for i in vs), 3), "z", round(min(o.data.vertices[i].co.z for i in vs), 3), round(max(o.data.vertices[i].co.z for i in vs), 3))
         if c.z > Z_CHEST:                                                 # collar up the neck
-            h = {"down": 0.065, "shell": 0.075, "fleece": 0.05}[style]
-            nc = len(me.vertices)
-            extrude_loop(o, edges, [(0.012, 0.010), (h * 0.5, -0.02), (h * 0.5 - 0.012, -0.01)],
-                         Vector((B["neck_01"].x, B["neck_01"].y, 0)), (0, 0, 1), mat_index=1 if style == "down" else 0)
-            # the upper collar rings hug the neck (face mesh) at a constant gap: a stand collar, not a funnel
-            ft = neck_bvh(); gapc = {"down": 0.024, "shell": 0.018, "fleece": 0.014}[style]
-            for v in me.vertices[nc:]:
-                if v.co.z > BODY_TOP + 0.02:
-                    hit = ft.find_nearest(v.co)
-                    if hit[0] is not None and (hit[0] - v.co).length < 0.08:
-                        z = v.co.z; v.co = hit[0] + hit[1] * gapc; v.co.z = min(z, BODY_TOP + h)   # keep the ring height
-            me.update()
+            # close the wide collarbone opening round the neck first, then a stand collar whose LINING lies on the
+            # neck skin (clearance 3-6 mm) all round: no dark gap into the jacket from any angle (2026-11-20)
+            close_neckline(o, vs, {"down": 0.016, "shell": 0.010, "fleece": 0.008}[style])
+            yoke_off_shoulders(o)              # BEFORE the collar rows: pushed later, the yoke rose over them (cracks)
+            nc = collar_rings(o, edges, vs, hf, hb, 0.0035, THICK[style], 1 if style == "down" else 0, ease=ease,
+                              pad=THICK[style] + (0.010 if style == "down" else 0.005))
+            collar_first = nc
         elif abs(c.x) > 0.2:                                              # cuffs (elastic, trim colour)
             sd = side_of(c); d = (B[f"hand_{sd}"] - B[f"lowerarm_{sd}"]).normalized()
-            extrude_loop(o, edges, [(0.006, -0.014), (0.022, -0.002)], B[f"lowerarm_{sd}"], d, mat_index=2)
-        else:                                                             # hem falls straight, then the cinched lip
-            steps = ([(drop * 0.5, 0.006), (drop * 0.5, 0.002)] if drop > 0.01 else []) + [(0.016, -0.012)]
+            nq = len(me.vertices)
+            extrude_loop(o, edges, [(0.008, -0.009), (0.012, -0.001), (0.012, 0.0)], B[f"lowerarm_{sd}"], d, mat_index=2)
+            hug(o, nq, 0.005 + THICK[style])   # elastic cuff on the wrist: the hand stood in a 2 cm open tube
+        else:                                                             # hem falls straight, then the cinched band
+            steps = ([(drop * 0.5, 0.006), (drop * 0.5, 0.002)] if drop > 0.01 else []) + [(0.016, -0.006)]
             extrude_loop(o, edges, steps, Vector((0, B["pelvis"].y, 0)), (0, 0, -1), mat_index=2 if style == "fleece" else None)
     push_out(o, bvh_of(LAYERS), 0.006, only=lambda i, c: i >= n0)
+    if collar_first is not None: blend_weights_up(o, collar_first, BODY_TOP - 0.03, BODY_TOP + 0.03)
+    spikes(o, "final")
     sleeve = sleeve_field(o)
     if style == "down":
         ao = [0.5 + 0.5 * puff(v.co, sleeve[v.index]) ** 0.7 if v.index < n0 else 0.8 for v in me.vertices]
     else:
         ao = [1.0 - 0.35 * gaussian(v.co.z, Z_CHEST - 0.015, 0.006) * (1 - sleeve[v.index]) if v.index < n0 else 0.85 for v in me.vertices]
-    set_vcol(o, ao); uv_metres(o); finish(o)
-    if style == "shell":    # rolled hood behind the collar
-        a0 = B["neck_01"]; pts = []
-        for k in range(13):
-            th = math.radians(-100 + 200 * k / 12)
-            pts.append((a0.x + 0.085 * math.sin(th), a0.y - FRONT * 0.075 * math.cos(th), BODY_TOP + 0.01 + 0.01 * math.cos(th)))
-        hood = tube_along("hood", pts, 0.028, seg=10)
-        hood.data.materials.append(main)
-        for g in GROUPS: hood.vertex_groups.new(name=g)
-        vg(hood, "neck_01").add(range(len(hood.data.vertices)), 1.0, 'REPLACE')
-        set_vcol(hood, [0.85] * len(hood.data.vertices)); uv_metres(hood); PIECES.append(hood)
+    set_vcol(o, ao); uv_metres(o)
+    cyb = B["spine_03"].y; seams = []
+    if style == "down":
+        for k in range(int(hem / per_t) - 1, int(BODY_TOP / per_t) + 2):      # quilting through every baffle seam
+            seams.append(lambda c, z0=k * per_t: (c.z - z0, around(c, cyb)) if abs(c.x) < 0.2 else None)
+        for sd in ("l", "r"):
+            ch = arm_chain(sd); t = per_s; segs = [(a, b, (b - a).length) for a, b in zip(ch, ch[1:])]
+            total = sum(L for _, _, L in segs)
+            while t < total - 0.02:
+                acc = 0.0
+                for a, b, L in segs:
+                    if acc + L >= t:
+                        pnt = a + (b - a) * ((t - acc) / L); dn = (b - a).normalized()
+                        seams.append(lambda c, pnt=pnt, dn=dn, sd=sd: ((c - pnt).dot(dn), math.atan2((c - pnt).dot(Vector((0, 0, 1))), (c - pnt).dot(dn.cross(Vector((0, 0, 1))).normalized())) * 0.05) if c.x * SIDE[sd] > 0.2 else None)
+                        break
+                    acc += L
+                t += per_s
+        seams.append(lambda c: (c.z - yz, around(c, cyb)) if abs(c.x) < 0.2 else None)          # yoke
+    else:
+        seams.append(lambda c: (c.z - (Z_CHEST - 0.015), around(c, cyb)) if abs(c.x) < 0.2 else None)   # yoke seam
+        seams.append(lambda c: (c.y - cyb, c.z) if 0.10 < abs(c.x) < 0.2 and c.z < Z_CHEST else None)   # side seams
+    seams.append(lambda c: (abs(c.x) - 0.014, c.z) if abs(c.x) < 0.03 and is_front(c) and c.z > hem else None)  # beside the zip
+    seam_uv(o, seams, edge_inset=0.008)
+    finish(o); o["thick"] = THICK[style]
+    # (the rolled-hood tube behind the collar is gone: a pipe round the new neck-hugging collar read fake, 2026-11-20)
     PIECES.append(o); LAYERS.append(o)
+
+
+def smooth_edge(o, it=10):
+    """Even out every open edge along itself (the push over brows/ears left the brim ragged, and with a rolled,
+    lined edge instead of the old inward lip the raggedness showed)."""
+    me = o.data
+    for edges, vs in boundary_loops(o):
+        order = loop_order(me, vs); n = len(order)
+        if n < 6: continue
+        for _ in range(it):
+            P = [me.vertices[i].co.copy() for i in order]
+            for k, i in enumerate(order): me.vertices[i].co = P[k - 1] * 0.25 + P[k] * 0.5 + P[(k + 1) % n] * 0.25
+    me.update(); laplace(o, 2, 0.4)
 
 
 def head_cap(name, front_drop, back_drop, gap):
@@ -947,13 +1530,11 @@ def make_hat(spec):
             return 0.0018 * math.sin(th * 56) ** 2 + 0.0045 * band
         inflate(o, rib)
         push_out(o, bvh_of([face]), 0.007)
+        smooth_edge(o, 12); push_out(o, bvh_of([face]), 0.006)
         main = slot("hat", "main", "knit", spec["main"])
         assign_mats(o, [main], lambda i, c: 0)
         ao = [0.85 + 0.15 * math.sin(math.atan2(v.co.y - hc.y, v.co.x - hc.x) * 56) ** 2 for v in o.data.vertices]
-        for edges, vs in boundary_loops(o):
-            extrude_loop(o, edges, [(0.0, -0.008)], hc, (0, 0, 1))
-        ao += [0.7] * (len(o.data.vertices) - len(ao))
-        set_vcol(o, ao); uv_metres(o); finish(o, 0.004); PIECES.append(o)
+        set_vcol(o, ao); uv_metres(o); finish(o, 0.004); o["thick"] = 0.006; PIECES.append(o)
         if spec.get("glasses"):
             hb = bvh_of([o]); zc = HEAD_TOP - 0.062; gl = bmesh.new(); rows = []
             fang = -math.pi / 2 if FRONT < 0 else math.pi / 2
@@ -994,16 +1575,17 @@ def make_hat(spec):
         back = Vector((hc.x, B["head"].y - FRONT * 0.08, HEAD_TOP - 0.17))
         inflate(o, lambda i, c, n: 0.028 * gaussian((c - back).length, 0, 0.06) + 0.002 * math.sin(c.z * 90 + c.x * 40))
         push_out(o, bvh_of([face]), 0.012)
+        smooth_edge(o, 12); push_out(o, bvh_of([face]), 0.010)
         main = slot("scarf", "main", "scarfprint", (1, 1, 1)) if spec.get("print") else slot("scarf", "main", "floral", spec["main"])
         assign_mats(o, [main], lambda i, c: 0)
-        set_vcol(o, [1.0 - 0.25 * gaussian((v.co - back).length, 0, 0.05) for v in o.data.vertices]); uv_metres(o); finish(o, 0.003)
+        set_vcol(o, [1.0 - 0.25 * gaussian((v.co - back).length, 0, 0.05) for v in o.data.vertices]); uv_metres(o); finish(o, 0.003); o["thick"] = 0.0035
         PIECES.append(o)
         knot = sphere("knot", 0.03, loc=back - Vector((0, FRONT * 0.035, 0.02)), seg=12, rings=8, scale=(1.3, 0.8, 1))
         activate(knot); bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
         tails = []
         for k, dx in enumerate((-0.025, 0.03)):
             k0 = back - Vector((0, FRONT * 0.04, 0.03))
-            pts = [(k0.x + dx, k0.y - FRONT * 0.004 * j, k0.z - 0.045 * j) for j in range(6)]
+            pts = [(k0.x + dx, k0.y - FRONT * 0.004 * j, k0.z - 0.04 * j) for j in range(4)]   # short tails: laid over the collar they read as straps
             t = tube_along(f"tail{k}", pts, 0.02, seg=6); t.scale = (1, 0.35, 1)
             activate(t); bpy.ops.object.transform_apply(location=False, rotation=True, scale=True); tails.append(t)
         for t in [knot] + tails:
@@ -1034,10 +1616,11 @@ def make_chuba(spec):
     laplace(o, 26, 0.6)
     # torso on the convex outline of its slice + padding (as the jackets): wool hangs straight over the breasts/waist
     # instead of sculpting them (Pema's cardigan read as a skin-tight bodysuit in game, 2026-11-14)
-    hull, hcy = torso_hull(Z_PELVIS - 0.08, BODY_TOP - 0.06)
+    hull, hcy = torso_hull(Z_PELVIS - 0.08, BODY_TOP - 0.06, fall=0.99, z_fall=Z_CHEST)
+    W = smooth_field([(1.0 - min(1.0, sleeve[v.index] * 1.6)) * smoothstep(BODY_TOP - 0.02, BODY_TOP - 0.10, v.co.z) * max(smoothstep(0.75, 0.35, abs(v.normal.z)), smoothstep(Z_CHEST - 0.02, Z_CHEST - 0.10, v.co.z))
+                      for v in me.vertices], neighbours(me)[0], 5)
     for v in me.vertices:
-        w = (1.0 - min(1.0, sleeve[v.index] * 1.6)) * smoothstep(BODY_TOP - 0.02, BODY_TOP - 0.10, v.co.z) * smoothstep(0.75, 0.35, abs(v.normal.z))
-        w *= smoothstep(0.29, 0.21, abs(v.co.x))     # A-pose wrists hang at hip height: never pull hands/cuffs to the hull
+        w = W[v.index] * smoothstep(0.29, 0.21, abs(v.co.x))     # A-pose wrists hang at hip height: never pull hands/cuffs to the hull
         if w <= 0.0: continue
         r = hull(v.co)
         if r is None: continue
@@ -1060,24 +1643,20 @@ def make_chuba(spec):
         for edges, vs in boundary_loops(o):
             c = loop_centre(o, vs)
             if c.z > Z_CHEST:
-                nc = len(me.vertices)
-                # slim standing blouse collar (hongju): a short rise, then its top edge laid on the neck (the old
-                # profile flared 1 cm out + 3 cm up and stood off the neck like a 4 cm ring in game)
-                extrude_loop(o, edges, [(0.004, -0.004), (0.03, -0.03)], Vector((B["neck_01"].x, B["neck_01"].y, 0)), (0, 0, 1), mat_index=1)
-                ft = neck_bvh()
-                for v in me.vertices[nc:]:
-                    hit = ft.find_nearest(v.co)
-                    if hit[0] is None or (hit[0] - v.co).length > 0.09: continue
-                    k = smoothstep(BODY_TOP - 0.05, BODY_TOP - 0.01, v.co.z)     # the top of the collar hugs, the base follows the cardigan
-                    if k <= 0: continue
-                    z = v.co.z; tgt = hit[0] + hit[1] * 0.006; v.co = v.co.lerp(tgt, k); v.co.z = z
-                me.update()
+                # slim standing blouse collar (hongju) whose lining lies on the neck: the old one only hugged above a
+                # fixed height, so it lay open on the collarbones as a wide square ring (director 2026-11-20)
+                close_neckline(o, vs, 0.008)
+                yoke_off_shoulders(o)
+                nc = collar_rings(o, edges, vs, 0.034, 0.044, 0.003, 0.008, 1, ease=0.006, rings=5, pad=0.014, ext_mat=0)
+                blend_weights_up(o, nc, BODY_TOP - 0.03, BODY_TOP + 0.03)
             elif abs(c.x) > 0.2:             # ribbed knit cuff gathered at the wrist
                 sd = side_of(c); d = (B[f"hand_{sd}"] - B[f"lowerarm_{sd}"]).normalized()
-                extrude_loop(o, edges, [(0.006, -0.016), (0.03, -0.002)], B[f"lowerarm_{sd}"], d)
+                nq = len(me.vertices)
+                extrude_loop(o, edges, [(0.008, -0.010), (0.015, -0.001), (0.015, 0.0)], B[f"lowerarm_{sd}"], d)
+                hug(o, nq, 0.013)                # ribbed cuff gathered onto the wrist
         push_out(o, bvh_of(LAYERS), 0.006, only=lambda i, c: i >= n0 and c.z < BODY_TOP)
         ao = [1.0 - 0.15 * gaussian(v.co.z, Z_PELVIS - 0.02, 0.02) if v.index < n0 else 0.9 for v in me.vertices]
-        set_vcol(o, ao); uv_metres(o); finish(o, 0.005); PIECES.append(o); LAYERS.append(o)
+        set_vcol(o, ao); uv_metres(o); seam_uv(o, [], edge_inset=0.007); finish(o, 0.005); o["thick"] = 0.008; PIECES.append(o); LAYERS.append(o)
         return chuba_skirt(spec, main, top_skirt, hem_z)
     trim = slot("chuba", "trim", "brocade", spec["trim"])
     # wrap edge: a clean brocade band from the throat down to the wearer's right underarm (wearer's right = -x)
@@ -1109,7 +1688,7 @@ def make_chuba(spec):
             extrude_loop(o, edges, [(0.0, 0.008), (-0.06, 0.004)], B[f"lowerarm_{sd}"], d, mat_index=1)   # turned-back cuff
     push_out(o, bvh_of(LAYERS), 0.006, only=lambda i, c: i >= n0 and c.z < BODY_TOP)
     ao = [1.0 - 0.2 * gaussian(v.co.z, Z_PELVIS - 0.02, 0.02) if v.index < n0 else 0.9 for v in me.vertices]
-    set_vcol(o, ao); uv_metres(o); finish(o, 0.005); PIECES.append(o); LAYERS.append(o)
+    set_vcol(o, ao); uv_metres(o); seam_uv(o, [], edge_inset=0.007); finish(o, 0.005); o["thick"] = 0.008; PIECES.append(o); LAYERS.append(o)
     return chuba_skirt(spec, main, top_skirt, hem_z)
 
 
@@ -1142,6 +1721,11 @@ def chuba_skirt(spec, main, top_skirt, hem_z):
             th = 2 * math.pi * j / NT
             back = max(0.0, -math.sin(th) * FRONT)          # pleats on the back half
             r = rs[k][j] + 0.022 + 0.05 * f ** 1.3 + 0.009 * back * f * math.sin(th * 14) ** 2
+            # gravity folds on the sides (the aprons cover front and back): soft flutes growing towards the hem
+            fth = -math.pi / 2 if FRONT < 0 else math.pi / 2
+            af = abs((th - fth + math.pi) % (2 * math.pi) - math.pi); ab = math.pi - af
+            ws = smoothstep(math.radians(36), math.radians(50), af) * smoothstep(math.radians(48), math.radians(62), ab)
+            r += 0.009 * f ** 0.8 * ws * math.sin(th * 11 + 0.7 * math.sin(z * 7 + th * 3))
             row.append(bm.verts.new((r * math.cos(th), cy + r * math.sin(th), z)))
         grid.append(row)
     for k in range(NZ - 1):
@@ -1160,7 +1744,7 @@ def chuba_skirt(spec, main, top_skirt, hem_z):
     def cyl_uv(c):
         th = math.atan2(c.y - cy, c.x); return (th * 0.2, c.z)
     set_vcol(sk, [1.0 - 0.25 * max(0.0, -math.sin(math.atan2(v.co.y - cy, v.co.x)) * FRONT) * math.sin(math.atan2(v.co.y - cy, v.co.x) * 14) ** 2 for v in sk.data.vertices])
-    uv_metres(sk, cyl_uv, 2 * math.pi * 0.2); finish(sk, 0.006); PIECES.append(sk)
+    uv_metres(sk, cyl_uv, 2 * math.pi * 0.2); finish(sk, 0.006); sk["thick"] = 0.007; PIECES.append(sk)
 
     # ---- sash (kara) around the waist
     bm = bmesh.new(); grid = []
@@ -1181,7 +1765,7 @@ def chuba_skirt(spec, main, top_skirt, hem_z):
     robe = [l for l in LAYERS if l.name.startswith("chuba")]
     if robe:
         wrap_over(sa, robe, 0.007, cy); laplace(sa, 2, 0.5); wrap_over(sa, robe, 0.007, cy)
-    set_vcol(sa, [0.9] * len(sa.data.vertices)); uv_metres(sa, cyl_uv, 2 * math.pi * 0.2); finish(sa, 0.004); PIECES.append(sa)
+    set_vcol(sa, [0.9] * len(sa.data.vertices)); uv_metres(sa, cyl_uv, 2 * math.pi * 0.2); finish(sa, 0.004); sa["thick"] = 0.005; PIECES.append(sa)
     sash_tree = BVHTree.FromObject(sa, bpy.context.evaluated_depsgraph_get())
     if spec.get("top"):                      # kyetig: the embossed silver buckle holding the aprons, front of the sash
         fth = -math.pi / 2 if FRONT < 0 else math.pi / 2
@@ -1210,7 +1794,7 @@ def make_apron(sk_info, back=False):
         for j in range(15):
             th = front_th - half + 2 * half * j / 14
             jj = int(round((th % (2 * math.pi)) / (2 * math.pi) * NT)) % NT
-            r = rs[k][jj] + 0.022 + 0.05 * f ** 1.3 + 0.008
+            r = rs[k][jj] + 0.022 + 0.05 * f ** 1.3 + 0.014      # clear of the back pleats (9 mm) + its own lining
             row.append(bm.verts.new((r * math.cos(th), cy + r * math.sin(th), z)))
         grid.append(row)
     for k in range(len(grid) - 1):
@@ -1229,9 +1813,10 @@ def make_apron(sk_info, back=False):
             vg(ap, "thigh_r").add([v.index], 0.7 * s * (1 - side), 'REPLACE')
     xs = [v.co.x for v in ap.data.vertices]; x0, x1 = min(xs), max(xs)
     uv_metres(ap, lambda c: ((c.x - x0) / (x1 - x0), (c.z - z_bot) / (z_top - z_bot) * 0.8 + (0.37 if back else 0.0)))
+    seam_uv(ap, [lambda c, j=j: (c.x - (x0 + (x1 - x0) * j / 3.0), c.z) for j in (1, 2)], edge_inset=0.006)   # 3 woven panels
     robe = [l for l in LAYERS if l.name.startswith("chuba")]      # over the cardigan's hem (it poked through as notches)
     if robe: wrap_over(ap, robe, 0.006, cy)
-    set_vcol(ap, [1.0] * len(ap.data.vertices)); finish(ap, 0.003); PIECES.append(ap)
+    set_vcol(ap, [1.0] * len(ap.data.vertices)); finish(ap, 0.003); ap["thick"] = 0.004; PIECES.append(ap)
 
 
 def make_pangden(path):
@@ -1313,16 +1898,25 @@ for o in PIECES:
 # UVs sat in "UV0" (planar: apron, skirt) or "DiffuseUV" (body copies) got all-zero UVs there and showed a single
 # texel (the pangden read as a flat orange slab, knit/wool looked untextured; found in game 2026-11-14)
 for o in PIECES:
-    L = o.data.uv_layers
-    if not len(L): L.new(name="UVMap"); continue
-    keep = (L.get("UV0") or L.active or L[0]).name
-    for nm in [l.name for l in L if l.name != keep]: L.remove(L[nm])
-    L[keep].name = "UVMap"; L.active = L["UVMap"]; L["UVMap"].active_render = True
+    me = o.data; L = me.uv_layers
+    main_l = (L.get("UV0") or (L.active if L.active and L.active.name != "UVSeam" else None) or next((l for l in L if l.name != "UVSeam"), None))
+    uv0 = [tuple(d.uv) for d in main_l.data] if main_l else [(0.0, 0.0)] * len(me.loops)
+    uv1 = [tuple(d.uv) for d in L["UVSeam"].data] if L.get("UVSeam") else [(0.0, SEAM_FAR)] * len(me.loops)
+    for nm in [l.name for l in L]: L.remove(L[nm])
+    a = L.new(name="UVMap"); b = L.new(name="UVSeam")
+    for k in range(len(me.loops)): a.data[k].uv = uv0[k]; b.data[k].uv = uv1[k]
+    L.active = a; a.active_render = True
+for o in PIECES:
+    if "thick" in o and not os.environ.get("YGG_NOTHICK"):
+        nv = len(o.data.vertices); thicken(o, o["thick"])
+        print("THICK", o.name, o["thick"], nv, "->", len(o.data.vertices))
 g = join(f"SKM_G_{OUTFIT}{TAG}", PIECES)
 activate(g)
 print("UVLAYERS", [l.name for l in g.data.uv_layers])
 bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=6)
 bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+_unw = sum(1 for v in g.data.vertices if sum(x.weight for x in v.groups) < 0.5)
+print("WEIGHTS verts", len(g.data.vertices), "unweighted", _unw)
 g.parent = arm
 am = g.modifiers.new("Armature", 'ARMATURE'); am.object = arm
 tris = sum(len(p.vertices) - 2 for p in g.data.polygons)
@@ -1341,10 +1935,17 @@ for o in (body, face):
 cam = bpy.data.objects.new("Cam", bpy.data.cameras.new("Cam")); s.collection.objects.link(cam); s.camera = cam
 cam.data.lens = 70
 os.makedirs(os.path.join(OUT, "Preview"), exist_ok=True)
-for nm, d in (("front", Vector((0, FRONT, 0.05))), ("threeq", Vector((0.75, FRONT, 0.15))), ("back", Vector((-0.4, -FRONT, 0.1))),
-              ("feet", Vector((0.8, FRONT, 0.35)))):
-    tgt = Vector((0, 0, HEAD_TOP * 0.52)) if nm != "feet" else Vector((0, B["ball_l"].y, 0.1))
-    cam.location = tgt + d.normalized() * (4.4 if nm != "feet" else 1.3)
+NECK_T = Vector((B["neck_01"].x, B["neck_01"].y, BODY_TOP + 0.02))
+VIEWS = (("front", Vector((0, FRONT, 0.05))), ("threeq", Vector((0.75, FRONT, 0.15))), ("back", Vector((-0.4, -FRONT, 0.1))),
+         ("feet", Vector((0.8, FRONT, 0.35))),
+         # collar close-ups (director: no gap at the neck from any angle): front-high, side, back-high
+         ("neck_front", Vector((0.15, FRONT, 0.45))), ("neck_side", Vector((1.0, 0.15 * FRONT, 0.25))), ("neck_back", Vector((-0.3, -FRONT, 0.55))),
+         # cloth edges (director: paper-thin sheets): the left cuff from below-front, so the opening's lining shows
+         ("edge_cuff", Vector((0.5, FRONT, -0.55))))
+CUFF_T = B["hand_l"] + (B["lowerarm_l"] - B["hand_l"]).normalized() * 0.03
+for nm, d in VIEWS:
+    tgt = NECK_T if nm.startswith("neck") else CUFF_T if nm == "edge_cuff" else (Vector((0, 0, HEAD_TOP * 0.52)) if nm != "feet" else Vector((0, B["ball_l"].y, 0.1)))
+    cam.location = tgt + d.normalized() * (0.75 if nm.startswith("neck") else 0.45 if nm == "edge_cuff" else (4.4 if nm != "feet" else 1.3))
     cam.rotation_euler = (tgt - cam.location).to_track_quat('-Z', 'Y').to_euler()
     s.render.filepath = os.path.join(OUT, "Preview", f"garment_{OUTFIT}{TAG}_{nm}.png")
     bpy.ops.render.render(write_still=True)

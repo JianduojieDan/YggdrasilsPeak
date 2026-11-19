@@ -154,6 +154,21 @@ void UCompassComponent::Kick(float Strength, bool bShowIt)
 	}
 }
 
+void UCompassComponent::SetStoryTarget(FVector Target, float Tremble)
+{
+	const float Was = StoryTremble;
+	StoryTremble = FMath::Clamp(Tremble, 0.f, 1.f);
+	if (StoryTremble > 0.f)
+	{
+		StoryTarget = Target;
+		if (Was <= 0.f)
+		{
+			// it wakes in the hand: a jolt, then it swings over
+			Kick(0.5f * StoryTremble, false);
+		}
+	}
+}
+
 void UCompassComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
@@ -186,9 +201,12 @@ void UCompassComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	const float TargetPull = bAwake ? FMath::GetMappedRangeValueClamped(FVector2f(5150.f, 7000.f), FVector2f(0.35f, 1.f), Elevation) : 0.f;
 	Pull = FMath::FInterpTo(Pull, TargetPull, DeltaTime, 0.5f);
 
-	// raise / lower
+	// the story's target swings the needle over (and back when released) over about a second
+	StoryPull = FMath::FInterpTo(StoryPull, StoryTremble > 0.f ? 1.f : 0.f, DeltaTime, 2.5f);
+
+	// raise / lower (held up while the story has the needle)
 	ShowFor = FMath::Max(0.f, ShowFor - DeltaTime);
-	const bool bShow = bRaised || ShowFor > 0.f || CVarCompassShow.GetValueOnGameThread() > 0;
+	const bool bShow = bRaised || ShowFor > 0.f || StoryTremble > 0.f || CVarCompassShow.GetValueOnGameThread() > 0;
 	RaiseAlpha = FMath::FInterpTo(RaiseAlpha, bShow ? 1.f : 0.f, DeltaTime, bShow ? 7.f : 9.f);
 	const bool bVisible = RaiseAlpha > 0.01f;
 	Case->SetVisibility(bVisible);
@@ -204,8 +222,8 @@ void UCompassComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	}
 	ShakeTime += DeltaTime;
 	Impulse = FMath::FInterpTo(Impulse, 0.f, DeltaTime, 0.8f);
-	// a little hand tremble, more with the cold and the altitude
-	const float Tremble = 0.15f + 0.35f * Pull + Impulse;
+	// a little hand tremble, more with the cold and the altitude, and with whatever pulls the needle in the story
+	const float Tremble = 0.15f + 0.35f * Pull + Impulse + 0.5f * StoryTremble * StoryPull;
 	const FVector Wobble(0.f, FMath::Sin(ShakeTime * 2.1f) * 0.25f, FMath::Sin(ShakeTime * 1.3f) * 0.3f);
 	const float Ease = 1.f - FMath::Pow(1.f - RaiseAlpha, 3.f);
 	const FVector Hidden = HeldOffset + FVector(-6.f, 4.f, -26.f);
@@ -219,8 +237,15 @@ void UCompassComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	// the needle: a damped spring towards its target bearing (north blended into the summit), shaking as it is pulled
 	const float CamYaw = Case->GetAttachParent() ? Case->GetAttachParent()->GetComponentRotation().Yaw : 0.f;
 	const float SummitYaw = (SummitLocation - Character->GetActorLocation()).Rotation().Yaw;
-	const float Bearing = NorthYaw + FMath::FindDeltaAngleDegrees(NorthYaw, SummitYaw) * Pull;
-	const float Shake = (FMath::PerlinNoise1D(ShakeTime * 3.f) * 4.f + FMath::PerlinNoise1D(ShakeTime * 17.f) * 1.5f) * (Pull * 3.f + Impulse * 6.f);
+	float Bearing = NorthYaw + FMath::FindDeltaAngleDegrees(NorthYaw, SummitYaw) * Pull;
+	if (StoryPull > 0.001f)
+	{
+		// the story's pull wins over north and the summit (angles taken the short way round)
+		const float StoryYaw = (StoryTarget - Character->GetActorLocation()).Rotation().Yaw;
+		Bearing += FMath::FindDeltaAngleDegrees(Bearing, StoryYaw) * StoryPull;
+	}
+	const float Shake = (FMath::PerlinNoise1D(ShakeTime * 3.f) * 4.f + FMath::PerlinNoise1D(ShakeTime * 17.f) * 1.5f)
+		* (Pull * 3.f + Impulse * 6.f + StoryTremble * StoryPull * 4.f);
 	const float Target = FMath::FindDeltaAngleDegrees(0.f, Bearing - CamYaw) + Shake;   // case turned +90 (lid away from you); the red half of the needle lies along the case's north
 	const float Delta = FMath::FindDeltaAngleDegrees(NeedleYaw, Target);
 	NeedleSpeed += (Delta * 60.f - NeedleSpeed * 6.f) * DeltaTime;
@@ -230,7 +255,8 @@ void UCompassComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	// the runes wake while it points up the mountain
 	if (RuneGlow)
 	{
-		const float Glow = Pull * (0.4f + 0.6f * FMath::Abs(FMath::Sin(ShakeTime * 1.4f))) + Impulse;
+		const float Wake = FMath::Max(Pull, StoryTremble * StoryPull);
+		const float Glow = Wake * (0.4f + 0.6f * FMath::Abs(FMath::Sin(ShakeTime * 1.4f))) + Impulse;
 		RuneGlow->SetScalarParameterValue(TEXT("Glow"), Glow);
 		if (LidGlow)
 		{
