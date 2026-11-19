@@ -5,6 +5,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/PoseableMeshComponent.h"
+#include "Engine/OverlapResult.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/GameViewportClient.h"
@@ -27,6 +28,10 @@ static TAutoConsoleVariable<int32> CVarFeetLog(TEXT("ygg.Feet.Log"), 0,
 	TEXT("positive = floating), the plain animation's gap, the lift, the animated height, plant weight and tilt."));
 static TAutoConsoleVariable<int32> CVarFeetWorldIK(TEXT("ygg.Feet.WorldIK"), 1,
 	TEXT("1 = what others, mirrors and the shadow see is a posed copy of the body with its legs fitted to the ground like your own; 0 = the plain animated body (only lowered)."));
+static TAutoConsoleVariable<int32> CVarFeetSlide(TEXT("ygg.Feet.Slide"), 1,
+	TEXT("1 = sliding down ground too steep to stand on (movement: falling, capsule on the slope), the boots are fitted to the slope as if planted; 0 = they keep the airborne animation (knees up, 0.6-1.4 m over the snow on 46-61 deg slopes)."));
+static TAutoConsoleVariable<int32> CVarFeetUnstick(TEXT("ygg.Feet.Unstick"), 1,
+	TEXT("1 = a climber falling but hardly moving with the capsule more than 5 cm inside a blocking surface is pushed out of it (seen after BugItGo + Walk: stuck 25-60 cm inside the detail tiles, legs up)."));
 static TAutoConsoleVariable<int32> CVarFeetViewDrop(TEXT("ygg.Feet.ViewDrop"), 0,
 	TEXT("Extra eye drop on slopes. 0 (default, 2026-11-14 review): the first-person mesh and its camera are children of the world body, so they already come down with the hips; 1 added the drop a second time (the eye fell about twice the hips drop)."));
 
@@ -788,7 +793,9 @@ void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
 	}
 	// movement switched off (dead, resting in a tent) still stands where it stopped: boots stay on the ground (easing the drop
 	// out there lifted the body, and now the eye, off a slope while the death screen came up)
-	const bool bOnGround = Movement->IsMovingOnGround() || Movement->MovementMode == MOVE_None;
+	UnstickFromGround(DeltaTime);
+	// sliding down a slope too steep to stand on counts as ground for the boots (see DetectSlide)
+	const bool bOnGround = Movement->IsMovingOnGround() || Movement->MovementMode == MOVE_None || DetectSlide(DeltaTime);
 	FeetAlpha = FMath::FInterpTo(FeetAlpha, bOnGround ? 1.f : 0.f, DeltaTime, 10.f);
 	if (Movement->CurrentFloor.bBlockingHit)
 	{
@@ -810,6 +817,9 @@ void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
 		{
 			// the animated sole over the animation's own flat floor: about 0 when planted, up in the swing
 			Leg.AnimHeight = float(BodyXf.TransformPosition(Pose[Leg.Foot].GetLocation()).Z - BodyXf.GetLocation().Z) - SoleHeightCm;
+			// sliding: the airborne pose tucks the boots up; they are planted on the slope instead, and may reach that much lower
+			Leg.SlideTuck = bSliding ? FMath::Max(0.f, Leg.AnimHeight) : 0.f;
+			if (bSliding) { Leg.AnimHeight = 0.f; }
 		}
 	}
 	if (!bOnGround)
@@ -894,6 +904,84 @@ void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
 			Leg.AnimGap = float(LoweredXf.TransformPosition(Pose[Leg.Foot].GetLocation()).Z - SoleHeightCm - Leg.Point.Z);
 			Leg.FinalGap = Leg.AnimGap;
 		}
+	}
+}
+
+bool UFirstPersonBodyComponent::DetectSlide(float DeltaTime)
+{
+	// Why the boots floated on very steep slopes (A6, measured with ygg.GroundProbe on the Lhotse face 2026-11-20): past the
+	// walkable angle (44.8 deg, 58 clipped to a rope) the climber slides, which the movement calls falling, so the boots
+	// eased back to the plain animation: its airborne pose, knees up, soles 58-138 cm over the snow on 46-61 deg slopes
+	// while the capsule itself lay on the slope (its bottom r * (1/cos - 1) over it: 17-41 cm, as geometry says). A short
+	// sweep under the capsule (1 cm slimmer, so touching counts) tells sliding from flying.
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	UCapsuleComponent* Cap = Character ? Character->GetCapsuleComponent() : nullptr;
+	bool bContact = false;
+	if (Movement && Cap && Movement->IsFalling() && CVarFeetSlide.GetValueOnGameThread() != 0)
+	{
+		FCollisionQueryParams Q(SCENE_QUERY_STAT(FeetSlide), false, Character);
+		FCollisionResponseParams RP;
+		Cap->InitSweepCollisionParams(Q, RP);
+		const FVector From = Cap->GetComponentLocation();
+		const float Slim = 1.f;
+		FHitResult S;
+		bContact = GetWorld()->SweepSingleByChannel(S, From, From - FVector(0.f, 0.f, SlideProbeCm), FQuat::Identity, Cap->GetCollisionObjectType(),
+			FCollisionShape::MakeCapsule(Cap->GetScaledCapsuleRadius() - Slim, Cap->GetScaledCapsuleHalfHeight() - Slim), Q, RP)
+			&& !S.bStartPenetrating && S.ImpactNormal.Z >= FMath::Cos(FMath::DegreesToRadians(80.f));
+	}
+	SlideHold = bContact ? SlideHoldSec : FMath::Max(0.f, SlideHold - DeltaTime);
+	bSliding = Movement && Movement->IsFalling() && SlideHold > 0.f;
+	return bSliding;
+}
+
+void UFirstPersonBodyComponent::UnstickFromGround(float DeltaTime)
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	UCapsuleComponent* Cap = Character ? Character->GetCapsuleComponent() : nullptr;
+	if (!Movement || !Cap || !Movement->IsFalling() || Character->GetVelocity().Size() > 60.f || CVarFeetUnstick.GetValueOnGameThread() == 0)
+	{
+		StuckCheck = 0.f;
+		return;
+	}
+	StuckCheck += DeltaTime;
+	if (StuckCheck < 0.4f)
+	{
+		return;
+	}
+	StuckCheck = 0.f;
+	// (2026-11-20, ygg.GroundProbe) after BugItGo's ghost mode was switched back with Walk, the capsule fell 25-60 cm into
+	// the detail tiles and stayed there "falling" (velocity ~0, falling pose, legs over the snow); a plain teleport cured it.
+	FCollisionQueryParams Q(SCENE_QUERY_STAT(FeetUnstick), false, Character);
+	FCollisionResponseParams RP;
+	Cap->InitSweepCollisionParams(Q, RP);
+	const FVector At = Cap->GetComponentLocation();
+	const FCollisionShape Shape = Cap->GetCollisionShape();
+	TArray<FOverlapResult> Overlaps;
+	GetWorld()->OverlapMultiByChannel(Overlaps, At, FQuat::Identity, Cap->GetCollisionObjectType(), Shape, Q, RP);
+	FVector Out = FVector::ZeroVector;
+	float Depth = 0.f;
+	for (const FOverlapResult& O : Overlaps)
+	{
+		UPrimitiveComponent* P = O.GetComponent();
+		FMTDResult Mtd;
+		if (O.bBlockingHit && P && P->ComputePenetration(Mtd, Shape, At, FQuat::Identity) && Mtd.Direction.Z > 0.5f && Mtd.Distance > Depth)
+		{
+			Depth = Mtd.Distance;
+			Out = Mtd.Direction;
+		}
+	}
+	if (Depth > 5.f)
+	{
+		const FVector To = At + Out * (Depth + 3.f);
+		const bool bOk = Character->TeleportTo(To, Character->GetActorRotation());
+		if (bOk)
+		{
+			// land at once: falling again from 3 cm let it sink straight back in
+			Character->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("FirstPersonBody: stuck %.0f cm inside the ground while falling - pushed out%s"), Depth, bOk ? TEXT("") : TEXT(" FAILED"));
 	}
 }
 
@@ -983,6 +1071,29 @@ void UFirstPersonBodyComponent::PoseViewBody(float DeltaTime)
 		}
 	}
 	ViewBody->MarkRefreshTransformDirty();
+}
+
+bool UFirstPersonBodyComponent::GetOwnSoles(FVector& Left, FVector& Right) const
+{
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (SoleHeightCm < 0.f || !Character)
+	{
+		return false;
+	}
+	const FVector Sole(0.f, 0.f, SoleHeightCm);
+	if (FeetBody && FeetBody->IsVisible() && FeetBody->GetBoneIndex(LeftLegBones[2]) != INDEX_NONE)
+	{
+		Left = FeetBody->GetBoneLocationByName(LeftLegBones[2], EBoneSpaces::WorldSpace) - Sole;
+		Right = FeetBody->GetBoneLocationByName(RightLegBones[2], EBoneSpaces::WorldSpace) - Sole;
+		return true;
+	}
+	if (const USkeletalMeshComponent* Body = Character->GetMesh())
+	{
+		Left = Body->GetSocketLocation(LeftLegBones[2]) - Sole;
+		Right = Body->GetSocketLocation(RightLegBones[2]) - Sole;
+		return true;
+	}
+	return false;
 }
 
 float UFirstPersonBodyComponent::MeasureSoleHeight() const
@@ -1243,7 +1354,7 @@ void UFirstPersonBodyComponent::PlaceFeet()
 		const FQuat TiltRotation = Angle > KINDA_SMALL_NUMBER ? FQuat::Slerp(FQuat::Identity, FQuat::FindBetweenNormals(UpCS, NormalCS), Tilt / Angle) : FQuat::Identity;
 		// a tilted boot rests on its sole, not on the point straight under the ankle: the ankle sits Sole / cos(tilt) up
 		const float TiltLift = SoleHeightCm * (1.f / FMath::Cos(Tilt) - 1.f);
-		const float Lift = FMath::Clamp(float(WantSole - SoleNow), -25.f, MaxFootLiftCm) * Fit + TiltLift;
+		const float Lift = FMath::Clamp(float(WantSole - SoleNow), -25.f - Leg.SlideTuck, MaxFootLiftCm) * Fit + TiltLift;
 		const FVector TargetCS = FootCS.GetLocation() + BodyXf.InverseTransformVectorNoScale(FVector(0.f, 0.f, Lift));
 
 		// two-bone solve (bone lengths kept, never stretched); the knee bends the way the animation bends it, and a

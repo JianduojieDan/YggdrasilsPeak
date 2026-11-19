@@ -232,6 +232,10 @@ public:
 	float GetSinkDepth() const { return SinkDepth; }
 	float GetFootDrop() const { return FootDrop; }
 
+	/** Debug (ygg.GroundProbe): the owner's own boots (FeetBody, else the world body) as the ankle bone minus the measured
+	 *  sole height, world space; false before the sole height is known. */
+	bool GetOwnSoles(FVector& Left, FVector& Right) const;
+
 	/** One body (ygg.View.OneBody; the rig may also call this): true = walking shows FeetBody with torso and arms (one
 	 *  world projection, no seam at the hips) and the first-person mesh is hidden and not animated; false = the older
 	 *  two-projection body (first-person torso and arms, world-space legs). */
@@ -305,6 +309,12 @@ public:
 	/** How far a boot may be lifted above where the animation put it, onto higher ground (cm); past it, the lower boot hangs. */
 	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0", ClampMax="90"))
 	float MaxFootLiftCm = 50.f;
+
+	/** Sliding test: how far under the capsule a slope still counts as touching it (cm), and how long a contact holds (s). */
+	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="1"))
+	float SlideProbeCm = 15.f;
+	UPROPERTY(EditAnywhere, Category="First Person|Feet", meta=(ClampMin="0"))
+	float SlideHoldSec = 0.25f;
 
 	/** How quickly the hips come down when the lower boot needs to reach further, and go back up (higher = quicker).
 	 *  Down fast so no boot hangs, up gently so walking on a slope doesn't pump the body with every step. */
@@ -547,6 +557,8 @@ private:
 		float Offset = 0.f;
 		/** The animated sole over the animation's own flat floor (cm): about 0 when planted, up in the swing. */
 		float AnimHeight = 0.f;
+		/** Sliding: how high the airborne animation had tucked this boot (cm); the fit may reach this much further down. */
+		float SlideTuck = 0.f;
 		/** 0..1: this boot is fitted to its ground (eases out over a drop or a wall). */
 		float Alpha = 0.f;
 
@@ -580,6 +592,16 @@ private:
 	float ViewDrop = 0.f;
 	/** CharacterMovement's floor gap, kept from the last frame it was walking (the flat-ground part of the drop). */
 	float FloorGapCm = 0.f;
+	/** Sliding down ground too steep to stand on (the movement says falling, the capsule is on the slope): the boots are
+	 *  fitted to it as if planted (ygg.Feet.Slide). Held SlideHoldSec after the last contact so a bump doesn't flicker it. */
+	bool bSliding = false;
+	float SlideHold = 0.f;
+	/** Falling and hardly moving: time until the next stuck-in-the-ground check (UnstickFromGround). */
+	float StuckCheck = 0.f;
+	/** True while the capsule rests on a slope too steep to stand on (a short sweep under it hits within SlideProbeCm). */
+	bool DetectSlide(float DeltaTime);
+	/** Falling, hardly moving and deep (> 5 cm) in a blocking surface: pushed out along the penetration so it can land. */
+	void UnstickFromGround(float DeltaTime);
 
 	/** The world body at its base spot, minus the powder sink and the slope drop (unless climbing, which places it itself). */
 	void ApplyWorldBodyOffset();
