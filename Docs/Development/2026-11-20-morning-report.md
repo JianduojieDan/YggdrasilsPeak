@@ -1,6 +1,7 @@
 # Morning report, 2026-11-20 (overnight chapter 1 redo)
 
-Timed log: `Docs/Development/2026-11-19-overnight.md`. For your professor: `Docs/Development/Chapter1_v2_Design.md`
+Timed log: `Docs/Development/2026-11-19-overnight.md`. For your professor: the shareable page https://claude.ai/artifact/XW3T4J6ZKG3CN3auz1mpfW
+(private until you share it from its Share menu; source `Docs/Development/Chapter1_v2_Design.md`)
 (the full chapter 1 v2 design, written for a reader outside the project) and `Docs/Development/Chapter1_Camera_Spec.md`
 (the technical camera spec).
 
@@ -31,6 +32,7 @@ Timed log: `Docs/Development/2026-11-19-overnight.md`. For your professor: `Docs
   - Followers walk your footsteps in single file, match your pace, and ignore camera turns.
 
 **Camp and world.**
+- The camp stands in a dry-stone walled field like the real Dingboche fields: a stone altar with flags, a trail chorten, gear by the doors, trodden lanes. There is no smoke yet (no smoke effect exists in the project).
 - Prayer flags everywhere are now real printed lungta: wind horse, four animals, faded cotton, frayed edges. They
   replace the old fake shader. Strings hang edge to edge with a capped sag.
 - The mess dome is regenerated without windows, so the jagged window rims are gone.
