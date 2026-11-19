@@ -14,6 +14,14 @@ commit + push + memory, then shut the PC down. Time every item. Leave all visual
 | 2c | Low eye root cause: snow sink 30-35 cm applied fully to the eye -> capped at 10 cm (SinkEyeMaxCm) | 19:41 | 20:05 | run 2 confirmed cause |
 | 5a | Prayer flags: real printed lungta textures (Meshy image, 6 credits) on M_PrayerFlag = every flag on the map; strings edge to edge | 19:45 | 20:10 | |
 | 6a | NPC walk (glide), NPC snow prints, follow redesign -> one agent, building + testing itself | 20:12 | | running |
+| 6b | NPC glide root cause (MetaHuman foot IK aims at missing ik_foot bones) -> walk blend space; NPC prints; trail-following followers | 20:12 | 20:50 | agent |
+| 6c | Team as AI characters: Nima, Elena (Meshy rig), Marek (Meshy rig failed -> rigged in Blender on Nima's skeleton) | 20:40 | 21:40 | 105 credits |
+| 6d | Garments for Ji-woo/Pema/porters/Marek: thickness + rolled lined hems, hugging collars, drape/folds | 20:55 | 21:45 | agent |
+| 4a | Mess dome regenerated without windows (33 credits), warmer tint | 20:20 | 21:50 | |
+| 2d | Eye inside the jacket collar when looking down -> eye 16 cm in front of the body (ygg.View.EyeFwd); headlamp 35 lm soft | 22:00 | 22:35 | |
+| 2e | Regression robot run: chapter finished, low-eye incidents gone (2 harmless left) | 22:35 | 23:20 | |
+| 7a | Commits 520a4c3 (local) / 5957c6e (GitHub); rule: every commit pushed to GitHub | 23:25 | 23:30 | |
+| 5b | Camp beauty pass (walled field, altar + juniper smoke, kitchen smoke, gear life) | 23:31 | | agent running |
 | 1 | Resume the camera implementation workflow (wf_b07cd78d-946) | | | |
 | 2 | Rebuild chapter 1 world + story, functional run (CamTest, Auto) | | | |
 | 3 | #4 shadow smear under the flag cords | | | |

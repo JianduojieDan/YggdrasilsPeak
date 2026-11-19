@@ -767,6 +767,258 @@ spawn(CYL, g + V(0, 0, 1.5), R(0, 0, yaw), (0.85, 0.85, 0.01), MI("Water"), ("st
 spawn(AI("stream_hole"), g + V(0, 0, -3), R(0, 0, yaw), (1.3, 1.3, 1.0), None, (), "Story/Ch1/Trail", collide=False)
 place("stream_hole", g, yaw)
 
+# ---------------------------------------------------------------- Dingboche camp dressing: the walled field, the lhapso, camp life (2026-11-20)
+# Trek camps in Dingboche stand in walled potato/barley fields: dry-stone kharka walls ~1 m high (two or three courses of
+# stones, flat capstones on top), gaps where the paths go through, more walled fields around. The walls are HISM instances of
+# two rock scans with their snow-dusted materials (one actor, two components). A stone is left out where it would stand on a
+# walking path (the story's spots, tent_out, the trail, the way to the village), inside a tent, or on anything but the ground.
+# In camp-frame metres (f = towards the trail, p = left of it; at(f, p) above).
+WALL_KINDS = [("/Game/Fab/FREE_Stone_-_8K_Textures/stone/StaticMeshes/stone", "/Game/Environment/RockSnow/MI_RockSnow_Stone_Dusted"),
+              ("/Game/Fab/Stone_-_photogrammetry/stone_photogrammetry/StaticMeshes/stone_photogrammetry", "/Game/Environment/RockSnow/MI_RockSnow_StonePhoto_Dusted")]
+_RSTATE = random.getstate(); random.seed(1120)   # own random stream: the sections after this one keep their layouts
+SUBO = unreal.get_engine_subsystem(unreal.SubobjectDataSubsystem)
+SDBL = unreal.SubobjectDataBlueprintFunctionLibrary
+
+
+def hism_actor(label, kinds, folder="Story/Ch1/Camp", collide=True):
+    act = EAS.spawn_actor_from_class(unreal.Actor, CAMP)
+    act.set_actor_label(label); act.set_folder_path(folder); act.tags = ["Ch1"]
+    root = SUBO.k2_gather_subobject_data_for_instance(act)[0]
+    comps = []
+    for mp, mip in kinds:
+        h, _ = SUBO.add_new_subobject(unreal.AddNewSubobjectParams(parent_handle=root, new_class=unreal.HierarchicalInstancedStaticMeshComponent))
+        c = SDBL.get_object(SDBL.get_data(h))
+        m = unreal.load_asset(mp); c.set_static_mesh(m)
+        if mip: c.set_material(0, unreal.load_asset(mip))
+        c.set_cast_shadow(True)
+        if not collide: c.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+        bb = m.get_bounding_box()
+        comps.append((c, bb.min, bb.max - bb.min))
+    return act, comps
+
+
+# the paths people walk: (a, b, half width cm). Stones and props keep off them.
+PATHS = []
+def _pv(n): p = places[n]; return V(p[0], p[1], p[2])
+_spots = ["dolma_spot", "aunt_spot", "nima_spot", "marek_spot", "elena_spot", "jiwoo_spot", "farewell_dolma", "farewell_aunt"]
+for n in _spots:
+    PATHS.append((_pv("tent_out"), _pv(n), 170.0))
+    PATHS.append((_pv(n), _pv("trail_start"), 260.0))
+for n in ("dolma_spot", "aunt_spot", "farewell_dolma", "farewell_aunt"):
+    PATHS.append((_pv(n), _pv("village_way"), 230.0))
+_prev = None
+for m in range(0, 260, 10):                      # the trail's first 250 m
+    x_, y_, z_, _ = at_dist(r0, m); q = V(x_, y_, z_)
+    if _prev is not None: PATHS.append((_prev, q, 300.0))
+    _prev = q
+PATHS.append((_pv("camp_front"), MESS_C, 200.0))   # the camp's own lanes: front to the mess and the kitchen doors
+PATHS.append((_pv("camp_front"), V(kx, ky, kz), 200.0))
+
+
+def seg_dist(p, a, b):
+    ax, ay, bx, by = a.x, a.y, b.x, b.y
+    dx, dy = bx - ax, by - ay; L2 = dx * dx + dy * dy
+    t = 0.0 if L2 < 1e-6 else max(0.0, min(1.0, ((p.x - ax) * dx + (p.y - ay) * dy) / L2))
+    return math.hypot(p.x - (ax + dx * t), p.y - (ay + dy * t))
+
+
+def on_path(p, r=0.0):
+    return any(seg_dist(p, a, b) < w + r for a, b, w in PATHS)
+
+
+def in_tent(p, margin):
+    for c, yaw, hx, hy in TENT_FP:
+        cs, sn = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+        dx, dy = p.x - c.x, p.y - c.y
+        if abs(dx * cs + dy * sn) < hx + margin and abs(-dx * sn + dy * cs) < hy + margin: return True
+    return False
+
+
+def bare_ground(x, y):
+    """the first thing straight down is the terrain (not a tent, a rock, a building): its point, else None"""
+    h = unreal.SystemLibrary.line_trace_single(W, V(x, y, CAMP.z + 6000), V(x, y, CAMP.z - 6000), unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,
+                                               False, [], unreal.DrawDebugTrace.NONE, True)
+    t = h.to_tuple() if h else None
+    if not t or not t[0]: return None
+    return t[5] if is_terrain(t[9], t[10]) else None
+
+
+WALL_ACT, WALL_C = hism_actor("Ch1_KharkaWalls", WALL_KINDS)
+WALL_T = [[] for _ in WALL_C]
+n_skip = {"path": 0, "tent": 0, "object": 0}
+
+
+def stone(x, y, zb, L, D, H, yaw, kind=None, pitch=0.0, roll=0.0):
+    """one stone of L x D x H cm, its bottom at zb, long side along yaw"""
+    k = random.randrange(len(WALL_C)) if kind is None else kind
+    c, bmin, bsz = WALL_C[k]
+    flip = random.random() < 0.5
+    sx, sy, sz = L / max(bsz.x, 1.0), D / max(bsz.y, 1.0), H / max(bsz.z, 1.0)
+    yw = yaw + (180.0 if flip else 0.0)
+    ctr = V((bmin.x + bsz.x * 0.5) * sx, (bmin.y + bsz.y * 0.5) * sy, 0)     # the mesh's centre off its pivot
+    cs, sn = math.cos(math.radians(yw)), math.sin(math.radians(yw))
+    loc = V(x - (ctr.x * cs - ctr.y * sn), y - (ctr.x * sn + ctr.y * cs), zb - bmin.z * sz)
+    WALL_T[k].append(unreal.Transform(loc, R(roll, pitch, yw), V(sx, sy, sz)))
+
+
+def ok_spot(p, r):
+    if on_path(p, r): n_skip["path"] += 1; return None
+    if in_tent(p, 60.0 + r): n_skip["tent"] += 1; return None
+    g = bare_ground(p.x, p.y)
+    if g is None: n_skip["object"] += 1; return None
+    return g
+
+
+def wall(a, b, courses=3, ruin=0.0, thick=False):
+    """a dry-stone wall from camp-frame point a to b (f, p in cm): stones along the line, each course offset by half a stone;
+    thick: the base course is two rows of stones side by side (a field wall ~70 cm through), the courses above sit on both"""
+    A, B = at(*a), at(*b)
+    d = B - A; L = d.length(); yaw = math.degrees(math.atan2(d.y, d.x)); u = d / L; n_ = V(-u.y, u.x, 0)
+    spec = [((55, 80), (45, 60), (40, 52), -8.0, 0.0), ((45, 70), (40, 52), (32, 42), 36.0, 0.0), ((50, 78), (44, 56), (16, 26), 70.0, 0.0)][:courses]
+    if thick: spec = [((50, 72), (34, 44), (40, 52), -8.0, 17.0), ((50, 72), (34, 44), (40, 52), -8.0, -17.0)] + spec[1:]
+    for ci, (lr, dr, hr, z0, side) in enumerate(spec):
+        base = z0 < 0
+        s = random.uniform(0, 30) if base else 35.0 * ci
+        while s < L:
+            sl = random.uniform(*lr)
+            if random.random() >= ruin or base:
+                p = A + u * (s + sl * 0.5) + n_ * (side + random.uniform(-5, 5))
+                g = ok_spot(p, 30.0)
+                if g is not None:
+                    top = z0 + random.uniform(-3, 3)
+                    kind = 0 if hr[1] < 30 else (1 if random.random() < 0.7 else 0)     # blocky scan below, flat slabs on top
+                    stone(p.x, p.y, g.z + top, sl, random.uniform(*dr), random.uniform(*hr), yaw + random.uniform(-9, 9), kind,
+                          pitch=random.uniform(-4, 4), roll=random.uniform(-5, 5))
+            s += sl * random.uniform(0.78, 0.9)
+
+
+# the camp's field: back wall behind the kitchen and the toilet, side walls past the flag poles, a front wall the paths cut
+FB, FF, FL, FR = -2450.0, 1350.0, -2550.0, 2650.0
+for a_, b_ in (((FB, FL), (FB, FR)), ((FB, FR), (FF, FR)), ((FF, FR), (FF, FL)), ((FF, FL), (FB, FL))):
+    wall(a_, b_, thick=True)
+# the neighbours' fields: lower, older walls (some upper stones tumbled)
+for a_, b_ in (((FB, FL), (FB, -6200)), ((FB, -6200), (FF, -6200)), ((FF, -6200), (FF, FL)),        # left
+               ((FB, FR), (FB, 6000)), ((FB, 6000), (FF + 300, 6000)),                              # right
+               ((FB, FL), (-5600, FL)), ((-5600, -6200), (-5600, FR)), ((FB, FR), (-5600, FR)),    # behind
+               ((FF, FL), (FF + 2600, FL - 200)), ((FF + 2600, FL - 200), (FF + 2600, -6200)),    # front left
+               ((FF, FR), (FF + 2800, FR + 150)), ((FF + 2800, FR + 150), (FF + 2800, 6000))):   # front right
+    wall(a_, b_, courses=2, ruin=0.25)
+
+# clearance piles: the stones picked off the fields, heaped in the corners
+for f_, p_ in ((FB + 150, FL + 160), (FB + 140, FR - 170), (-4200, -4300), (-4300, 4400), (FF - 170, -4300)):
+    c_ = at(f_, p_)
+    for k in range(9):
+        ang = random.uniform(0, 2 * math.pi); r_ = random.uniform(0, 70) if k < 6 else random.uniform(0, 30)
+        p = c_ + V(math.cos(ang) * r_, math.sin(ang) * r_, 0)
+        g = ok_spot(p, 30.0)
+        if g is not None:
+            sz_ = random.uniform(30, 55)
+            stone(p.x, p.y, g.z - 6 + (28 if k >= 6 else 0), sz_, sz_ * random.uniform(0.7, 0.9), sz_ * random.uniform(0.45, 0.6), random.uniform(0, 360), 1,
+                  pitch=random.uniform(-15, 15), roll=random.uniform(-15, 15))
+
+# the domes' levelled pads: a stone on each corner (pegs do not hold in frozen ground; real camps weigh the corners down)
+for j, (c_, yw_) in enumerate(tents[:-1]):
+    hx, hy = AIINFO["tent_dome"]["size_cm"][0] * 0.5 * TENT_S, AIINFO["tent_dome"]["size_cm"][1] * 0.5 * TENT_S
+    for sx_, sy_ in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
+        p = local(c_, yw_, sx_ * (hx * 0.62), sy_ * (hy + 22), 0)
+        g = bare_ground(p.x, p.y)
+        if g is not None:
+            sz_ = random.uniform(24, 34)
+            stone(p.x, p.y, g.z - 5, sz_, sz_ * 0.8, sz_ * 0.55, yw_ + random.uniform(-30, 30), 1)
+
+N_ADDED = {}
+for (c, _, _), ts in zip(WALL_C, WALL_T):
+    if ts: c.add_instances(ts, False, True)
+    N_ADDED[id(c)] = len(ts)
+n_stones = sum(len(t) for t in WALL_T)
+print("kharka walls:", n_stones, "stones", [len(t) for t in WALL_T], "skipped", n_skip)
+
+# the lhapso: a small stone altar beside the prayer pole, where the cook burns juniper at dawn (no smoke system in the project
+# yet), a khata on the pole; two more flag lines radiate from the pole top to poles in the field's front corners
+lp = at(170, -780)
+_lg = ground(lp.x, lp.y, CAMP.z)[0]
+spawn(AI("chorten_b"), _lg - V(0, 0, 4), R(0, 0, FYAW + 180), (1.35, 1.35, 1.35), None, ("lhapso",), "Story/Ch1/Camp")
+_hz = local(_lg, FYAW, 70, 0, 0)                    # the sang hearth in front of it: a ring of flat stones where the juniper burns
+for k in range(7):
+    q = local(_hz, k * 51.4, 26, 0, 0)
+    gq = ground(q.x, q.y, CAMP.z)[0]
+    stone(q.x, q.y, gq.z - 4, random.uniform(20, 28), random.uniform(15, 20), random.uniform(10, 15), k * 51.4 + 90 + random.uniform(-15, 15), 0)
+for c, ts in zip([c for c, _, _ in WALL_C], WALL_T):
+    if ts: c.add_instances(ts[N_ADDED[id(c)]:], False, True)
+place("camp_lhapso", _lg, FYAW)
+spawn(AI("khata_tied"), tg_ + V(0, 0, 120), R(0, 0, FYAW + 90), (1, 1, 1), None, (), "Story/Ch1/Camp", collide=False)
+flag_line(top, pole_at(at(FF - 150, FL + 350), 380), 30, folder="Story/Ch1/Camp")
+flag_line(top, pole_at(at(FF - 150, -FL - 700), 380), 30, folder="Story/Ch1/Camp")
+# a chorten by the trail where it leaves the fields, as along every Khumbu path: on the walker's right going out (passed
+# clockwise), straight ahead in the reveal from tent_out behind Dolma; flags from its top to a pole
+_cp = at(FF + 1300, 1300)
+for _try in range(16):
+    if not on_path(_cp, 160.0): break
+    _cp = _cp + P * 50.0
+_cg = ground(_cp.x, _cp.y, CAMP.z)[0]
+spawn(AI("chorten_a"), _cg - V(0, 0, 5), R(0, 0, FYAW + 90), (1.15, 1.15, 1.15), None, ("trail_chorten",), "Story/Ch1/Camp")
+flag_line(_cg + V(0, 0, 215), pole_at(_cp + P * 900 - F * 250, 360), 22, folder="Story/Ch1/Camp")
+print("trail chorten", round(dist2(_cg, at(0, 0)) / 100), "m out of the camp")
+
+# camp life at the vestibules of the team's domes (never at Sangye's: the crawl out stays clear): a duffel or a daypack beside
+# the door, a water bottle, a headlamp left on a pack
+GEAR = [(("duffel", "dark", -98, 30, 90), ("water_bottle", None, 42, 62, 0)),
+        (("daypack", None, -88, 40, 20), ("water_bottle", None, -60, 70, 0)),
+        (("duffel", "orange", 96, 25, 95), ("daypack", None, -90, 45, -15)),
+        (("daypack", None, 92, 38, 160), ("water_bottle", None, 66, 70, 0))]
+n_gear = 0
+for j, items in enumerate(GEAR):
+    c_, yw_ = tents[j]
+    hx = AIINFO["tent_dome"]["size_cm"][0] * 0.5 * TENT_S
+    for it, col, side, out, yaw_off in items:
+        p = local(c_, yw_, hx + out, side, 0)
+        if on_path(p, 30.0): print("gear on a path, left out:", it, j); continue
+        mat = tint("duffel", col, dict(DUF_COLS)[col]) if col else None
+        put_ai(it, p.x, p.y, yw_ + yaw_off, 1.0, mat)
+        n_gear += 1
+# the kitchen: the copper water drum and a doko by its door, a stove set on a barrel lid
+kd = near(V(kx, ky, kz), 320, -120); put_ai("copper_drum", kd.x, kd.y, random.uniform(0, 360))
+kb = near(V(kx, ky, kz), 230, 260); put_ai("doko", kb.x, kb.y, random.uniform(0, 360))
+ks = near(V(kx, ky, kz), 380, 130); put_ai("stove_set", ks.x, ks.y, FYAW + 200)
+# a doko with the porter loads
+pd = near(tents[-1][0], 120, 600); put_ai("doko", pd.x, pd.y, FYAW + 20)
+print("camp life props:", n_gear + 4)
+
+# trodden lanes: the morning's boot prints between the domes, the mess, the kitchen and the place in front where the team
+# gathers (decals of the runtime print material, M_Footprint; ~300, each a few pixels: cheap)
+FOOT = unreal.load_asset("/Game/Environment/Snow/M_Footprint")
+n_prints = 0
+def walker(a, b, off=0.0, stride=38.0, stop=0.0):
+    global n_prints
+    d = b - a; d.z = 0; L = d.length() - stop          # stop: the lanes fan out and fade before the gathering place
+    if L < 50: return
+    u = d / L; n_ = V(-u.y, u.x, 0); yaw = math.degrees(math.atan2(u.y, u.x))
+    s, left = random.uniform(0, stride), random.random() < 0.5
+    while s < L:
+        wob = math.sin(s / 260.0 + off) * 14.0                          # people do not walk ruler lines
+        p = a + u * s + n_ * (off + wob + (9.0 if left else -9.0) + random.uniform(-2, 2))
+        g = bare_ground(p.x, p.y)
+        if g is not None and not in_tent(g, 10.0):
+            wd = unit(yaw + random.uniform(-7, 7))
+            dec = EAS.spawn_actor_from_class(unreal.DecalActor, g, unreal.MathLibrary.make_rot_from_xz(V(0, 0, -1), wd))
+            dc = dec.decal
+            dc.set_decal_material(FOOT); dc.set_editor_property("decal_size", V(20, 7, 16))
+            dc.set_decal_color(unreal.LinearColor(1.0 if left else 0.0, 0, 0, random.uniform(0.3, 0.55)))
+            dc.set_editor_property("fade_screen_size", 0.002)
+            dec.tags = ["Ch1"]; dec.set_folder_path("Story/Ch1/Prints")
+            n_prints += 1
+        s += stride * random.uniform(0.92, 1.08); left = not left
+lane_front = _pv("camp_front")
+for j, (c_, yw_) in enumerate(tents[:-1]):
+    door = local(c_, yw_, AIINFO["tent_dome"]["size_cm"][0] * 0.5 * TENT_S + 30, 0, 0)
+    walker(door, lane_front, 0.0, stop=260.0); walker(door, lane_front, 25.0, stop=320.0)
+_md = near(MESS_C, 360, 0); _kd = near(V(kx, ky, kz), 260, 0)
+for a_, b_ in ((_md, lane_front), (_md, lane_front), (_kd, lane_front), (_kd, lane_front), (_kd, _md)):
+    walker(a_, b_, random.uniform(-20, 20), stop=280.0)
+walker(_pv("tent_out"), _pv("farewell_dolma"), 0.0)
+print("trodden lanes:", n_prints, "prints")
+random.setstate(_RSTATE)
+
 # ---------------------------------------------------------------- the memorials (Thukla pass, ~4,840 m on our trail)
 # stone chortens and cairns from Meshy: a (2 m stepped, plaque), b (1.2 m cairn with a flag stick), c (3 m, pole).
 # Grouped like the real Thukla memorials: a dense field on the father's side of the trail, framing his stone, thinning
