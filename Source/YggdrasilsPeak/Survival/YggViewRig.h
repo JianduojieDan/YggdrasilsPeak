@@ -652,6 +652,8 @@ private:
 	int32 ScriptOwner = -1;
 	float ScriptT = 0.f, ScriptLen = 0.f, ScriptSide = 1.f, FallZScale = 1.f;
 	bool bFallLidsSlammed = false;
+	bool bFallSnapPending = false;   // the fall is over: its offsets reset with a cut once the lids are fully shut
+	float FallSnapWait = 0.f;
 	FVector TakeLoc = FVector::ZeroVector;   // (forward, right, up) cm in the view's yaw frame
 	FRotator TakeRot = FRotator::ZeroRotator;
 	float TakeFade = 0.f;                    // > 0: offsets easing back to 0 over this many seconds left

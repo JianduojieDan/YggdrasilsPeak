@@ -2228,6 +2228,7 @@ void UYggViewRigComponent::Fall(int32 Owner, float Seconds, float Side)
 	ScriptSide = Side < 0.f ? -1.f : 1.f;
 	bFallLidsSlammed = false;
 	TakeFade = 0.f;
+	bFallSnapPending = false;
 	// one sphere trace at the start: the drop is scaled so the eye stays 30 cm over the floor
 	FallZScale = 1.f;
 	if (UWorld* World = GetWorld())
@@ -2257,6 +2258,7 @@ void UYggViewRigComponent::Knock(int32 Owner, float Side)
 	ScriptT = 0.f;
 	ScriptSide = Side < 0.f ? -1.f : 1.f;
 	TakeFade = 0.f;
+	bFallSnapPending = false;
 	UE_LOG(LogYggView, Display, TEXT("Rig: knock to the %s (beat %d)"), ScriptSide < 0.f ? TEXT("left") : TEXT("right"), Owner);
 }
 
@@ -2285,15 +2287,17 @@ void UYggViewRigComponent::TickScripted(float Dt)
 		}
 		if (ScriptT >= ScriptLen)
 		{
-			// the Fall lease ends; the eyes are closed, the offsets ease home behind them (Look and Move stay with the beat)
+			// the Fall lease ends (Look and Move stay with the beat). The offsets (-66 deg pitch, -30 roll at the end) go home in
+			// ONE frame as a camera cut while the eyelids are fully shut: easing them home over 0.3 s turned the camera 20 deg
+			// in 0.15 s (a spin_pitch incident) and would show if the lids were still closing. Not shut yet: hold the fallen
+			// view until they are (at most 1 s), then cut.
 			SetDilation(1.f, 1.f);
 			QuietRelease(ScriptOwner, EYggLease::Fall);
 			Scripted = EYggScripted::None;
-			TakeFadeLoc = TakeLoc;
-			TakeFadeRot = TakeRot;
-			TakeFadeLen = 0.3f;
-			TakeFade = TakeFadeLen;
-			UE_LOG(LogYggView, Display, TEXT("Rig: fall over (eyes %s)"), Lid >= 0.99f ? TEXT("closed") : TEXT("still opening"));
+			TakeFade = 0.f;
+			bFallSnapPending = true;
+			FallSnapWait = 0.f;
+			UE_LOG(LogYggView, Display, TEXT("Rig: fall over (eyes %s)"), Lid >= 0.99f ? TEXT("closed") : TEXT("still closing - holding the view"));
 		}
 	}
 	else if (Scripted == EYggScripted::Knock)
@@ -2322,6 +2326,32 @@ void UYggViewRigComponent::TickScripted(float Dt)
 		{
 			TakeLoc = FVector::ZeroVector;
 			TakeRot = FRotator::ZeroRotator;
+		}
+	}
+	// after the chain: runs in the same frame the fall ends, so with the lids already shut nothing is drawn with the offsets
+	if (bFallSnapPending && Scripted == EYggScripted::None)
+	{
+		FallSnapWait += Dt;
+		if (Lid >= 0.99f || FallSnapWait >= 1.f)
+		{
+			bFallSnapPending = false;
+			if (Lid >= 0.99f)
+			{
+				TakeLoc = FVector::ZeroVector;
+				TakeRot = FRotator::ZeroRotator;
+				TakeFade = 0.f;
+				Cut();
+				UE_LOG(LogYggView, Display, TEXT("Rig: fall offsets reset behind closed eyes (cut)"));
+			}
+			else
+			{
+				// the lids never shut (a beat opened them): ease home instead of cutting in front of the player
+				TakeFadeLoc = TakeLoc;
+				TakeFadeRot = TakeRot;
+				TakeFadeLen = 0.6f;
+				TakeFade = TakeFadeLen;
+				UE_LOG(LogYggView, Warning, TEXT("Rig: fall over with the eyes open - easing the offsets home over 0.6 s"));
+			}
 		}
 	}
 }
@@ -2865,6 +2895,7 @@ void UYggViewRigComponent::HardReset(const FRotator& Facing, EYggView Pose)
 	TakeLoc = FVector::ZeroVector;
 	TakeRot = FRotator::ZeroRotator;
 	TakeFade = 0.f;
+	bFallSnapPending = false;
 	if (UWorld* World = GetWorld())
 	{
 		if (World->GetWorldSettings() && !FMath::IsNearlyEqual(World->GetWorldSettings()->TimeDilation, 1.f))
@@ -2998,7 +3029,7 @@ void UYggViewRigComponent::Watchdog(float Dt)
 		TakeFadeLen = 0.3f;
 		TakeFade = TakeFadeLen;
 	}
-	else if (!bTakeLease && TakeFade <= 0.f && Scripted == EYggScripted::None && (!TakeLoc.IsNearlyZero(0.01) || !TakeRot.IsNearlyZero(0.01f)))
+	else if (!bTakeLease && TakeFade <= 0.f && !bFallSnapPending && Scripted == EYggScripted::None && (!TakeLoc.IsNearlyZero(0.01) || !TakeRot.IsNearlyZero(0.01f)))
 	{
 		Repair(TEXT("takeover offsets back to 0"), EYggLease::Fall);
 		TakeFadeLoc = TakeLoc;

@@ -444,7 +444,11 @@ spawn(AI("tent_toilet"), V(tx, ty, tz - 3), R(0, 0, FYAW + random.uniform(-20, 2
 tc = at(260, 0); tg_, tn_ = ground(tc.x, tc.y, CAMP.z)
 spawn(AI("tarchen"), tg_ - V(0, 0, 6), R(0, 0, FYAW), (1, 1, 1), None, (), "Story/Ch1/Camp")
 top = tg_ + V(0, 0, 470)
-flag_line(top, MESS_C + V(0, 0, 265), 26, folder="Story/Ch1/Camp")
+# (2026-11-20) the mess line ran from the pole's 4.7 m top DOWN into the dome at 2.65 m: seen along it from the camp front it
+# read as a vertical column of flags. It now leaves the pole lower, about level with the dome's apex (3.07 m), and ends on it,
+# so it hangs as a normal sagging string from every side.
+mess_top = MESS_C + V(0, 0, 0.98 * AIINFO["tent_mess"]["size_cm"][2] - 4)
+flag_line(V(top.x, top.y, min(top.z, max(tg_.z + 300, mess_top.z + 15))), mess_top, 26, folder="Story/Ch1/Camp")
 flag_line(top, pole_at(at(-60, -1450), 400), 28, folder="Story/Ch1/Camp")
 flag_line(top, pole_at(at(-60, 1500), 400), 28, folder="Story/Ch1/Camp")
 # where the team waits in front of the camp; farewell_dolma / farewell_aunt: where Dolma (leading you by the hand) and the aunt
@@ -593,9 +597,39 @@ place("tent_duffel", tl(duf["x"], duf["y"], FL + duf["z"] + 0.5 * AIINFO["duffel
 # (2026-11-19) the interior above stays as fitted and verified; only the places that frame it are set and checked here.
 # The chapter wakes lying at tent_start (eye 32 cm), sits up (eye 78 cm) and crawls out along the line tent_start -> tent_out.
 HALF_L = AIINFO["tent_dome"]["size_cm"][0] * 0.5 * SS    # the door end of the dome on the tent axis (+x)
-TS = tl(cx, cy, FL)                                      # the pillow end of Sangye's bag (head room found above)
 DOOR = tl(HALF_L, 0, FL + 60)                            # the middle of the door gap
 DUF = tl(duf["x"], duf["y"], FL + duf["z"] + 0.5 * AIINFO["duffel"]["size_cm"][2] * duf["s"])
+# (2026-11-20) from the pillow end (cx, cy above) the door and the duffel are only ~31 deg apart, so no yaw frames both (the
+# spec wants 50-75 deg between them: door 30-40 left, duffel 20-35 right) and the duffel is 123 cm off (-15 deg from the
+# sitting eye). The interior stays frozen; the place moves instead: the nearest spot to the pillow (toward the door and the
+# tent's middle, still on or beside his own bag) where the door and duffel are 52-73 deg apart, the duffel is -27..-33 deg
+# below the 78 cm sitting eye, the sitting body keeps 25 cm off the duffel and the old head-room test passes.
+def _duf_clear(x, y):
+    c_, s_ = math.cos(math.radians(duf["yaw"])), math.sin(math.radians(duf["yaw"]))
+    u, v = (x - duf["x"]) * c_ + (y - duf["y"]) * s_, -(x - duf["x"]) * s_ + (y - duf["y"]) * c_
+    return math.hypot(max(0.0, abs(u) - duf["hx"] * duf["s"]), max(0.0, abs(v) - duf["hy"] * duf["s"]))
+_best = None
+TC.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)   # the real fabric for the head-room test only
+try:
+    for _x in range(int(round(cx)), 61, 2):
+        for _y in range(int(round(cy)), 1, 2):
+            _p = tl(_x, _y, FL)
+            _bd = bearing(_p, DOOR); _sep = wrap(bearing(_p, DUF) - _bd); _pe = elev(_p + V(0, 0, 78), DUF)
+            if not (52.0 <= _sep <= 73.0 and -33.0 <= _pe <= -27.0 and _duf_clear(_x, _y) >= 25.0): continue
+            _score = abs(_y - cy) + 0.5 * abs(_x - cx)
+            if _best is not None and _score >= _best[0]: continue
+            if TRACE_OK:
+                _d = max(1.0, math.hypot(_x, _y)); _k = (_d + 25.0) / _d
+                if tent_hit(tl(_x, _y, FL + 20), tl(_x, _y, FL + 95)) or tent_hit(tl(0, 0, FL + 65), tl(_x * _k, _y * _k, FL + 65)): continue
+            _best = (_score, _x, _y, _sep, _pe)
+finally:
+    TC.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+if _best:
+    print(f"tent_start moved from the pillow ({cx:.1f}, {cy:.1f}) to ({_best[1]}, {_best[2]}): door-duffel {_best[3]:.1f} deg, duffel {_best[4]:+.1f} deg from the sitting eye")
+    cx, cy = float(_best[1]), float(_best[2])
+else:
+    print("  tent_start: no spot frames both door and duffel - staying at the pillow")
+TS = tl(cx, cy, FL)
 b_door = bearing(TS, DOOR); b_duf = b_door + wrap(bearing(TS, DUF) - b_door)
 # the wake frame wants the door glowing 30-40 deg left and the duffel 20-35 deg right: the overlap of both yaw bands when there
 # is one, else the least-squares compromise between the two band middles (the fitted interior decides how far apart they are)
@@ -607,10 +641,13 @@ dr_, fr_ = wrap(b_door - ts_yaw), wrap(b_duf - ts_yaw)
 _why = "" if lo_ <= hi_ else f" (door and duffel are only {b_duf - b_door:.0f} deg apart from the pillow: compromise yaw)"
 check("tent_start: door 30-40 deg left", in_band(dr_, -40, -30), f"door at {dr_:+.1f} deg{_why}")
 check("tent_start: duffel 20-35 deg right", in_band(fr_, 20, 35), f"duffel at {fr_:+.1f} deg")
-for eye_h in (32.0, 78.0):
-    pe_ = elev(TS + V(0, 0, eye_h), DUF)
-    check(f"tent_start: duffel pitch from the {eye_h:.0f} cm eye", in_band(pe_, -35, -25),
-          f"{pe_:+.1f} deg, {dist2(TS, DUF):.0f} cm away (spec -25..-35 deg at 50-70 cm; the interior fitting is frozen)")
+pe_ = elev(TS + V(0, 0, 78.0), DUF)
+check("tent_start: duffel pitch from the 78 cm eye", in_band(pe_, -35, -25),
+      f"{pe_:+.1f} deg, {dist2(TS, DUF):.0f} cm away (spec -25..-35 deg at 50-70 cm; the interior fitting is frozen)")
+# lying, the eye (32 cm) is below the duffel's middle (it lies on the father's bag, ~45 cm up: frozen), so -25..-35 cannot hold
+# there; the lying frame only has to show it (the lie pose looks -20..+70, the view is about +-30 deg high)
+pe_ = elev(TS + V(0, 0, 32.0), DUF)
+check("tent_start: duffel in the lying frame from the 32 cm eye", in_band(pe_, -25, 25), f"{pe_:+.1f} deg")
 place("tent_door", DOOR, SYAW)
 # Dolma waits outside 6-8 m out of the door, within 25 deg of its outward axis: in front of you as you stand up
 _d = local(TO, SYAW, HALF_L + 700, 150, 0); dx_, dy_ = out_of_tents(_d.x, _d.y, 40.0, "dolma_spot")
