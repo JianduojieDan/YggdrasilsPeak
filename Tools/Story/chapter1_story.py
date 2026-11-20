@@ -174,7 +174,11 @@ beat("dawn", {"after": "slip"},
      {"npc": "jiwoo", "look": "jiwoo", "at": "jiwoo_spot", "tint": [0.05, 0.18, 0.3]},
      {"npc": "dolma", "look": "dolma_ai", "at": "dolma_spot", "tint": [0.55, 0.12, 0.08]},
      {"npc": "aunt", "look": "pema", "at": "aunt_spot", "tint": [0.3, 0.06, 0.12]},
-     {"teleport": "tent_start", "cut": True},
+     # "up": the climber's capsule centre over the floor. The default 100 fits a capsule half height of 96 cm; the climber's
+     # capsule now measures ~110 (bot runs 2026-11-20), so it started 10 cm inside the ground and the physics pushed it out
+     # sideways with whatever else it touched (1.2-1.7 m off the spot: the duffel out of reach). 112 = on the floor.
+     # Docs/Development/patches/chapter1_duffel_crawl_diagnosis.md
+     {"teleport": "tent_start", "cut": True, "up": 112},
      {"pose": "lie", "snap": True, "face": "tent_door", "prop": "sleeping_bag"},
      {"sound": snd("Weather/Wind_Calm"), "vol": 0.35, "fadein": 5, "id": "wind"},
      {"sound": snd("Story/Story_Stove_Loop"), "at": "camp_kitchen", "vol": 0.45, "fadein": 3, "id": "stove"},

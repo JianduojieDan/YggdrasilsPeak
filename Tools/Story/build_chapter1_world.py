@@ -660,30 +660,67 @@ ag, an = ground(ax_, ay_, CAMP.z)
 place("aunt_spot", ag, bearing(ag, TS))
 
 
-def tent_dist(a, b):
-    """how far from a the segment a -> b first meets Sangye's tent (cm), or None; anything else in the way is skipped"""
+def tent_first(a, b):
+    """the first point where the segment a -> b meets Sangye's tent (world), or None; anything else in the way is skipped"""
     ign = []
     for _ in range(6):
         h = unreal.SystemLibrary.line_trace_single(W, a, b, unreal.TraceTypeQuery.TRACE_TYPE_QUERY1, True, ign, unreal.DrawDebugTrace.NONE, True)
         t = h.to_tuple() if h else None
         if not t or not t[0] or t[9] is None: return None
-        if t[9] == SANGYE_TENT: return (t[5] - a).length()
+        if t[9] == SANGYE_TENT: return t[5]
         ign.append(t[9])
     return None
+
+
+def tent_dist(a, b):
+    """how far from a the segment a -> b first meets Sangye's tent (cm), or None; anything else in the way is skipped"""
+    p = tent_first(a, b)
+    return None if p is None else (p - a).length()
+
+
+def to_tl(p):
+    """a world point in Sangye's tent frame: (x to the door, y, z over the tent's ground)"""
+    c_, s_ = math.cos(math.radians(SYAW)), math.sin(math.radians(SYAW))
+    dx, dy = p.x - TO.x, p.y - TO.y
+    return dx * c_ + dy * s_, -dx * s_ + dy * c_, p.z - TO.z
+
+
+# (2026-11-20) The Meshy dome has NO door opening: the door is painted on a closed shell. Art/Meshy/prep_report.json lists
+# "openings": [] for tent_dome, and every line from inside to tent_out meets the end wall twice (its inner and outer
+# surface; checked offline on Art/Meshy/tent_dome.glb). So the old check "passes the door gap" could never pass, from any
+# tent_start. The crawl still works in the game because Sangye's tent has no pawn collision (the climber goes through
+# the painted door). What CAN go wrong is where the crawl leaves the tent: it must go out through the painted door (the
+# middle of the door end, low down), not through a side wall, the roof or beside the door. The check below traces the
+# crawl line both ways (inside -> tent_out and tent_out -> inside) and wants both first fabric hits inside the door panel.
+DOOR_X_MIN = 0.44 * HALF_L    # the door end starts where the straight side walls stop (the hexagonal floor, see SANGYE_S)
+DOOR_HALF_W = 25.0 * SS       # the painted door panel: the middle of the door end, about +-45 cm at x1.8 (an estimate:
+DOOR_TOP = 70.0 * SS          # no geometry marks the door - the director's eye confirms), up to about 1.26 m
+def in_door(p):
+    if p is None: return False
+    x, y, z = to_tl(p)
+    return x >= DOOR_X_MIN and abs(y) <= DOOR_HALF_W and FL <= z <= FL + DOOR_TOP
 
 
 OUT_Y = 0.0
 TC.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)   # the real fabric again, for the checks only
 try:
-    # tent_out: 60 cm out of the door on its axis (the crawl ends within 60 cm of it); the crawl line from the pillow must pass
-    # the door gap at the crawling eye (68 cm) and at the body (35 cm), else tent_out slides a little off the axis
-    _clear = None
+    # tent_out: 60 cm out of the door on its axis (the crawl ends within 60 cm of it); the crawl line from tent_start must
+    # leave through the door panel at the crawling eye (68 cm) and at the body (35 cm), else tent_out slides a little off
+    # the axis
+    _clear, _cross = None, []
     for oy in (0, 6, -6, 12, -12, 18, -18, 24, -24, 30, -30):
-        if not any(tent_hit(tl(cx, cy, FL + h), tl(HALF_L + 60, oy, FL + h)) for h in (35.0, 68.0)):
-            _clear = oy; break
+        _cr = []
+        for h in (35.0, 68.0):
+            a_, b_ = tl(cx, cy, FL + h), tl(HALF_L + 60, oy, FL + h)
+            _cr.append((tent_first(a_, b_), tent_first(b_, a_)))
+        if all(in_door(o_) and in_door(i_) for o_, i_ in _cr):
+            _clear, _cross = oy, _cr; break
     OUT_Y = float(_clear) if _clear is not None else 0.0
-    check("crawl line tent_start -> tent_out passes the door gap", _clear is not None and TRACE_OK,
-          f"tent_out {HALF_L + 60:.0f} cm out, {OUT_Y:+.0f} cm off the axis" + ("" if TRACE_OK else " (tent traces failed: unverified)"))
+    _where = ", ".join(f"{h:.0f} cm: x {to_tl(o_)[0]:.0f} y {to_tl(o_)[1]:+.0f}" for h, (o_, _i) in zip((35, 68), _cross))
+    check("crawl line tent_start -> tent_out leaves through the painted door", _clear is not None and TRACE_OK,
+          f"tent_out {HALF_L + 60:.0f} cm out, {OUT_Y:+.0f} cm off the axis; crosses the door end at {_where or 'none of the offsets'}"
+          f" (door panel x >= {DOOR_X_MIN:.0f}, |y| <= {DOOR_HALF_W:.0f}, up to {DOOR_TOP:.0f} cm; the dome has no real opening)"
+          + ("" if TRACE_OK else " (tent traces failed: unverified)"))
     # 8 rays from the sitting eye, 45 deg up all round, must meet the fabric within 1.5 m: the tent closes round you
     _eye = tl(cx, cy, FL + 78)
     _ds = []
@@ -1420,6 +1457,41 @@ if xax.x < 0: xax = xax * -1.0
 pl = spawn(PLANE, sg_ + xax * 250000 + V(0, 0, PLUME_HALF_H), unreal.MathLibrary.make_rot_from_zx(d, xax), (5000, 2000, 1), PLUME, ("plume",), "Story/Ch1/Plume", shadow=False, collide=False)
 _pk = elev(k_eye, PV)
 print(f"plume_view {_pk:+.1f} deg from the kneel; the plume quad spans {elev(k_eye, sg_):+.1f} .. {elev(k_eye, sg_ + V(0, 0, 2 * PLUME_HALF_H)):+.1f} deg")
+
+# (2026-11-20) nothing may block the waking climber at tent_start. The story's cut there is a no-check teleport, so anything
+# that blocks the pawn's capsule at that spot makes the physics push him off it in the first frames. Bot runs 02:40 and
+# 05:13 (Saved/Monitor frames.csv): pushed 1.2-1.7 m toward the tent's -y side within 0.3 s, once out past the side wall,
+# so the duffel (64 cm from tent_start) ended 2.4 m away, beyond its 1.6 m reach, and the beat was skipped. Tested last,
+# when everything is spawned; the capsule is the player pawn's own size (fallback r 42 / half 110 cm: the half height was
+# measured in those runs), its bottom 3 cm over the tent floor (the ground itself does not count here).
+def player_capsule():
+    try:
+        cls = unreal.load_class(None, "/Game/FirstPerson/Blueprints/BP_FirstPersonCharacter.BP_FirstPersonCharacter_C")
+        cap = unreal.get_default_object(cls).capsule_component
+        return float(cap.get_scaled_capsule_radius()), float(cap.get_scaled_capsule_half_height()), "BP_FirstPersonCharacter"
+    except Exception as e:
+        print("  player capsule: fallback size (", e, ")")
+        return 42.0, 110.0, "fallback"
+_cr_, _ch_, _cs_ = player_capsule()
+_blk = []
+try:
+    _comps = unreal.SystemLibrary.capsule_overlap_components(
+        W, TS + V(0, 0, _ch_ + 3.0), _cr_, _ch_,
+        [unreal.ObjectTypeQuery.OBJECT_TYPE_QUERY1, unreal.ObjectTypeQuery.OBJECT_TYPE_QUERY2, unreal.ObjectTypeQuery.OBJECT_TYPE_QUERY4,
+         unreal.ObjectTypeQuery.OBJECT_TYPE_QUERY6], None, []) or []
+    for c_ in _comps:
+        try:
+            if c_.get_collision_response_to_channel(unreal.CollisionChannel.ECC_PAWN) != unreal.CollisionResponseType.ECR_BLOCK: continue
+        except Exception:
+            pass                                   # cannot read the response: list it anyway
+        a_ = c_.get_owner()
+        _blk.append(f"{a_.get_actor_label() if a_ else '?'}/{c_.get_name()} [{' '.join(str(t) for t in a_.tags) if a_ else ''}]")
+    _ov_ok = True
+except Exception as e:
+    print("  tent_start capsule overlap test failed:", e); _ov_ok = False
+check("nothing blocks the waking climber's capsule at tent_start", _ov_ok and not _blk,
+      (f"capsule r {_cr_:.0f} / half {_ch_:.0f} cm ({_cs_}); " + ("clear" if not _blk else "blocked by " + "; ".join(_blk)))
+      if _ov_ok else "overlap test failed: unverified")
 
 for a in EAS.get_all_level_actors():
     if a.get_actor_label() == "WorldTree_Flags" and "worldtree_flags" not in [str(t) for t in a.tags]:
