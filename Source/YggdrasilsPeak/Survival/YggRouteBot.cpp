@@ -141,7 +141,7 @@ void UYggRouteBot::Run(const TArray<FString>& Args)
 	WalkStartT = ArriveT = DeathT = -1.0;
 	Samples.Reset(); Issues.Reset(); Shots.Reset(); Points.Reset(); Events.Reset(); LogLines.Reset(); FrameMs.Reset(); FrameMark = 0;
 	LegStartT.Reset(); LegStartReal.Reset(); Camps.Reset();
-	Teleports = Sidesteps = Probes = Falls = Slides = TopUps = Detours = 0; bBlockNoted = false; DetourUntil = -100.0;
+	Teleports = Sidesteps = Probes = Falls = Slides = TopUps = Detours = SeracWarnings = 0; bBlockNoted = false; DetourUntil = -100.0; SprintUntil = -100.0;
 	RopeOnSec = RopeOffSec = FallSec = MaxLat = MaxFloor = 0.f;
 	bLostNoted = bFloatNoted = bUnderNoted = false; FallFor = LostFor = FloatFor = UnderFor = 0.f;
 	EndWhy.Reset(); DeathCause.Reset(); LastCampSeen.Reset();
@@ -497,7 +497,8 @@ void UYggRouteBot::Walk(APawn* P, float Dt)
 		const float Side = float(FVector::CrossProduct(Ax, FVector(D.X, D.Y, 0.0)).Z);
 		if (Along > -1500.f && Along < 500.f && FMath::Abs(Side) < 800.f)
 		{
-			Target = Cr->GetActorLocation() + Ax * (Along + 300.f);
+			// aim 1.5 m ahead on the axis (3 m let it reach the ladder still 1 m to the side: off the rungs into the slot)
+			Target = Cr->GetActorLocation() + Ax * (Along + 150.f);
 			bNearLadder = true;
 			if (!bOnLadderLine) { bOnLadderLine = true; Note(FString::Printf(TEXT("lining up on %s (%.1f m to the side)"), *Cr->GetActorNameOrLabel(), Side / 100.f)); }
 			break;
@@ -511,7 +512,7 @@ void UYggRouteBot::Walk(APawn* P, float Dt)
 	const double NoProg = GameT - LastProgressT;
 	ACharacter* C = Cast<ACharacter>(P);
 	// a player walks round a stone or a tent: after 3 s held by an object (not the ground), 2.5 s to its freer side
-	if (C && NoProg > 3.0 && NoProg < 8.0 && GameT >= DetourUntil && GameT - DetourUntil > 1.0)
+	if (C && !bNearLadder && NoProg > 3.0 && NoProg < 8.0 && GameT >= DetourUntil && GameT - DetourUntil > 1.0)
 	{
 		UCapsuleComponent* Cap = C->GetCapsuleComponent();
 		const FCollisionShape Sh = FCollisionShape::MakeCapsule(Cap->GetScaledCapsuleRadius(), Cap->GetScaledCapsuleHalfHeight() * 0.8f);
@@ -535,6 +536,9 @@ void UYggRouteBot::Walk(APawn* P, float Dt)
 		}
 	}
 	if (GameT < DetourUntil) { Go = DetourDir; }
+	// the snow ramp up to a ladder can be steeper than the walkable angle at its foot (Crevasse_2_leg2, 46 deg over the
+	// first 25 cm): held there for 2 s, hop up it as a player would, straight along the axis
+	if (C && bNearLadder && NoProg > 2.0 && FMath::Fmod(NoProg, 1.5) < Dt * 1.5) { C->Jump(); ++Sidesteps; }
 	if (NoProg > 8.0)
 	{
 		// stuck: a sidestep (2 s of every 6, alternating sides) and a jump, then a 10 m teleport along the route
@@ -554,7 +558,7 @@ void UYggRouteBot::Walk(APawn* P, float Dt)
 			}
 			else { Note(FString::Printf(TEXT("stuck at %.0f m along: nothing in the way 1.5 m ahead"), S / 100.f)); }
 		}
-		if (FMath::Fmod(Ph, 6.0) < 2.0) { Go = Go.RotateAngleAxis((int32(Ph / 6.0) % 2) == 0 ? 70.f : -70.f, FVector::UpVector); }
+		if (!bNearLadder && FMath::Fmod(Ph, 6.0) < 2.0) { Go = Go.RotateAngleAxis((int32(Ph / 6.0) % 2) == 0 ? 70.f : -70.f, FVector::UpVector); }
 		if (C && FMath::Fmod(Ph, 6.0) < Dt * 1.5) { C->Jump(); ++Sidesteps; }
 		if (NoProg > 30.0)
 		{
@@ -566,10 +570,8 @@ void UYggRouteBot::Walk(APawn* P, float Dt)
 	}
 	MoveDir = Go;
 	P->AddMovementInput(MoveDir, 1.f);
-	if (bFast)
-	{
-		if (USurvivalComponent* Sv = P->FindComponentByClass<USurvivalComponent>()) { Sv->SetSprintRequested(true); }
-	}
+	// sprint: always with "fast"; otherwise for 8 s after a serac zone's "MOVE!" (a player runs when the ice groans)
+	if (USurvivalComponent* Sv = P->FindComponentByClass<USurvivalComponent>()) { Sv->SetSprintRequested(bFast || GameT < SprintUntil); }
 	if (S >= NextPointS)
 	{
 		NextPointS += EveryM * 100.f;
@@ -690,7 +692,8 @@ int32 UYggRouteBot::ScanSimple(float FromS, float ToS, FString& What)
 		FHitResult HS, HC;
 		const bool bS = GetWorld()->LineTraceSingleByChannel(HS, Top, Bot, ECC_Pawn, QS);
 		const bool bC = GetWorld()->LineTraceSingleByChannel(HC, Top, Bot, ECC_Visibility, QC);
-		if (bS && bC && HS.ImpactPoint.Z - HC.ImpactPoint.Z > 100.0)
+		// a crevasse ladder's hull is its walkway over the rungs (the eye sees the slot floor through them): not an issue
+		if (bS && bC && HS.ImpactPoint.Z - HC.ImpactPoint.Z > 100.0 && !Cast<ACrevasseCrossing>(HS.GetActor()))
 		{
 			++N;
 			if (What.Len() < 400)
@@ -756,6 +759,8 @@ void UYggRouteBot::Checkpoint(APawn* P)
 	// the HUD's next camp against the camp this leg leads to
 	X.HudNext = HudNextCamp(P);
 	X.LegTarget = Camps.IsValidIndex(CurLeg + 1) ? Camps[CurLeg + 1].Short : TEXT("?");
+	// inside the leg's end camp already (its checkpoint taken): the HUD rightly names the camp after it
+	if (Ex->GetLastCamp() && Camps.IsValidIndex(CurLeg + 2) && Ex->GetLastCamp()->LandmarkName == Camps[CurLeg + 1].Name) { X.LegTarget = Camps[CurLeg + 2].Short; }
 	X.bHudAgrees = X.HudNext == X.LegTarget;
 	if (!X.bHudAgrees)
 	{
@@ -891,6 +896,7 @@ void UYggRouteBot::DrainLog()
 		int32 Nl;
 		const FString L = Full.FindChar(TEXT('\n'), Nl) ? Full.Left(Nl).TrimEnd() : Full.TrimEnd();
 		if (LogLines.Num() < 600) { LogLines.Add(FString::Printf(TEXT("%s  %s"), *Clock(GameT), *L.Left(260))); }
+		if (L.Contains(TEXT("MOVE!"))) { SprintUntil = GameT + 8.0; Note(TEXT("serac warning: sprinting for 8 s")); ++SeracWarnings; }
 	}
 }
 
@@ -929,8 +935,8 @@ FString UYggRouteBot::BuildReport(bool bFinal) const
 		bFast ? TEXT("sprinting whenever stamina allows") : TEXT("plain walk"), SpeedX, AtM > 0.f ? *FString::Printf(TEXT("; started %.0f m along by a teleport"), AtM) : TEXT(""));
 	R.Appendf(TEXT("- Stuck teleports: **%d**; walk-rounds: %d; sidestep jumps: %d; falls (over 0.75 s and 1 m, or over 1.5 s): %d, short slides: %d (%.1f s falling in all); furthest off the route %.1f m; largest floor gap %.1f cm\n"),
 		Teleports, Detours, Sidesteps, Falls, Slides, FallSec, MaxLat, MaxFloor);
-	R.Appendf(TEXT("- Clipped to a fixed rope %.0f s of %.0f s walking; food / water top-ups: %d; ground probes: %d (Saved/Review/ground_probe.csv, labels A4_*)\n\n"),
-		RopeOnSec, RopeOnSec + RopeOffSec, TopUps, Probes);
+	R.Appendf(TEXT("- Serac warnings (sprinted out): %d; clipped to a fixed rope %.0f s of %.0f s walking; food / water top-ups: %d; ground probes: %d (Saved/Review/ground_probe.csv, labels A4_*)\n\n"),
+		SeracWarnings, RopeOnSec, RopeOnSec + RopeOffSec, TopUps, Probes);
 
 	R.Append(TEXT("## Times\n\n| leg | from | game | real |\n|---|---|---|---|\n"));
 	const double EndT = ArriveT >= 0.0 ? ArriveT : GameT;

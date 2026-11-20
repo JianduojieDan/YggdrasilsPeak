@@ -91,7 +91,8 @@ private:
 	double LastProgressT = 0.0;
 	int32 Teleports = 0, Sidesteps = 0, Probes = 0, Falls = 0, Slides = 0, TopUps = 0;
 	bool bBlockNoted = false, bOnLadderLine = false;
-	int32 Detours = 0;
+	int32 Detours = 0, SeracWarnings = 0;
+	double SprintUntil = -100.0;
 	double DetourUntil = -100.0;
 	FVector DetourDir = FVector::ZeroVector;
 	TArray<TWeakObjectPtr<AActor>> Crossings;
