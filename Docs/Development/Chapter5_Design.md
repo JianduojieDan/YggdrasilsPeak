@@ -78,13 +78,13 @@ Rules from the director that shape it:
 | Wake, tea, the altar (02:30-03:00) | 0-5 | 2 | Nima, the cook, the team |
 | The lower glacier in the dark: crampons, the first clip, ladder 1 | 5-15 | 3 | Nima; headlamps far ahead |
 | Serac zone 1 and the queue at ladder 2 | 15-22 | 4 | Nima, a big team, Marek's group behind |
-| The steep lower Icefall, ladder 3, the own-line choice | 22-31 | 3-4 | Nima |
-| The Football Field at sunrise | 31-35 | 1 | Nima, then the clients arrive |
-| The upper Icefall: Ji-woo, ladder 4, the black wood, the radio, serac zone 2 | 35-51 | 3 | Nima, Ji-woo, Dr. Hale's voice |
-| Ladder 5 (the longest) and the father's photo | 51-54 | 4 → 2 | Nima |
-| **The serac falls behind them: the peak** | 54-56 | 5 | Nima |
-| Ladder 6, the top, the Cwm opens; the ice cave (optional) | 56-63 | 2 | Nima, or alone in the cave |
-| The Cwm, Camp 1, the load: **the end** | 63-72 | 2 → 3 | Nima; the clients far behind |
+| The steep lower Icefall, ladder 3, the own-line choice | 22-33 | 3-4 | Nima |
+| The Football Field at sunrise | 33-37 | 1 | Nima, then the clients arrive |
+| The upper Icefall: Ji-woo, ladder 4, the radio, the black wood, serac zone 2 | 37-52 | 3 | Nima, Ji-woo, Dr. Hale's voice |
+| Ladder 5 (the longest) and the father's photo | 52-55 | 4 → 2 | Nima |
+| **The serac falls behind them: the peak** | 57-58 | 5 | Nima |
+| Ladder 6, the top, the Cwm opens; the ice cave (optional) | 58-64 | 2 | Nima, or alone in the cave |
+| The Cwm, Camp 1, the load: **the end** | 64-74 | 2 → 3 | Nima; the clients far behind |
 
 ### Length
 
@@ -134,13 +134,13 @@ chapter's foundation. Marek's clients climb with the **same body model** as the 
 | 0-5 | sleepy dread, warmth of tea | the alarm in the dark, the stove, Nima's few words |
 | 5-15 | the dark is huge; the light is small | headlamp tunnel, the line of other lights crawling up a black wall |
 | 15-22 | first real fear, and a choice under pressure | the queue in the serac zone, the ice groaning |
-| 22-31 | effort, focus, a temptation | steep ice, breath, the old boot track going straight up |
-| 31-35 | relief and awe | sitting down, butter tea, Pumori turning gold behind |
-| 35-51 | routine becomes skill; people around | Ji-woo's recklessness, the black wood, Dr. Hale's voice |
-| 51-54 | vertigo, then grief | the longest ladder; the father's photo |
-| 54-56 | **terror** | the serac falls behind them; snow on the neck; Nima shouting |
-| 56-63 | silence, wonder, a second temptation | the Cwm opens; the blue light of the cave |
-| 63-72 | tired pride, then unease | the load dropped; the heat; the first headache; Nima's warning |
+| 22-33 | effort, focus, a temptation | steep ice, breath, the old boot track going straight up |
+| 33-37 | relief and awe | sitting down, butter tea, Pumori turning gold behind |
+| 37-52 | routine becomes skill; people around | Ji-woo's recklessness, Dr. Hale's voice, the black wood |
+| 52-55 | vertigo, then grief | the longest ladder; the father's photo |
+| 57-58 | **terror** | the serac falls behind them; snow on the neck; Nima shouting |
+| 58-64 | silence, wonder, a second temptation | the Cwm opens; the blue light of the cave |
+| 64-74 | tired pride, then unease | the load dropped; the heat; the first headache; Nima's warning |
 
 ### 2.3 The questions it leaves open
 
@@ -164,28 +164,28 @@ at the altar. "Along" = metres along the route leg.
 | 0-2 | **Wake** in the Base Camp tent, 02:30 | sits up, crawls out (taught in Ch1) | a watch alarm, frost on the tent wall in the headlamp; *"Day 5 / 49 · Base Camp, 5,274 m"* | cold dread | |
 | 2-4 | **Tea in the kitchen tent** | takes the cup; **choice: go now or wait for light** | the cook's stove roar; Nima eating tsampa; the load waiting | warmth | the start time matters |
 | 4-5 | **The altar**: juniper smoke | walks round it (clockwise, optional) | smoke in the headlamp, prayer-flag lines into the dark, Nima's murmured mantra | stillness | respect; keep holy things on your right |
-| 5-9 | The lower glacier in the dark | walks; **at the crampon point kneels and straps crampons; choice: mitts or liners** | the Icefall a black wall with a line of lights crawling up it | smallness | crampons; gloves cost something either way |
-| 9-10 | **The first clip** | clips at the first anchor (hold a key) | Nima's two carabiners in the headlamp | care | clipping at anchors |
-| 11 | **The ice talks** | keeps walking | a deep groan under the feet | a shiver | the ice is alive |
-| 13-14 | **Ladder 1** (3.0 m) | crosses; Nima holds the far end | the slot in the headlamp, black and blue; crampons on aluminium | vertigo | ladders: look at the next rung |
-| 15 | **Serac zone 1**: red pickets | walks through without stopping | leaning towers above in the beam | pressure | serac zones: don't stop |
-| 17-21 | **The queue at ladder 2** (3.6 m) | **choice: wait inside the danger, step back and lose the place, or cross a snow bridge** | six climbers of a big team, one crossing slowly; ice chips ticking down; Marek's group arrives behind | fear, impatience | time inside a danger is the cost |
+| 5-10 | The lower glacier in the dark | walks; **at the crampon point (min 8) kneels and straps crampons; choice: mitts or liners** | the Icefall a black wall with a line of lights crawling up it | smallness | crampons; gloves cost something either way |
+| 10 | **The first clip** | clips at the first anchor (hold a key) | Nima's two carabiners in the headlamp | care | clipping at anchors |
+| 12 | **The ice talks** | keeps walking | a deep groan under the feet | a shiver | the ice is alive |
+| 14-15 | **Ladder 1** (3.0 m) | crosses; Nima holds the far end | the slot in the headlamp, black and blue; crampons on aluminium | vertigo | ladders: look at the next rung |
+| 16 | **Serac zone 1**: red pickets | walks through without stopping | leaning towers above in the beam | pressure | serac zones: don't stop |
+| 18-21 | **The queue at ladder 2** (3.6 m) | **choice: wait inside the danger, step back and lose the place, or cross a snow bridge** | six climbers of a big team, one crossing slowly; ice chips ticking down; Marek's group arrives behind | fear, impatience | time inside a danger is the cost |
 | 24-25 | **The loose strap** (only if mitts were chosen) | kneels and re-straps, or risks it | a metallic clack, then a scrape in every step | annoyance, then care | small mistakes grow |
 | 27-28 | **Ladder 3** (2.6 m), alone | crosses without Nima holding it; may leave the rope for the old track | an old boot track going straight up the slope | temptation | your own line is possible, and deadly |
-| 31-35 | **The Football Field** at sunrise | sits on the pack; drinks, eats; **choice: give Nima part of the load** | Pumori behind turns gold, then the Nuptse ridge; Ji-woo arrives filming; Elena far below | relief, awe | rest is a resource |
-| 37 | **Ji-woo overtakes** on steep ice | holds the line (or steps aside) | Ji-woo unclips and swings past on the outside; ice chips hit Sangye | anger, worry | why the rule "always one carabiner on" |
-| 38 | **Ladder 4** (3.2 m) | crosses | | competence | |
-| 41-42 | **The black wood** | may touch it ([E]) | a burnt, fibrous trunk standing out of the ice; an old faded khata tied to it | wonder | the mountain has a secret |
-| 42 | **Radio, 07:00** | listens while walking | Dr. Hale: weather, news, *"ladder five is sagging, step light"* | company | |
-| 44-46 | **Serac zone 2**, the halfway checkpoint | walks through | | grim routine | |
-| 47-50 | **Ladder 5** (4.0 m, the longest) | crosses; the ladder sags in the middle | a creak; the heartbeat | real vertigo | |
-| 50-51 | **The father's photo** | turns the photo over (if he read it in Ch1); **answers Nima (or not)** | *"Next time with Sangye. Not before he is ready."* | grief | |
-| 54-55 | **The serac falls** behind them (the peak) | runs, or freezes | a crack, a roar, snow blowing past the neck; Nima: *"Move! Move!"* | terror | |
-| 56 | **Ladder 6** (2.8 m), last | crosses alone; Nima says nothing | the slope eases | pride | |
-| 57 | **The top**: the Western Cwm opens | stops, looks | flat snow between huge walls; the ice noise stops | silence, awe | |
-| 58-61 | **The ice cave** (optional, 50 m off the rope) | leaves the rope across hidden-crevasse ground; **choice at the cache** | blue light inside a serac, an old cache tin | temptation, guilt | off the rope Nima cannot save you |
-| 61-67 | **The Cwm walk** | opens the jacket in the heat | a faint sag line in the snow (a hidden crevasse); the sun on the snow | heat, a dull headache | heat in the Cwm; hidden crevasses |
-| 67-72 | **Camp 1**: drop the load | kneels at the stock pile; walks to the tent | the stock panel grows; Nima at the tent door | tired pride, unease | load carries build the camps |
+| 33-37 | **The Football Field** at sunrise (about 05:50) | sits on the pack; drinks, eats; **choice: give Nima part of the load** | Pumori behind turns gold, then the Nuptse ridge; Ji-woo arrives filming; Elena far below | relief, awe | rest is a resource |
+| 40 | **Ji-woo overtakes** on steep ice | holds the line (or steps aside) | Ji-woo unclips and swings past on the outside; ice chips hit Sangye | anger, worry | why the rule "always one carabiner on" |
+| 43 | **Ladder 4** (3.2 m) | crosses | | competence | |
+| 45 | **Radio, 07:00** | listens while walking | Dr. Hale: weather, news, *"ladder five sags, step light"* | company | |
+| 46-47 | **The black wood** | may touch it ([E]) | a burnt, fibrous trunk standing out of the ice; an old faded khata tied to it | wonder | the mountain has a secret |
+| 49-51 | **Serac zone 2**, the halfway checkpoint | walks through | | grim routine | |
+| 52-53 | **Ladder 5** (4.0 m, the longest) | crosses; the ladder sags in the middle | a creak; the heartbeat | real vertigo | |
+| 53-54 | **The father's photo** | turns the photo over (if he read it in Ch1); **answers Nima (or not)** | *"Next time with Sangye. Not before he is ready."* | grief | |
+| 57-58 | **The serac falls** behind them (the peak, about 08:15) | runs, or freezes | a crack, a roar, snow blowing past the neck; Nima: *"Move! Move!"* | terror | |
+| 60 | **Ladder 6** (2.8 m), last | crosses alone; Nima says nothing | the slope eases | pride | |
+| 60-61 | **The top**: the Western Cwm opens | stops, looks | flat snow between huge walls; the ice noise stops | silence, awe | |
+| 61-64 | **The ice cave** (optional, 50 m off the rope) | leaves the rope across hidden-crevasse ground; **choice at the cache** | blue light inside a serac, an old cache tin | temptation, guilt | off the rope Nima cannot save you |
+| 64-70 | **The Cwm walk** | opens the jacket in the heat | a faint sag line in the snow (a hidden crevasse); the sun on the snow | heat, a dull headache | heat in the Cwm; hidden crevasses |
+| 70-74 | **Camp 1** (about 09:30-10:00): drop the load | kneels at the stock pile; walks to the tent | the stock panel grows; Nima at the tent door | tired pride, unease | load carries build the camps |
 
 ### 3.2 Beat specifications (implementation-ready)
 
@@ -288,7 +288,7 @@ menu: if the player leaves the rope by more than 15 m here, flag `own_line`.
 
 **B12 `football_field`** · when: near `ff_sit` r 800 (Landmark_3, the Icefall camp, about 5,726 m), not `own_line` ·
 prompt *"[E] Sit and rest"* → `pose sit` on the pack (78 cm). Drink and eat (hydration and food up from the thermos and a
-ration; no free refill). Sunrise: the clock is near 05:40 in the default run; Pumori (behind, to the west) turns gold
+ration; no free refill). Sunrise: the clock is near 05:50 in the default run; Pumori (behind, to the west) turns gold
 first, then the Nuptse ridge.
 - If Ch1 flag `tea`: caption *"Your father's thermos. The cook filled it with butter tea."* **[VO] Nima:** *"He always put
   in too much salt."*
@@ -529,13 +529,11 @@ arm-wrap (Chapter 6, going down), the remote medical check (Chapter 6).
 | Checkpoint "Icefall - halfway" | 750,562 · 1,345,236 · 85,258 | 5,876 m | leg 3: 1,135 m | 27.9946 N, 86.8757 E | trail checkpoint [Built] |
 | **Ladder 5**, Crevasse_4_leg3 | 754,739 · 1,359,059 · 90,249 | 5,931 m | leg 3: 1,288 m | 27.9933 N, 86.8761 E | 4.0 m gap, the longest [Built] |
 | **Collapse trigger** `ev_collapse` | 760,657 · 1,384,897 · 96,892 | 5,997 m | leg 3: ~1,560 m | 27.9910 N, 86.8767 E | [To measure]; fall points 25-35 m behind / 40 m ahead on the route; no anchor or ladder within 15 m of a fall point |
-| **Ladder 6**, Crevasse_5_leg3 | 768,739 · 1,401,059 · 100,417 | 6,033 m | leg 3: 1,741 m | 27.8896 N → 27.9896 N, 86.8775 E | 2.8 m gap [Built] |
-| **Top of the Icefall** `cwm_view` | ~771,000 · ~1,406,000 | 6,037 m | leg 3: 1,785 m | 27.9891 N, 86.8778 E | the slope stays below 8° from here |
-| **Ice cave**, IceCave | 779,211 · 1,410,823 · 101,808 | 6,046 m | leg 3: 1,875 m, 50 m left | 27.9884 N, 86.8786 E | cave mesh, blue light, cache props and supplies, a note [Built]; `hc_cave` on the approach [To build] |
-| Sag lesson, HiddenCrevasse_leg3_1 | 782,629 · 1,424,114 · 102,864 | 6,057 m | leg 3: 2,009 m, 21 m left | 27.9872 N, 86.8789 E | hidden crevasse with sag decal [Built] |
+| **Ladder 6**, Crevasse_5_leg3 | 768,739 · 1,401,059 · 100,417 | 6,033 m | leg 3: 1,741 m | 27.9896 N, 86.8775 E | 2.8 m gap [Built] |
+| **Top of the Icefall** `cwm_view` | 770,720 · 1,405,021 · 100,862 | 6,037 m | leg 3: 1,785 m | 27.9892 N, 86.8777 E | the slope stays below 8° from here |
+| **Ice cave**, IceCave | 779,211 · 1,410,823 · 101,808 | 6,046 m | leg 3: 1,875 m, 50 m left | 27.9887 N, 86.8786 E | cave mesh, blue light, cache props and supplies, a note [Built]; `hc_cave` on the approach [To build] |
+| Sag lesson, HiddenCrevasse_leg3_1 | 782,629 · 1,424,114 · 102,864 | 6,057 m | leg 3: 2,009 m, 21 m left | 27.9875 N, 86.8789 E | hidden crevasse with sag decal [Built] |
 | **Camp 1**, Landmark_4 | 795,082 · 1,465,544 · 110,561 | 6,134 m | leg 3: 2,442 m | 27.9837 N, 86.8802 E | 4 tents, 3 O2 bottles + 3 pickups [Built]; stock pile [To build] |
-
-(Ladder 6 latitude is 27.9896 N; the arrow in that row is a typo guard: use 27.9896.)
 
 **The six hidden crevasses of leg 3** [Built, `place_hazards.py`, seed 11]: at 477 m (28 m left), 666 m (29 m left),
 824 m (35 m right), 1,428 m (29 m left), 2,009 m (21 m left), 2,098 m (28 m left). None lies on the own line or between
@@ -568,12 +566,12 @@ tiles, write `Content/Story/Chapter5_places.ygs`, and check the staging rules:
 | Base Camp, the altar | 02:30-03:00 | headlamps, the stove glow through the kitchen tent, stars; juniper smoke lit by the beam | warm small light in a huge blue-black |
 | Lower glacier, ladders 1-2 | 03:00-04:30 | headlamp key light; the line of other lights on the black Icefall wall; snow faintly blue under the stars | the iconic image of the Icefall at night |
 | Ladder 3 | ~05:00 | first grey light; the seracs get shapes | blue ice appears |
-| Football Field | ~05:40 | alpenglow: Pumori behind turns gold first, then the Nuptse ridge; the near ice stays deep blue | "dawn = warm far, blue near" |
+| Football Field | ~05:50 | alpenglow: Pumori behind turns gold first, then the Nuptse ridge; the near ice stays deep blue | "dawn = warm far, blue near" |
 | Upper Icefall | 06:00-08:00 | full morning light high up; the Icefall still in shadow; blue serac ice | crisp silhouettes, rust and cord colours pop |
 | The collapse | ~08:10 | sun reaching the top seracs | the light is the danger |
 | The Cwm, Camp 1 | 08:30-10:00 | blinding sun on snow, deep blue sky, heat shimmer near the ground | "midday: startling detail" |
 
-**[To verify]** our sky's sun direction at 05:40 (the Ultra Dynamic Sky settings) so that Pumori really catches the first
+**[To verify]** our sky's sun direction at 05:50 (the Ultra Dynamic Sky settings) so that Pumori really catches the first
 light, and the moon at 03:00 (a waning moon would make the dark readable on a laptop screen).
 
 ---
