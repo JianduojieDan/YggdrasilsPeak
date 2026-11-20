@@ -44,12 +44,30 @@ Timed log: `Docs/Development/2026-11-19-overnight.md`. For your professor: the s
 - **Robot player:** `powershell -File Tools/Bot/run_bot.ps1 -Fast -YggCamRec`. It plays chapter 1 by itself and
   writes a report. It finished the whole chapter (25 beats) every run tonight.
 
+**Later in the night (after the design page).**
+- **Waking in the tent:** the start spot moved so the door (left) and the duffel (right, below the eye) are both in view.
+- **End of the prologue fall:** the camera now snaps back in a single cut behind closed eyes, so the fast turn is gone.
+- **Flag line from the altar to the mess tent:** it now runs level with the dome top, so it no longer hangs like a
+  vertical column.
+- **Floating on slopes (Development Plan A6):**
+  - On walkable slopes the boots sit 0-7 cm above the snow, and on the route the visible ground matches collision
+    within 1-5 cm.
+  - The real float was sliding on slopes steeper than 46°: the legs stayed in the in-air pose, up to 1.4 m high. The
+    feet are now fitted to the slope.
+  - Testing with BugItGo also made you float, because it is a no-gravity cheat. That case is now recovered.
+  - Off the route, the simplified collision is up to 50 cm off the visible ground (the RAM trade-off from 11-10).
+    That is your call.
+  - Evidence: Saved/Review/floating_A6/.
+- **Robot run:** 24 of 25 beats, no camera spins or rolls. The duffel beat was skipped, which also happened before
+  tonight's changes.
+
 ## Please look at (your eye)
 1. Walk around the camp. Do the camera, the breathing and the steps feel right? Look down at your feet. Turn fast.
 2. The team at the camp: Nima, Marek and Elena up close; Ji-woo and Pema's new clothes.
 3. Your teammates following you on the trail.
 4. The prayer flags and the camp from a distance.
-5. Streaks when turning. Frame generation is now capped at 2x under a 120 fps limit; I could not reproduce the smear
+5. Walk on a steep slope (or slide down one) and look at your feet.
+6. Streaks when turning. Frame generation is now capped at 2x under a 120 fps limit; I could not reproduce the smear
    in engine screenshots, because it lives in generated frames.
 
 ## Still open

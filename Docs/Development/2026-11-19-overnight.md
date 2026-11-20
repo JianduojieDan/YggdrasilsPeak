@@ -21,7 +21,11 @@ commit + push + memory, then shut the PC down. Time every item. Leave all visual
 | 2d | Eye inside the jacket collar when looking down -> eye 16 cm in front of the body (ygg.View.EyeFwd); headlamp 35 lm soft | 22:00 | 22:35 | |
 | 2e | Regression robot run: chapter finished, low-eye incidents gone (2 harmless left) | 22:35 | 23:20 | |
 | 7a | Commits 520a4c3 (local) / 5957c6e (GitHub); rule: every commit pushed to GitHub | 23:25 | 23:30 | |
-| 5b | Camp beauty pass (walled field, altar + juniper smoke, kitchen smoke, gear life) | 23:31 | | agent running |
+| 5b | Camp beauty pass: walled field, lhapso altar, trail chorten, gear life, lanes (no smoke effect in project) | 23:31 | done | 4b2c4aa |
+| 7b | Chapter 1 v2 design page published (artifact), morning report | | done | 41504ab / 2ffb4ed |
+| 1b | tent_start re-aimed (door -30 deg, duffel +23 / -27 deg, 64 cm); fall end = one cut behind shut lids; mess flag line level | 22:05 UTC | | d0dbde3 / bc1a7d3, one agent with A6 |
+| A6 | Floating on slopes: boots fitted while sliding >46 deg (was 58-138 cm up), stuck-in-tiles push-out, ygg.GroundProbe tools; route collision vs visible within 1-5 cm | | 23:55 UTC | 03db3ee / 7564f57 (1h57 incl. 1b) |
+| 2f | Robot run: 24/25 beats (duffel skip is older), 3 hitches, no spin/roll | 23:45 | 23:58 UTC | |
 | 1 | Resume the camera implementation workflow (wf_b07cd78d-946) | | | |
 | 2 | Rebuild chapter 1 world + story, functional run (CamTest, Auto) | | | |
 | 3 | #4 shadow smear under the flag cords | | | |
