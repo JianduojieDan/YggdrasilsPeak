@@ -4,6 +4,7 @@
 #include "Survival/YggMenuWidget.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "Misc/Paths.h"
 
 #include "Survival/InventoryComponent.h"
 #include "Survival/ClimbingComponent.h"
@@ -289,7 +290,71 @@ void UExpeditionComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 		RopeCheckTimer = 0.2f;
 		UpdateRope();
 	}
+	if (bSummitBeat)
+	{
+		TickSummitBeat();
+	}
 	UpdateScreenEffect(DeltaTime);
+}
+
+// ---- The summit beat (Development_Plan A5): Content/Story/Summit.ygs played by the story machine. Its camera is the view
+// rig's, through the story's own requests (a Move lease while it holds, an attention zoom, one budgeted nudge towards the
+// World Tree): nothing here touches the view. The chapter sets the flag "summit_done" at its end; the summit screen follows.
+
+static const TCHAR* const SummitChapter = TEXT("Summit");
+
+bool UExpeditionComponent::StartSummitBeat()
+{
+	UWorld* World = GetWorld();
+	UYggStorySubsystem* Story = World ? World->GetSubsystem<UYggStorySubsystem>() : nullptr;
+	if (!Story || Story->IsRunning() || (Survival.IsValid() && Survival->IsDead()))
+	{
+		return false;
+	}
+	if (!FPaths::FileExists(FPaths::ProjectContentDir() / TEXT("Story") / (FString(SummitChapter) + TEXT(".ygs"))) || !Story->Start(SummitChapter))
+	{
+		return false;
+	}
+	bSummitBeat = true;
+	SummitBeatStart = World->GetTimeSeconds();
+	UE_LOG(LogSurvival, Log, TEXT("Expedition: summit beat started (%s.ygs)"), SummitChapter);
+	return true;
+}
+
+void UExpeditionComponent::TickSummitBeat()
+{
+	UWorld* World = GetWorld();
+	UYggStorySubsystem* Story = World ? World->GetSubsystem<UYggStorySubsystem>() : nullptr;
+	const bool bDead = Survival.IsValid() && Survival->IsDead();
+	const bool bDone = !Story || !Story->IsRunning() || Story->HasFlag(TEXT("summit_done"));
+	// a beat is a few seconds: 20 s means it hangs (a refused action, a missing place); the screen comes anyway
+	const bool bTimeout = World && World->GetTimeSeconds() - SummitBeatStart > 20.0;
+	if (!bDone && !bTimeout && !bDead)
+	{
+		return;
+	}
+	bSummitBeat = false;
+	if (Story && Story->IsRunning())
+	{
+		Story->Stop();   // only this chapter can be running: the beat starts only when none is
+	}
+	UE_LOG(LogSurvival, Log, TEXT("Expedition: summit beat %s after %.1f s"), bDead ? TEXT("cut short by death") : bTimeout ? TEXT("timed out") : TEXT("done"),
+		World ? World->GetTimeSeconds() - SummitBeatStart : 0.0);
+	if (!bDead)
+	{
+		FinishSummitBeat();
+	}
+}
+
+void UExpeditionComponent::FinishSummitBeat()
+{
+	Say(FText::Format(NSLOCTEXT("Expedition", "Summit", "SUMMIT - {0}. Now get back down alive."), FText::FromString(SummitName)), 10.f);
+	// the summit camp by the World Tree is the end of the climb: the summit screen (2026-11-11)
+	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
+	{
+		const int32 Seconds = FMath::RoundToInt(SavedPlaySeconds + GetWorld()->GetTimeSeconds() - StartTime);
+		UYggMenuWidget::ShowSummit(Cast<APlayerController>(Pawn->GetController()), Seconds, Deaths);
+	}
 }
 
 void UExpeditionComponent::UpdateRope()
@@ -368,12 +433,12 @@ void UExpeditionComponent::UpdateCamps()
 		bSummitReached = true;
 		LastCamp = Inside;
 		SaveCheckpoint(Inside, Inside->LandmarkName);
-		Say(FText::Format(NSLOCTEXT("Expedition", "Summit", "SUMMIT - {0}. Now get back down alive."), FText::FromString(Inside->LandmarkName)), 10.f);
-		// the summit camp by the World Tree is the end of the climb: the summit screen (2026-11-11)
-		if (const APawn* Pawn = Cast<APawn>(GetOwner()))
+		SummitName = Inside->LandmarkName;
+		// the summit beat first (A5, 2026-11-20): a few seconds standing still under the tree with one line, then the
+		// summit screen; straight to the screen when it cannot play (another chapter runs, no Summit.ygs)
+		if (!StartSummitBeat())
 		{
-			const int32 Seconds = FMath::RoundToInt(SavedPlaySeconds + GetWorld()->GetTimeSeconds() - StartTime);
-			UYggMenuWidget::ShowSummit(Cast<APlayerController>(Pawn->GetController()), Seconds, Deaths);
+			FinishSummitBeat();
 		}
 		return;
 	}

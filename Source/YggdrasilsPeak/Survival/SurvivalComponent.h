@@ -82,6 +82,8 @@ public:
 
 	/** Seconds of bottled oxygen left in the bottle being breathed (0 = not on a bottle). */
 	float GetBottleSecondsLeft() const { return OxygenBottleRemaining; }
+	/** Takes the running bottle off (the robot player's no-oxygen summit run, ygg.Bot.Summit noo2). */
+	void ClearOxygenBottle() { OxygenBottleRemaining = 0.f; }
 
 	/** Physiology model on (config, overridden by ygg.Physio 0/1). */
 	bool UsesPhysiology() const;

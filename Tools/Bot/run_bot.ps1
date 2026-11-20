@@ -8,8 +8,11 @@
 # (-YggMonitor; -NoMonitor turns it off) and the camera flight recorder on (-YggCamRec: -YggNoSave would switch it off;
 # its incidents are counted in the report; -NoCamRec leaves it off).
 # One heavy process: close the editor first. The run takes up to ygg.Bot.CapMin (75) minutes of game time plus the start.
+# -Chapter summit: the death-zone run instead (ygg.Bot.Summit, YggSummitBot.*): camp jump to the South Col, route leg 7 to the
+#   summit, the summit beat, then down; -SummitArgs passes its options, e.g. "noo2 stay 15" or "down 300 cap 60".
+#   -> Saved/Bot/summit_<time>_<o2|noo2>[_fast]/report.md, samples.csv; pictures Saved/Review/A5/.
 param([string]$Chapter = "chapter1", [switch]$Fast, [int]$TimeoutMin = 95, [string]$Extra = "", [int]$ResX = 1280, [int]$ResY = 720,
-      [double]$Delay = 3, [switch]$UseSave, [switch]$NoMonitor, [switch]$NoCamRec, [switch]$Sound)
+      [double]$Delay = 3, [switch]$UseSave, [switch]$NoMonitor, [switch]$NoCamRec, [switch]$Sound, [string]$SummitArgs = "")
 $proj = "F:\UE_project\YggdrasilsPeak"
 $exe = "E:\UE5.8\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe"
 $inv = [Globalization.CultureInfo]::InvariantCulture
@@ -23,7 +26,7 @@ foreach ($r in $roots) { Get-ChildItem $r -Directory -ErrorAction SilentlyContin
 $sav = "$proj\Saved\SaveGames\Expedition.sav"; $savBak = "$env:TEMP\ygg_expedition_keep_bot.sav"
 if (Test-Path $sav) { Copy-Item $sav $savBak -Force }
 
-$run = "ygg.Bot.Run $Chapter"
+$run = if ($Chapter -eq "summit") { "ygg.Bot.Summit $SummitArgs".Trim() } else { "ygg.Bot.Run $Chapter" }
 if ($Fast) { $run = "$run fast" }
 $cmds = @()
 if ($Extra) { $cmds += @($Extra -split ',\s*' | Where-Object { $_ }) }

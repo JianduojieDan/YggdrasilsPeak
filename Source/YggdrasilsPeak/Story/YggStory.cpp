@@ -1375,6 +1375,7 @@ bool UYggStorySubsystem::LoadChapter(const FString& Chapter)
 		return false;
 	}
 	LoadPlaces(Root);
+	bPreloadCast = JBool(Root, TEXT("preload_cast"), true);
 	Beats.Reset();
 	const TArray<TSharedPtr<FJsonValue>>* B;
 	if (Root->TryGetArrayField(TEXT("beats"), B))
@@ -1415,7 +1416,7 @@ bool UYggStorySubsystem::Start(const FString& Chapter)
 	if (UYggViewRigComponent* R = Rig()) { R->ResetChapterBudget(); }
 	// every look of the cast loads in the background now, so a person's first appearance finds it in memory (DressAs
 	// froze the game 2.7 s at the team's spawn, spec 6.16)
-	Preload({ TEXT("cast") });
+	if (bPreloadCast) { Preload({ TEXT("cast") }); }
 	// a grab never swaps to the climbing arm while the chapter plays (ClimbingComponent's switch, when it has one)
 	if (IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(TEXT("ygg.Climb.Camera")))
 	{

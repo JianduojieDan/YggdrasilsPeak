@@ -239,4 +239,15 @@ private:
 	float SavedPlaySeconds = 0.f;
 	bool bSummitReached = false;
 	bool bFinished = false;
+
+	// The summit beat (Development_Plan A5): Content/Story/Summit.ygs, then the summit screen.
+	/** Starts the beat; false when it cannot play (a chapter runs, no file, dead): the caller shows the screen at once. */
+	bool StartSummitBeat();
+	/** While the beat plays: its end (flag summit_done, or the chapter stopped), a 20 s timeout, or death. */
+	void TickSummitBeat();
+	/** The summit message and the summit screen. */
+	void FinishSummitBeat();
+	bool bSummitBeat = false;
+	double SummitBeatStart = 0.0;
+	FString SummitName;
 };

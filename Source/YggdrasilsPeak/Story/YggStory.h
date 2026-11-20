@@ -346,6 +346,8 @@ private:
 	/** ygg.Climb.Camera while the chapter plays (0: a grab never swaps to the climbing arm); restored at Stop. */
 	FString ClimbCameraBefore;
 	bool bClimbCameraSet = false;
+	/** The chapter file's "preload_cast" (default true): false = Start does not load the whole cast (the summit beat has no people). */
+	bool bPreloadCast = true;
 
 	// tools
 	TArray<FCamStep> CamSteps;

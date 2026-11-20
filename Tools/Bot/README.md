@@ -81,3 +81,27 @@ result line.
 | `ygg.Bot.HardReset` | 1 | a bot teleport calls the rig's `HardReset` |
 | `ygg.Bot.Quit` | 1 | quit when the run ends |
 | `ygg.Bot.Seed` | 0 | camera stress seed (0 = clock; the report names it) |
+
+## The death-zone run (A5: South Col -> Summit)
+
+```
+powershell -File Tools/Bot/run_bot.ps1 -Chapter summit -ResX 1920 -ResY 1080 -TimeoutMin 50 -SummitArgs "down 300"   # bottled oxygen, walk
+powershell -File Tools/Bot/run_bot.ps1 -Chapter summit -Fast                                                         # sprints when stamina allows
+powershell -File Tools/Bot/run_bot.ps1 -Chapter summit -SummitArgs "noo2 stay 15"                                     # no oxygen, then stand at the top
+```
+
+`ygg.Bot.Summit [fast] [noo2] [stay <min>] [down <m>] [cap <min>]` (`UYggSummitBot`, `Source/YggdrasilsPeak/Survival/YggSummitBot.*`):
+camp jump to the South Col (`UExpeditionComponent::TeleportToCamp`, as `ygg.Expedition.Go`), then route.json leg 7 by pure
+pursuit 7 m ahead (the fixed rope lies on that line). Oxygen: a full bottle on at the start plus one spare, or with `noo2`
+none at all (taken away again if the camp's pickups hand some over). At the summit it waits for the summit beat
+(`Content/Story/Summit.ygs`) and the summit screen, closes the screen ("Stay at the summit"), looks at the World Tree, then
+stands (`stay`) or walks back down `down` metres (300). Every 0.25 s: off the route (> 8 m for 3 s = lost), clipped to the
+rope or not (off-rope stretches by metres along the leg), falling / sliding over 0.75 s, the floor gap, under the ground
+(a trace from 30 m above hits over the capsule bottom), stuck (sidestep + jump after 8 s, a 10 m teleport after 30 s).
+`ygg.GroundProbe A5_up_<m>` every 100 m (visible surface vs collision, `Saved/Review/ground_probe.csv`). The body: SpO2,
+heart rate, health, stamina, core, bottle, the body effects on the view and the death-zone message (from the log).
+
+Writes `Saved/Bot/summit_<time>_<o2|noo2>[_fast]/report.md` (times, rope, ground, body by 100 m bands, the summit beat,
+issues, frames, pictures), `samples.csv` (one row per second) and pictures `Saved/Review/A5/<run>_<stage>.png`
+(1 South Col, 2 death zone, 3 climb 8300 / 8600, 4 summit beat, 5 summit screen, 6 World Tree / up / view down, 7-8 descent,
+death). `ygg.Bot.Summit.Stop` ends it with a report, `ygg.Bot.Summit.Quit 0` keeps the game open afterwards.
