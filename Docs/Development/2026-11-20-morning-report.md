@@ -61,13 +61,30 @@ Timed log: `Docs/Development/2026-11-19-overnight.md`. For your professor: the s
 - **Robot run:** 24 of 25 beats, no camera spins or rolls. The duffel beat was skipped, which also happened before
   tonight's changes.
 
+**Development Plan A5, South Col -> Summit demo (done; your test play is still open).**
+- **Summit robot:** it climbs the route from the South Col by itself. Run it with
+  `Tools/Bot/run_bot.ps1 -Chapter summit -SummitArgs "fast"`.
+- **Summit moment:** an 8-second hold, a gentle turn toward the World Tree, and one subtitle: "Nothing above you now
+  but the tree, and the sky." The wording is a placeholder for you to judge.
+- **With bottled oxygen:** the summit takes 20:39 walking and 18:46 sprinting. The target is 20 minutes, so it is met
+  only when sprinting. You decide if that is fine.
+- **Without oxygen:** the climber collapses from lack of oxygen at 8,552 m after 21 minutes, before the top.
+- **Fixed:**
+  - Two World Tree root pieces near the summit had an invisible collision shape up to 11 m tall that blocked the route.
+    They got a proper collision shape and were moved 7-12 m off the route.
+  - The summit now only counts if you are on the surface, not inside the mountain under it.
+- **Pictures:** Saved/Review/A5/. The summit picture shows a bright green chequered tent at the summit camp, which
+  looks like a missing material (being checked). Your body is at about 33 °C there, so the frost and colour fringe are
+  strong.
+
 ## Please look at (your eye)
 1. Walk around the camp. Do the camera, the breathing and the steps feel right? Look down at your feet. Turn fast.
 2. The team at the camp: Nima, Marek and Elena up close; Ji-woo and Pema's new clothes.
 3. Your teammates following you on the trail.
 4. The prayer flags and the camp from a distance.
 5. Walk on a steep slope (or slide down one) and look at your feet.
-6. Streaks when turning. Frame generation is now capped at 2x under a 120 fps limit; I could not reproduce the smear
+6. The summit demo: `ygg.Expedition.Go` to the South Col, climb with oxygen (about 20 min).
+7. Streaks when turning. Frame generation is now capped at 2x under a 120 fps limit; I could not reproduce the smear
    in engine screenshots, because it lives in generated frames.
 
 ## Still open

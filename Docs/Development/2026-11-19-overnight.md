@@ -26,6 +26,7 @@ commit + push + memory, then shut the PC down. Time every item. Leave all visual
 | 1b | tent_start re-aimed (door -30 deg, duffel +23 / -27 deg, 64 cm); fall end = one cut behind shut lids; mess flag line level | 22:05 UTC | | d0dbde3 / bc1a7d3, one agent with A6 |
 | A6 | Floating on slopes: boots fitted while sliding >46 deg (was 58-138 cm up), stuck-in-tiles push-out, ygg.GroundProbe tools; route collision vs visible within 1-5 cm | | 23:55 UTC | 03db3ee / 7564f57 (1h57 incl. 1b) |
 | 2f | Robot run: 24/25 beats (duffel skip is older), 3 hitches, no spin/roll | 23:45 | 23:58 UTC | |
+| A5 | South Col -> Summit: summit robot (ygg.Bot.Summit), summit beat (8 s hold + subtitle via view rig), root blocker = convex hull blob (re-hulled + moved), summit camp needs <=30 m vertical; o2 20:39 walk / 18:46 sprint, no o2 = hypoxia death 21:09 at 8,552 m | 00:10 UTC | 03:25 UTC | d5dec7f+8088058 / e4284f2+201a9e4 (3 agents) |
 | 1 | Resume the camera implementation workflow (wf_b07cd78d-946) | | | |
 | 2 | Rebuild chapter 1 world + story, functional run (CamTest, Auto) | | | |
 | 3 | #4 shadow smear under the flag cords | | | |
