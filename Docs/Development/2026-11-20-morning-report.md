@@ -93,3 +93,53 @@ Timed log: `Docs/Development/2026-11-19-overnight.md`. For your professor: the s
   credits: 7 left, about 41 per character.
 - A few staging asserts in the world builder are still unmet: the tent view angles and the porter entrance.
 - AI-made Tibetan script on the prayer flags needs a cultural check before release.
+
+## After you woke up (Ultracode hour, about 05:00-05:50 UTC)
+
+About 30 agents ran in parallel while the A4 agent used the editor. Everything below is committed and pushed.
+
+**New documents (Docs/Development/):**
+- Chapter designs: Chapter2 ... Chapter7_Design.md.
+- Specs: B3_Climbing_Spec.md, B4_Camps_Rest_Spec.md, B5_Sound_Plan.md (lists only; you pick by ear),
+  B7_Visual_Review.md (top 10 visual fixes), Physiology_Game_Integration_Spec.md.
+- Voice_Recording_Script_Ch1.md: every line, how to say it, file names, a home recording guide.
+- Cultural_Check.md: the AI Tibetan script on the flags is a risk; replace it with a verified mantra.
+- Design_Study_Steep_PEAK.md: the study your supervisor asked for.
+- Meshy_Master_List.md: every new asset, with credits, and what 1,000 credits buys.
+- Systems_Backlog.md: the systems still missing, in build order.
+- Review_2026-11-20.md: 22 real bugs from tonight's code, each checked by a second agent. Not fixed yet.
+
+**Data and tools:**
+- Chapter 2 story data: 54 beats, and its checks pass. The chapter 2 world builder is untested because it needs the
+  editor.
+- Poly Haven assets: 510 MB of free textures, rocks, crates, a ladder and HDRIs in Downloads/polyhaven, listed in
+  CATALOG.md.
+
+**Chapter 1:**
+- **Duffel beat:** the robot is not the cause. After the cut into the tent, physics pushes the 1.9 m body sideways out
+  of the tent, so the duffel is out of reach. A fix is written as `Docs/Development/patches/chapter1_tent_wake_pin.patch`
+  but not applied.
+- **Crawl check:** fixed. The tent has no real door hole, only a painted door, so the check now tests that.
+
+**A4 (Dingboche -> Camp 1, partly done):**
+- New walker `ygg.Bot.Route`.
+- Icefall path cleared: 347 ice pieces moved, and the invisible collision shells replaced.
+- The HUD now names the correct next camp.
+- The green summit tents are fixed.
+- Still open: a clean full walk, the FPS number at the worst spot, and the contact sheet.
+- For your call:
+  - 10 tile seams with a 1-1.7 m step in their collision (fixing them needs a terrain rebuild)
+  - the serac zones kill a walker who doesn't sprint
+  - the whole route takes about 3 hours to walk, against a 15-25 minute target
+
+**Decisions for you:**
+1. Which chapter list is real: the old 17-chapter Chapter_Design_v1 or the newer 12-chapter Chomolungma list?
+   Tonight's chapter designs use the v1 numbering.
+2. Meshy credits: each chapter needs about 250-450 for its must-have assets. See Meshy_Master_List.md.
+3. Usage lesson: Fable has its own weekly bar, but it also takes about 5x Opus from the 5-hour bar.
+
+**First things next session:**
+1. Fix review bug #1: since tonight's slope fix, walking can keep the swinging boot pinned to the ground.
+2. Fix the other review bugs, including "story assets not cooked in a packaged build".
+3. Apply the duffel patch and rebuild.
+4. Finish A4.
