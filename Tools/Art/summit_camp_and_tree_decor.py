@@ -67,7 +67,12 @@ def prop(label, mesh, x, y, yaw, s, dz=0.0, pitch=0.0):
     return a
 for i, (dx, dy) in enumerate(((-900, 600), (-500, -900), (700, 900))):
     rx = cx + dx * math.cos(ca) - dy * math.sin(ca); ry = cy + dx * math.sin(ca) + dy * math.cos(ca)
-    prop(f"Tent{i}", TENT, rx, ry, face + rng.uniform(-25, 25), 2.0, -8)
+    t = prop(f"Tent{i}", TENT, rx, ry, face + rng.uniform(-25, 25), 2.0, -8)
+    # the camps' muted fabric (Tools/Materials/make_camp_canvas.py), as place_camps.py does: the Fab tent's own
+    # material is a bright green ripstop that read as a checkerboard at the summit (2026-11-20)
+    fab = unreal.load_asset("/Game/Environment/Camps/MI_Camp" + ("Rust" if i == 1 else "Ochre"))
+    for slot in range(t.static_mesh_component.get_num_materials()):
+        t.static_mesh_component.set_material(slot, fab)
 for i in range(4):
     prop(f"O2_{i}", O2, cx + 200 + i * 45, cy + 120 + rng.uniform(-30, 30), rng.uniform(0, 360), 1.3, 10, rng.choice((0, 80)))
 prop("IceAxe", AXE, cx - 150, cy + 220, rng.uniform(0, 360), 1.5, 30, 70)

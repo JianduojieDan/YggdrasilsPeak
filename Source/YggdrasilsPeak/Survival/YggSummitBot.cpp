@@ -883,9 +883,9 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 	if (DeathT >= 0.0) { R.Appendf(TEXT("| death after the climb started | **%s** (%.0f m a.s.l.: %s) | |\n"), *Clock(DeathT - UpStartT), DeathElev, *DeathCause); }
 	if (UpStartT >= 0.0 && SummitT >= 0.0 && SummitT > UpStartT)
 	{
-		const float Sec = float(SummitT - UpStartT);
-		R.Appendf(TEXT("\nAverage along the route %.2f m/s; %.0f m of height in %.1f min.\n"), RouteLen / 100.f / Sec,
-			Samples.Num() ? 0.f : 0.f, Sec / 60.f);
+		const float ClimbSec = float(SummitT - UpStartT);
+		R.Appendf(TEXT("\nAverage along the route %.2f m/s; %.0f m of height in %.1f min.\n"), RouteLen / 100.f / ClimbSec,
+			Samples.Num() ? 0.f : 0.f, ClimbSec / 60.f);
 	}
 
 	R.Append(TEXT("\n## Route, rope, ground\n\n"));

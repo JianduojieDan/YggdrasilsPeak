@@ -463,6 +463,8 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 	{
 		Paint.CampsAge = 0.f;
 		Paint.Camps.Reset();
+		Paint.LastCampIdx = -1;
+		FString LastName;
 		const APawn* Me = GetOwningPlayerPawn();
 		if (const UExpeditionComponent* Exp = Me ? Me->FindComponentByClass<UExpeditionComponent>() : nullptr)
 		{
@@ -472,9 +474,11 @@ void USurvivalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 				FString Name = C->LandmarkName;
 				Name.Split(TEXT(" - "), &Name, nullptr); Name.Split(TEXT(" ("), &Name, nullptr);           // "South Col - Camp 4" -> "South Col"
 				Name.ReplaceInline(TEXT("Everest "), TEXT(""));
+				if (C.Get() == Exp->GetLastCamp()) { LastName = Name; }
 				Paint.Camps.Add({ Name, Snapshot.ElevationMeters + float(C->GetActorLocation().Z - Me->GetActorLocation().Z) / 100.f });
 			}
 			Paint.Camps.Sort([](const FPaintState::FCampMark& A, const FPaintState::FCampMark& B) { return A.Elev < B.Elev; });
+			if (!LastName.IsEmpty()) { Paint.LastCampIdx = Paint.Camps.IndexOfByPredicate([&LastName](const FPaintState::FCampMark& M) { return M.Name == LastName; }); }
 		}
 	}
 	// Quiet HUD: the watch comes up only while something vital needs the climber (a warning, thin air, a bottle running)
@@ -979,7 +983,11 @@ int32 USurvivalHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry& G
 			const float AX = X0 - 4.f * S + W.Width(Alt, AltF);
 			W.TextSOnBase(YggSettings::AltitudeUnit(), AX + 7.f * S, LY - 22.f * S, UnitBig, WithA(White, Soft), 0.5f);
 			// ---- the next camp, its own column beside the altitude
-			const FPaintState::FCampMark* Next = Paint.Camps.FindByPredicate([&](const FPaintState::FCampMark& C) { return C.Elev > Snap.ElevationMeters + 15.f; });
+			// the camp after the last one reached (A4, 2026-11-20: by height alone it named Base Camp 90 m before Gorak Shep, which
+			// lies 10 m above the trail there); before any camp, the first camp above the climber
+			const FPaintState::FCampMark* Next = Paint.Camps.IsValidIndex(Paint.LastCampIdx)
+				? (Paint.Camps.IsValidIndex(Paint.LastCampIdx + 1) ? &Paint.Camps[Paint.LastCampIdx + 1] : nullptr)
+				: Paint.Camps.FindByPredicate([&](const FPaintState::FCampMark& C) { return C.Elev > Snap.ElevationMeters + 15.f; });
 			const float DX = AX + 7.f * S + W.Width(YggSettings::AltitudeUnit(), UnitBig) + 30.f * S;
 			W.Line({ FVector2f(DX, LY - 110.f * S), FVector2f(DX, LY - 24.f * S) }, WithA(White, 0.3f), 1.f);
 			const float NC = DX + 26.f * S;

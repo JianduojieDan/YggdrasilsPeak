@@ -112,3 +112,27 @@ Gotcha (2026-11-20): the climber stuck at 2,140 m and 2,160-2,172 m was the Worl
 (an invisible blob over the arch, 0-11 m over the snow; the teleport landed on top of it). Traces with complex collision
 (`clear_route_corridor.py`, any editor trace with trace_complex=True) do not see it; check with simple collision. Fixed by a
 convex decomposition (15 and 24 hulls) on SM_wjvpcilfa_tier_0 and xiciaat_tier_1.
+
+## The route walk (A4: Dingboche -> Base Camp -> Icefall -> Camp 1)
+
+```
+powershell -File Tools/Bot/run_bot.ps1 -Chapter route -RouteArgs "speed 4" -Extra "ygg.Realm.Force none" -TimeoutMin 100   # legs 0..3
+powershell -File Tools/Bot/run_bot.ps1 -Chapter route -RouteArgs "from 3 to 3 speed 4"                                     # the Icefall -> Camp 1 only
+python -I Tools/Bot/route_sheet.py latest                                                     # contact sheet -> Saved/Review/A4/route1_sheet.jpg
+```
+
+`ygg.Bot.Route [from <leg>] [to <leg>] [fast] [speed <x>] [at <m>] [cap <min>] [every <m>] [time <hhmm>|-1] [noshots]`
+(`UYggRouteBot`, `Source/YggdrasilsPeak/Survival/YggRouteBot.*`): camp jump to camp `from` (camp index = leg index: 0 Dingboche,
+1 Gorak Shep, 2 Base Camp, 3 Khumbu Icefall, 4 Camp 1), then walks route.json legs from..to joined, pure pursuit 7 m ahead.
+`speed 4` = the world's time dilation x4 (the `slomo` console command is a cheat and does nothing in `-game`); every time in
+the report is game time, i.e. what a player takes. `at <m>` starts that far along by a teleport (testing a stretch).
+Every 200 m (`every`): the ground under the boots by a simple (Pawn) and a complex (Visibility) trace, `ygg.GroundProbe A4_*`,
+a picture `Saved/Review/A4/<run>_<m>m.png` (with the HUD), the guidance (rope within 4 m of the route, landmarks / flags,
+clues, trail checkpoints in the next 100 m; the HUD's next camp, by the HUD's own rule, against the camp the leg leads to),
+and the next 200 m scanned every 5 m for simple collision standing over the visible surface (the A5 lesson: an invisible
+convex hull). Every 0.25 s: falls (over 0.75 s and 1 m down, or over 1.5 s; shorter ones are counted as slides), the floor
+gap, under the ground, off the route > 8 m. Stuck: after 8 s the capsule sweep names the blocker with its collision kind
+(complex as simple / simple + complex, convex count), sidestep + jump, after 30 s a 10 m teleport traced from 150 m above.
+A death ends the run. Food and water are topped up (a player eats on a walk of hours). The time of day is held at 11:00.
+Writes `Saved/Bot/route_<time>_L<a>-<b>/report.md` (times per leg, issues with BugItGo places, frames and the slowest
+200 m, the checkpoint table), `samples.csv` (one row per second), `points.csv` (one row per checkpoint).

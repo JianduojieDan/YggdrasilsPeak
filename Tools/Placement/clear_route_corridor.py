@@ -17,6 +17,11 @@ HEAD_M = globals().get('HEAD_M', 2.5)
 PREFIXES = globals().get('PREFIXES', ('WorldTree_Roots',))
 APPLY = globals().pop('APPLY', False)
 MAX_SHIFT_M = globals().get('MAX_SHIFT_M', 25.0)
+# 2026-11-20 (A4): COMPLEX = False traces the simple collision (what the climber's capsule meets): an ice block's single
+# convex hull stands wider than its triangles, so a complex-clear corridor can still be blocked.
+COMPLEX = globals().get('COMPLEX', True)
+# FOLLOW_GROUND = True: a slid instance keeps its height over the tile's snow (on a cross-slope it would float or sink).
+FOLLOW_GROUND = globals().get('FOLLOW_GROUND', False)
 OUT = 'F:/UE_project/YggdrasilsPeak/Saved/Placement'
 
 w = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
@@ -63,7 +68,7 @@ print('corridor samples', len(samples))
 def blockers():
     found = {}
     for (sm, px, py, z, n) in samples:
-        hits = unreal.SystemLibrary.line_trace_multi_for_objects(w, unreal.Vector(px, py, z + HEAD_M * 100), unreal.Vector(px, py, z + 5), OT, True, [], unreal.DrawDebugTrace.NONE, True) or []
+        hits = unreal.SystemLibrary.line_trace_multi_for_objects(w, unreal.Vector(px, py, z + HEAD_M * 100), unreal.Vector(px, py, z + 5), OT, COMPLEX, [], unreal.DrawDebugTrace.NONE, True) or []
         for h in hits:
             tt = h.to_tuple()
             c = tt[10]
@@ -91,8 +96,11 @@ if APPLY and found:
         n = (-d[1], d[0])
         side = 1 if (old.x - x) * n[0] + (old.y - y) * n[1] >= 0 else -1   # away from the route
         moved = False
+        g0 = snow(old.x, old.y) if FOLLOW_GROUND else None
         for step in range(1, int(MAX_SHIFT_M) + 1):
-            tr.translation = unreal.Vector(old.x + n[0] * side * step * 100, old.y + n[1] * side * step * 100, old.z)
+            nx, ny = old.x + n[0] * side * step * 100, old.y + n[1] * side * step * 100
+            g1 = snow(nx, ny) if g0 is not None else None
+            tr.translation = unreal.Vector(nx, ny, old.z + (g1 - g0 if g1 is not None else 0.0))
             c.update_instance_transform(i, tr, True, True, True)
             still = [k for k in blockers() if k == (cp, i)]
             if not still:

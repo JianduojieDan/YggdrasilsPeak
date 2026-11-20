@@ -246,6 +246,8 @@ private:
 		/** The route's camps for the altimeter's route line: name and height (m), low to high. */
 		struct FCampMark { FString Name; float Elev = 0.f; };
 		TArray<FCampMark> Camps;
+		/** Index in Camps of the expedition's last camp (UExpeditionComponent::GetLastCamp), -1 = none yet. */
+		int32 LastCampIdx = -1;
 		float CampsAge = 99.f;
 		float AirC = 0.f;                // the air, eased towards ARealmSky::GetAirTemperature
 		bool bAirKnown = false;
