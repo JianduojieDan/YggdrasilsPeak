@@ -31,14 +31,17 @@ THREE_DAYS = 3 * 24 * 3600 - 3600
 
 
 def api_key():
-    k = os.environ.get("MESHY_API_KEY")
-    if not k and sys.platform == "win32":
+    # The registry copy first: setx updates it at once, while already-running processes keep the old value in their
+    # environment until they restart (so a replaced key works without restarting anything).
+    k = None
+    if sys.platform == "win32":
         import winreg
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as h:
                 k = winreg.QueryValueEx(h, "MESHY_API_KEY")[0]
         except OSError:
             k = None
+    k = k or os.environ.get("MESHY_API_KEY")
     if not k:
         sys.exit("MESHY_API_KEY is not set")
     return k.strip()
