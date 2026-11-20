@@ -88,7 +88,7 @@ namespace
 		const int32 T = FMath::Max(0, FMath::RoundToInt(S));
 		return T >= 3600 ? FString::Printf(TEXT("%d:%02d:%02d"), T / 3600, (T / 60) % 60, T % 60) : FString::Printf(TEXT("%d:%02d"), T / 60, T % 60);
 	}
-	FString Cm(const FVector& V) { return FString::Printf(TEXT("%.0f %.0f %.0f"), V.X, V.Y, V.Z); }
+	FString SummitBotCm(const FVector& V) { return FString::Printf(TEXT("%.0f %.0f %.0f"), V.X, V.Y, V.Z); }
 	const TCHAR* PhaseName(uint8 P)
 	{
 		static const TCHAR* N[] = { TEXT("idle"), TEXT("waiting"), TEXT("settle"), TEXT("up"), TEXT("summit"), TEXT("stay"), TEXT("down"), TEXT("quitting") };
@@ -336,7 +336,7 @@ void UYggSummitBot::Tick(float DeltaTime)
 		if (PhaseT > 8.0 && bGround)
 		{
 			Locate(P->GetActorLocation(), false);
-			Note(FString::Printf(TEXT("on the ground at %s, %.0f m a.s.l., %.0f m along leg 7, %.1f m off it"), *Cm(P->GetActorLocation()),
+			Note(FString::Printf(TEXT("on the ground at %s, %.0f m a.s.l., %.0f m along leg 7, %.1f m off it"), *SummitBotCm(P->GetActorLocation()),
 				Sv ? Sv->GetSnapshot().ElevationMeters : 0.f, S / 100.f, Lat / 100.f));
 			if (Sv)
 			{
@@ -451,7 +451,7 @@ void UYggSummitBot::Begin(APawn* P)
 	FindTree();
 	Ex->TeleportToCamp(Col);
 	Seg = 0;
-	Note(FString::Printf(TEXT("camp jump to %s (%s); oxygen pickups within 40 m: %d"), *SouthColName, *Cm(Col->GetActorLocation()), PickupsAtCol));
+	Note(FString::Printf(TEXT("camp jump to %s (%s); oxygen pickups within 40 m: %d"), *SouthColName, *SummitBotCm(Col->GetActorLocation()), PickupsAtCol));
 	Phase = EPhase::Settle;
 	PhaseT = 0.0;
 }
@@ -482,7 +482,7 @@ void UYggSummitBot::FindTree()
 		const FVector Ctr = Box.GetCenter(), Ext = Box.GetExtent();
 		// the trunk a quarter of the way up: what a climber at its roots looks up at
 		TreeAim = FVector(Ctr.X, Ctr.Y, Box.Min.Z + (Box.Max.Z - Box.Min.Z) * 0.25);
-		TreeInfo = FString::Printf(TEXT("%s: bounds centre %s, size %.0f x %.0f x %.0f m, bottom %.0f m, top %.0f m (world Z cm %.0f..%.0f)"), *Names, *Cm(Ctr),
+		TreeInfo = FString::Printf(TEXT("%s: bounds centre %s, size %.0f x %.0f x %.0f m, bottom %.0f m, top %.0f m (world Z cm %.0f..%.0f)"), *Names, *SummitBotCm(Ctr),
 			Ext.X / 50.0, Ext.Y / 50.0, Ext.Z / 50.0, Box.Min.Z, Box.Max.Z, Box.Min.Z, Box.Max.Z);
 	}
 	else { TreeInfo = TEXT("no SM_Yggdrasil mesh found in the level"); }
@@ -525,7 +525,7 @@ void UYggSummitBot::Walk(APawn* P, float Dt, bool bDown)
 		if (C && FMath::Fmod(Ph, 6.0) < Dt * 1.5) { C->Jump(); ++Sidesteps; }
 		if (NoProg > 30.0)
 		{
-			Issue(TEXT("stuck"), FString::Printf(TEXT("no progress for %.0f s at %s: teleported 10 m %s the route"), NoProg, *Cm(P->GetActorLocation()), bDown ? TEXT("down") : TEXT("up")), P);
+			Issue(TEXT("stuck"), FString::Printf(TEXT("no progress for %.0f s at %s: teleported 10 m %s the route"), NoProg, *SummitBotCm(P->GetActorLocation()), bDown ? TEXT("down") : TEXT("up")), P);
 			TeleportAlong(P, bDown ? S - 1000.f : S + 1000.f, TEXT("stuck"));
 			LastProgressT = GameT;
 			BestS = bDown ? -S : S;
@@ -782,7 +782,7 @@ bool UYggSummitBot::TeleportAlong(APawn* P, float ToS, const FString& Why)
 	for (const TWeakObjectPtr<AActor>& A : TreeActors) { if (A.IsValid()) { Q.AddIgnoredActor(A.Get()); } }
 	if (!GetWorld()->LineTraceSingleByChannel(H, At + FVector(0, 0, 15000), At - FVector(0, 0, 20000), ECC_Pawn, Q))
 	{
-		Note(FString::Printf(TEXT("teleport (%s) refused: no ground under %s"), *Why, *Cm(At)));
+		Note(FString::Printf(TEXT("teleport (%s) refused: no ground under %s"), *Why, *SummitBotCm(At)));
 		return false;
 	}
 	const FVector To = H.ImpactPoint + FVector(0, 0, C->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 10.f);
@@ -792,7 +792,7 @@ bool UYggSummitBot::TeleportAlong(APawn* P, float ToS, const FString& Why)
 	if (PC && PC->PlayerCameraManager) { PC->PlayerCameraManager->SetGameCameraCutThisFrame(); }
 	if (UYggViewRigComponent* R = UYggViewRigComponent::Find(P)) { if (R->GetView() == EYggView::Walk) { R->HardReset(PC ? PC->GetControlRotation() : P->GetActorRotation(), EYggView::Walk); } }
 	++Teleports;
-	Note(FString::Printf(TEXT("teleport (%s) to %s, onto %s / %s"), *Why, *Cm(To), H.GetActor() ? *H.GetActor()->GetActorNameOrLabel() : TEXT("?"), *GetNameSafe(H.GetComponent())));
+	Note(FString::Printf(TEXT("teleport (%s) to %s, onto %s / %s"), *Why, *SummitBotCm(To), H.GetActor() ? *H.GetActor()->GetActorNameOrLabel() : TEXT("?"), *GetNameSafe(H.GetComponent())));
 	return true;
 }
 
@@ -964,7 +964,7 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 
 	R.Append(TEXT("\n## Issues\n\n"));
 	if (Issues.Num() == 0) { R.Append(TEXT("none\n")); }
-	for (const FIssue& I : Issues) { R.Appendf(TEXT("- %s %s at %.0f m along, %.0f m a.s.l. (%s): %s\n"), *Clock(I.T), *I.Kind, I.S, I.Elev, *Cm(I.Pos), *I.Text); }
+	for (const FIssue& I : Issues) { R.Appendf(TEXT("- %s %s at %.0f m along, %.0f m a.s.l. (%s): %s\n"), *Clock(I.T), *I.Kind, I.S, I.Elev, *SummitBotCm(I.Pos), *I.Text); }
 
 	// frames
 	if (FrameMs.Num() > 10)

@@ -82,9 +82,12 @@ private:
 	FVector PresentFrom = FVector::ZeroVector;
 	float PresentYaw = 0.f;
 	bool bPresentGoal = false;
-	// steering: a capsule sweep 4x a second while walking; a blocked way turns the walk 60 degrees to the free side
+	// steering: a capsule sweep 4x a second while walking; a blocked way turns the walk 60 degrees to the free side, held
+	// at least SteerHold seconds on that side (SteerSide = the side taken last, tried first next time)
 	float SteerCheck = 0.f;
 	float SteerYaw = 0.f;
+	float SteerHold = 0.f;
+	float SteerSide = 1.f;
 	// facing
 	FVector FaceAt = FVector::ZeroVector;
 	TWeakObjectPtr<AActor> FaceActor;
@@ -105,13 +108,22 @@ private:
 	float BlendSpeed = 0.f;
 	void TickWalkBlend(float DeltaSeconds);
 	/** Follow (2026-11-20 redesign): walks the player's breadcrumb trail (UYggStorySubsystem::Crumbs) at FollowBehind
-	 *  cm behind him along it, matching his pace. TrailCursor = absolute index of the next crumb to reach. */
+	 *  cm behind him along it, matching his pace. TrailCursor = absolute index of the next crumb to reach.
+	 *  (#8, 2026-11-20) distance measured along the trail (not straight across: rear people stopped at every bend), a
+	 *  skip to a later point when the trail folds back past us, stand aside when he walks straight at us, staggered
+	 *  stops and restarts, never stop-and-go behind a slow player. */
 	void TickFollow(float DeltaSeconds, APawn* P, const FVector& Me, const FVector& PLoc, FVector& Target, bool& bMove);
 	int32 TrailCursor = -1;
 	int32 TrailEpochSeen = -1;
 	bool bFollowStopped = true;
-	double RestartAt = -1.0;
+	double SwitchAt = -1.0;      // a stop or a restart is due at this time (a short reaction, not on the player's frame)
 	float FollowSpeed = 0.f;     // smoothed walking pace while following (cm/s)
+	float LeaderPace = 0.f;      // the player's walking pace, eased (cm/s)
+	bool bLeaderWalks = false;   // the player walks (> 45 cm/s) / stands (< 25 cm/s), with that margin
+	bool bFollowYield = false;   // the player walks straight at this person: stand and let him by
+	bool bFollowTurn = false;    // standing: turning to the player (starts > 35 degrees off, ends < 6)
+	float TrailSkipCheck = 0.f;  // seconds to the next look for a later trail point close by (the trail folds back)
+	float FollowErr = 0.f;       // last distance error along the trail (cm, + = too far behind), for the debug log
 	float WantSpeed = -1.f;      // this frame's pace for the follow walk (< 0 = the old Speed scale)
 	/** Feet in the snow: a foot that stops moving (planted) presses a print into the player's trail map, within 60 m. */
 	void TickFeet(float DeltaSeconds, APawn* P);

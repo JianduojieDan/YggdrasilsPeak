@@ -602,9 +602,15 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 		LastMode = Mode;
 		bPresentGoal = false;
 		SteerYaw = 0.f;
+		SteerHold = 0.f;
 		StuckTime = 0.f;
 		HopFails = 0;
 		TrailCursor = -1;   // (2026-11-20) a stale crumb from before a goto made her walk back; -1 forces the nearest-crumb search
+		TrailSkipCheck = 0.f;
+		SwitchAt = -1.0;
+		bFollowYield = false;
+		bFollowTurn = false;
+		FollowSpeed = float(GetVelocity().Size2D());   // a follow after a walk goes on at the pace she has, not a stale one
 	}
 	TalkLeft = FMath::Max(0.f, TalkLeft - DeltaSeconds);
 	if (FaceLeft > 0.f) { FaceLeft = FMath::Max(0.f, FaceLeft - DeltaSeconds); if (FaceLeft <= 0.f) { FaceActor = nullptr; } }
@@ -725,37 +731,65 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 	bArrived = Mode == EMode::GoTo || Mode == EMode::Lead ? ReachedGoal(150.f) : false;
 	if (bMove)
 	{
+		bFollowTurn = false;
 		FVector Dir = (Target - Me).GetSafeNormal2D();
 		// steering, 4x a second: a capsule sweep 1.2 m ahead; blocked by a tent, a barrel, a chorten -> walk 60 degrees to the
 		// free side for a moment (followers stuck on the camp tents for minutes, audit)
 		SteerCheck -= DeltaSeconds;
+		SteerHold = FMath::Max(0.f, SteerHold - DeltaSeconds);
 		if (SteerCheck <= 0.f)
 		{
 			SteerCheck = 0.25f;
-			SteerYaw = 0.f;
 			const float Half = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 			const FCollisionShape Cap = FCollisionShape::MakeCapsule(GetCapsuleComponent()->GetScaledCapsuleRadius(), Half * 0.75f);
 			FCollisionQueryParams Q(SCENE_QUERY_STAT(StoryNPCSteer), false, this);
 			const FVector From = Me + FVector(0.f, 0.f, Half * 0.25f + 10.f);   // a little up: the slope ahead is not in the way
+			const bool bFollowing = Mode == EMode::Follow;
 			auto Blocked = [&](const FVector& D)
 			{
 				FHitResult H;
 				if (!GetWorld()->SweepSingleByChannel(H, From, From + D * 120.f, FQuat::Identity, ECC_Pawn, Cap, Q)) { return false; }
-				if (Cast<APawn>(H.GetActor())) { return false; }               // people: the hop sorts that out
+				// people: the hop sorts that out - except a follower overtaking another one (the file reorders after the
+				// player turns back through it): walk round the standing person, never a sideways hop through him
+				// (only a STANDING one: the person ahead in the file walks our way, and steering round him made the man
+				// behind zig-zag 60 degrees every second, follow test 2026-11-20)
+				if (Cast<APawn>(H.GetActor()))
+				{
+					return bFollowing && !H.bStartPenetrating && H.GetActor()->IsA<AYggStoryNPC>()
+						&& H.GetActor()->GetVelocity().SizeSquared2D() < FMath::Square(40.f);
+				}
 				return !IsStoryTerrain(H) && H.ImpactNormal.Z < 0.7f;          // ground and walkable slopes are not obstacles
 			};
-			if (Blocked(Dir))
+			if (SteerYaw != 0.f && SteerHold > 0.f)
 			{
-				if (!Blocked(Dir.RotateAngleAxis(60.f, FVector::UpVector))) { SteerYaw = 60.f; }
-				else if (!Blocked(Dir.RotateAngleAxis(-60.f, FVector::UpVector))) { SteerYaw = -60.f; }
+				// (2026-11-20 #8) round an obstacle on one side, held at least 0.6 s: re-testing the straight way 4x a second
+				// flipped straight / aside / straight - a zig-zag walk with the body swinging every quarter second
+				if (Blocked(Dir.RotateAngleAxis(SteerYaw, FVector::UpVector)))
+				{
+					SteerYaw = Blocked(Dir.RotateAngleAxis(-SteerYaw, FVector::UpVector)) ? 0.f : -SteerYaw;
+					SteerHold = 0.6f;
+				}
 			}
+			else
+			{
+				SteerYaw = 0.f;
+				if (Blocked(Dir))
+				{
+					// the side taken last time first (no left-right flip round the same tent)
+					const float First = 60.f * SteerSide;
+					if (!Blocked(Dir.RotateAngleAxis(First, FVector::UpVector))) { SteerYaw = First; }
+					else if (!Blocked(Dir.RotateAngleAxis(-First, FVector::UpVector))) { SteerYaw = -First; }
+					SteerHold = 0.6f;
+				}
+			}
+			if (SteerYaw != 0.f) { SteerSide = SteerYaw > 0.f ? 1.f : -1.f; }
 		}
 		if (SteerYaw != 0.f) { Dir = Dir.RotateAngleAxis(SteerYaw, FVector::UpVector); }
 		if (WantSpeed >= 0.f)
 		{
-			// follow: the pace is chosen by TickFollow (matched to the player's, see there)
+			// follow: the pace is chosen by TickFollow (matched to the player's, see there; 40 = its floor behind a trudge)
 			AddMovementInput(Dir, 1.f);
-			GetCharacterMovement()->MaxWalkSpeed = FMath::Max(WantSpeed, 50.f);
+			GetCharacterMovement()->MaxWalkSpeed = FMath::Max(WantSpeed, 40.f);
 		}
 		else
 		{
@@ -791,6 +825,8 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 	}
 	else
 	{
+		SteerYaw = 0.f;     // a side step held from before a stop must not send the next start 60 degrees off
+		SteerHold = 0.f;
 		const bool bFace = FaceLeft != 0.f && (FaceActor.IsValid() || !FaceAt.IsZero());
 		if (bFace)
 		{
@@ -798,6 +834,20 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 			const FVector To = FaceActor.IsValid() ? FaceActor->GetActorLocation() : FaceAt;
 			const FVector D = (To - Me).GetSafeNormal2D();
 			if (!D.IsNearlyZero()) { SetActorRotation(FMath::RInterpTo(GetActorRotation(), FRotator(0.f, D.Rotation().Yaw, 0.f), DeltaSeconds, 9.f)); }
+		}
+		else if (Mode == EMode::Follow)
+		{
+			// (2026-11-20 #8) following, standing: turn to the player only once well off (> 35 degrees), at a steady 90 deg/s
+			// until roughly there, and not while still sliding to the stop. The old exponential turn tracked every step he
+			// took like a turret and swung the whole body fast on big angles.
+			const FVector D = (PLoc - Me).GetSafeNormal2D();
+			const float Off = D.IsNearlyZero() ? 0.f : float(FRotator::NormalizeAxis(D.Rotation().Yaw - GetActorRotation().Yaw));
+			if (!bFacePlayer || FVector::Dist2D(Me, PLoc) > 700.f || FMath::Abs(Off) < 6.f) { bFollowTurn = false; }
+			else if (FMath::Abs(Off) > 35.f) { bFollowTurn = true; }
+			if (bFollowTurn && GetVelocity().SizeSquared2D() < FMath::Square(40.f))
+			{
+				SetActorRotation(FMath::RInterpConstantTo(GetActorRotation(), FRotator(0.f, D.Rotation().Yaw, 0.f), DeltaSeconds, 90.f));
+			}
 		}
 		else if ((bFacePlayer || Mode == EMode::Present) && FVector::Dist2D(Me, PLoc) < 700.f)
 		{
@@ -831,7 +881,16 @@ void AYggStoryNPC::TickFollow(float DeltaSeconds, APawn* P, const FVector& Me, c
 	// only where the player walks counts, never where he looks: his velocity and his trail, no view, no actor facing
 	const FVector V = P->GetVelocity();
 	const float Vp = float(V.Size2D());
-	if (Vp > 50.f) { FollowFwd = V.GetSafeNormal2D(); }
+	if (Vp > 50.f)
+	{
+		// his walking direction, eased (a strafe tap or a step on a stone swung the talk_side spot across his back)
+		const FVector Vd = V.GetSafeNormal2D();
+		const FVector F = FollowFwd.IsNearlyZero() ? Vd : (FollowFwd + (Vd - FollowFwd) * FMath::Min(1.f, DeltaSeconds * 4.f)).GetSafeNormal2D();
+		FollowFwd = F.IsNearlyZero() ? Vd : F;
+	}
+	// walking or standing, with a margin (a pace near one threshold flipped the decision every frame); his pace eased
+	if (Vp > 45.f) { bLeaderWalks = true; } else if (Vp < 25.f) { bLeaderWalks = false; }
+	LeaderPace = FMath::FInterpTo(LeaderPace, Vp, DeltaSeconds, 4.f);
 	const float Base = 190.f * Speed * GetActorScale3D().X;      // this person's own walking pace
 	const float Straight = float(FVector::Dist2D(Me, PLoc));
 	const double Now = GetWorld()->GetTimeSeconds();
@@ -840,6 +899,8 @@ void AYggStoryNPC::TickFollow(float DeltaSeconds, APawn* P, const FVector& Me, c
 	float Gap = Straight;
 	float Behind = FollowBehind;
 	FVector Aim = PLoc;
+	bFollowYield = false;
+	bool bOnTrail = false;
 	if (bTalk || !S || S->Crumbs.Num() == 0)
 	{
 		// talk_side: while this person speaks he walks at your shoulder, so a 30 degree glance finds the face (spec 6.5)
@@ -847,11 +908,23 @@ void AYggStoryNPC::TickFollow(float DeltaSeconds, APawn* P, const FVector& Me, c
 		const FVector R = FVector::CrossProduct(FVector::UpVector, F);
 		const float Side = bTalk ? TalkSide * (FollowSide < 0.f ? -1.f : 1.f) : FollowSide;
 		Aim = PLoc - F * (bTalk ? 30.f : FollowBehind) + R * Side;
-		Gap = float(FVector::Dist2D(Me, Aim));
 		Behind = 0.f;
+		if (bLeaderWalks)
+		{
+			// (2026-11-20 #8) walking: how far the spot lies ahead of us along his way (< 0 = we are past it: slow down,
+			// never turn round to it), and the walk aims on past it. The plain distance to it stopped her at the spot and
+			// sent her after it again a second later, all through a line.
+			Gap = float(FVector::DotProduct(Aim - Me, F));
+			Aim += F * 150.f;
+		}
+		else { Gap = float(FVector::Dist2D(Me, Aim)); }
+		// off the trail now: once the line ends, look for our place on it again (the cursor from before the line lay
+		// 10 m back and she walked back to it)
+		TrailCursor = -1;
 	}
 	else
 	{
+		bOnTrail = true;
 		const TArray<FVector>& C = S->Crumbs;
 		const TArray<float>& CL = S->CrumbLen;
 		const int32 N = C.Num();
@@ -867,6 +940,7 @@ void AYggStoryNPC::TickFollow(float DeltaSeconds, APawn* P, const FVector& Me, c
 			}
 			TrailCursor = S->TrailFirst + Best;
 			TrailEpochSeen = S->TrailEpoch;
+			TrailSkipCheck = 0.f;
 		}
 		int32 Ci = TrailCursor - S->TrailFirst;
 		// past a point (reached it, or it lies behind on the way to the next one): the next
@@ -877,15 +951,64 @@ void AYggStoryNPC::TickFollow(float DeltaSeconds, APawn* P, const FVector& Me, c
 			const bool bPast = DA < 400.f && FVector::DotProduct((C[Ci + 1] - A).GetSafeNormal2D(), Me - A) > 0.f;
 			if (DA < 90.f || bPast) { ++Ci; } else { break; }
 		}
+		// (2026-11-20 #8) the trail folds back past us (he turned round and walked back by us, or walked a loop): a later
+		// point close by (4 m, about level), reached in a clear line, saves the walk out to the turn and back - she walked
+		// away from him to his old turning point first. Worth it only when the trail skipped beats twice the line off it
+		// by 2 m (a bend is never cut, a fold is). Twice a second, from the cursor on.
+		TrailSkipCheck -= DeltaSeconds;
+		if (TrailSkipCheck <= 0.f && Ci < N - 1)
+		{
+			TrailSkipCheck = 0.5f;
+			const float SMe0 = CL[Ci] - float(FVector::Dist2D(Me, C[Ci]));
+			int32 BestK = INDEX_NONE;
+			float BestSave = 200.f;
+			for (int32 k = Ci + 1; k < N; ++k)
+			{
+				const double D2 = FVector::DistSquared2D(Me, C[k]);
+				if (D2 > 160000.0 || FMath::Abs(C[k].Z - Me.Z) > 120.0) { continue; }
+				const float Save = (CL[k] - SMe0) - 2.f * float(FMath::Sqrt(D2));
+				if (Save > BestSave) { BestSave = Save; BestK = k; }
+			}
+			if (BestK != INDEX_NONE)
+			{
+				FHitResult H;
+				FCollisionQueryParams Q(SCENE_QUERY_STAT(StoryNPCTrailSkip), false, this);
+				Q.AddIgnoredActor(P);
+				if (!GetWorld()->LineTraceSingleByChannel(H, Me, C[BestK], ECC_Visibility, Q) || Cast<APawn>(H.GetActor()))
+				{
+					if (CVarStoryNPCDebug.GetValueOnGameThread() != 0)
+					{
+						UE_LOG(LogTemp, Display, TEXT("NPCDbg %s trail skip %d -> %d (saves %.0f cm)"), *Id.ToString(), S->TrailFirst + Ci, S->TrailFirst + BestK, BestSave);
+					}
+					Ci = BestK;
+				}
+			}
+		}
 		TrailCursor = S->TrailFirst + Ci;
-		// how far behind along the walked way (never more than straight across: he may have turned back to us)
+		// (2026-11-20 #8) how far behind ALONG the walked way. It was min(trail, straight across), and straight across is
+		// always the shorter: the band ran on the straight line, so on every bend and switchback the rear people found
+		// themselves "too close", stopped, and went on once the line opened again. Straight x3 stays as a guard only.
 		const float SPlayer = CL[N - 1] + float(FVector::Dist2D(C[N - 1], PLoc));
 		const float SMe = CL[Ci] - float(FVector::Dist2D(Me, C[Ci]));
-		Gap = FMath::Min(SPlayer - SMe, Straight);
+		Gap = FMath::Min(SPlayer - SMe, Straight * 3.f);
+		// he turned back toward us: never walk into him (nor toward him as he comes by). Walking at us (his line passes
+		// within 2.2 m) and nearer than our place -> stand and let him come by; the skip above puts us behind him again
+		if (bLeaderWalks)
+		{
+			const FVector Vd = V.GetSafeNormal2D();
+			const float RX = float(Me.X - PLoc.X), RY = float(Me.Y - PLoc.Y);
+			const float Ahead = float(Vd.X) * RX + float(Vd.Y) * RY;
+			const float Lateral = FMath::Abs(float(Vd.X) * RY - float(Vd.Y) * RX);
+			// (ahead more than half the side offset: not when a talk_side shoulder walk ends a step in front of him)
+			bFollowYield = Ahead > Lateral * 0.5f && Lateral < 220.f && Straight < Behind + 150.f;
+		}
 		// aim a little ahead on the trail (a walk, not a hop from point to point); the side keeps the file loose
 		int32 J = Ci;
 		while (J < N - 1 && FVector::Dist2D(Me, C[J]) < 150.f) { ++J; }
 		Aim = C[J];
+		// (2026-11-20 #8) at the head of the trail (beside him after a talk_side line, or he just came by us) the last point
+		// can lie at our side or behind: walk on his way instead of turning round to it
+		if (J == N - 1 && !FollowFwd.IsNearlyZero() && FVector::Dist2D(Me, C[J]) < 150.f) { Aim = Me + FollowFwd * 150.f; }
 		const FVector Along = (Aim - Me).GetSafeNormal2D();
 		Aim += FVector::CrossProduct(FVector::UpVector, Along) * FMath::Clamp(FollowSide * 0.3f, -60.f, 60.f);
 		// far behind and out of sight: catch up quietly onto the trail (a person walking with you never gets lost)
@@ -901,43 +1024,58 @@ void AYggStoryNPC::TickFollow(float DeltaSeconds, APawn* P, const FVector& Me, c
 				TeleportTo(C[K] + FVector(0.f, 0.f, 120.f), GetActorRotation());
 				TrailCursor = S->TrailFirst + K;
 				bFollowStopped = true;
+				SwitchAt = -1.0;
 				FollowSpeed = 0.f;
 			}
 		}
 	}
-	// pace: a distance band round "behind". Inside it, stop (a short settle); beyond it, walk again after 0.4-1.0 s
-	// (people do not all start on the same frame); walking, match the player's pace, a little faster when behind,
-	// slower when close, a jog to catch up from far
+	// pace: a distance band round "behind". (2026-11-20 #8) While he walks we never stop for being close, we only slow
+	// down (a floor under his pace: stop-and-go behind a slow player); we stop when he stops and we are near our place,
+	// or when he walks straight at us. Every stop and restart comes a moment after his (people do not all react on his
+	// frame); restarts ripple down the file, the nearest first. Walking: his pace, a little faster when behind, slower
+	// when close, a jog to catch up from far.
 	const float Err = Gap - Behind;
-	const float StopAt = bTalk ? 40.f : -30.f;
-	const float GoAt = bTalk ? 90.f : 110.f;
+	FollowErr = Err;
 	if (bFollowStopped)
 	{
-		// he walks off: go soon after him (not only once the gap has opened up)
-		if (Err > GoAt || (Vp > 50.f && Err > 40.f))
+		const bool bGo = !bFollowYield && (bTalk ? (bLeaderWalks || Err > 90.f) : (Err > 110.f || (bLeaderWalks && Err > -60.f)));
+		if (bGo)
 		{
-			if (RestartAt < 0.0) { RestartAt = Now + FMath::FRandRange(0.4f, 1.0f); }
-			if (Now >= RestartAt) { bFollowStopped = false; RestartAt = -1.0; }
+			if (SwitchAt < 0.0) { SwitchAt = Now + FMath::FRandRange(0.3f, 0.6f) + FMath::Min(FollowBehind, 1500.f) * 0.0004f; }
+			if (Now >= SwitchAt) { bFollowStopped = false; SwitchAt = -1.0; }
 		}
-		else { RestartAt = -1.0; }
+		else { SwitchAt = -1.0; }
 	}
-	else if (Err < StopAt || (Err < (bTalk ? 50.f : 90.f) && Vp < 30.f))     // he stopped: stop with him (the settle slides ~0.5 m)
+	else
 	{
-		bFollowStopped = true;
+		// he stopped: stop with him (the settle slides ~0.5 m); or about to touch him (a creep under our slowest pace)
+		const bool bStop = bFollowYield || (!bLeaderWalks && Err < (bTalk ? 50.f : 90.f)) || (bOnTrail && Gap < 80.f);
+		if (bStop)
+		{
+			if (SwitchAt < 0.0) { SwitchAt = Now + (bFollowYield ? FMath::FRandRange(0.05f, 0.15f) : FMath::FRandRange(0.1f, 0.35f)); }
+			if (Now >= SwitchAt) { bFollowStopped = true; SwitchAt = -1.0; }
+		}
+		else { SwitchAt = -1.0; }
 	}
 	float Want = 0.f;
 	if (!bFollowStopped)
 	{
 		// the cap: a jog of this person's own, or a little over the player's pace (he may walk faster than we jog)
-		const float Cap = FMath::Min(FMath::Max(Base * 1.6f, Vp * 1.3f), 520.f);
-		Want = Vp + FMath::Clamp(Err, -200.f, 500.f) * 0.45f;
+		const float Cap = FMath::Min(FMath::Max(Base * 1.6f, LeaderPace * 1.3f), 520.f);
+		// the floor: under a slow player's own pace (70 over a 50 cm/s trudge closed in, stopped, waited, went again)
+		const float Floor = FMath::Clamp(LeaderPace * 0.6f, 40.f, 70.f);
+		// (2026-11-20 #8) inside the band (0.6 m closer .. 0.8 m further than our place) just his pace: chasing the exact
+		// spot made every start a hurry at 1.3x his pace and the speed breathe in and out. A talk_side walk keeps it tight
+		// (the face has to stay in a 30 degree glance)
+		const float E = FMath::Clamp(Err, -200.f, 500.f);
+		Want = LeaderPace + (E - FMath::Clamp(E, bTalk ? -30.f : -60.f, bTalk ? 30.f : 80.f)) * 0.45f;
 		if (Err > 900.f) { Want = FMath::Max(Want, Cap); }
-		Want = FMath::Clamp(Want, 70.f, Cap);
+		Want = FMath::Clamp(Want, Floor, Cap);
 	}
 	FollowSpeed = FMath::FInterpTo(FollowSpeed, Want, DeltaSeconds, 2.5f);
 	Target = Aim;
 	bMove = !bFollowStopped;
-	WantSpeed = bMove ? FMath::Max(FollowSpeed, 70.f) : -1.f;
+	WantSpeed = bMove ? FMath::Max(FollowSpeed, 40.f) : -1.f;
 }
 
 void AYggStoryNPC::TickFeet(float DeltaSeconds, APawn* P)
@@ -1010,12 +1148,13 @@ void AYggStoryNPC::DebugLog(float DeltaSeconds)
 	const float FL = M && M->DoesSocketExist(TEXT("foot_l")) ? float(M->GetSocketLocation(TEXT("foot_l")).Z - Base.Z) : -999.f;
 	const float FR = M && M->DoesSocketExist(TEXT("foot_r")) ? float(M->GetSocketLocation(TEXT("foot_r")).Z - Base.Z) : -999.f;
 	const float Stride = M && M->DoesSocketExist(TEXT("foot_l")) ? float(FVector::Dist2D(M->GetSocketLocation(TEXT("foot_l")), M->GetSocketLocation(TEXT("foot_r")))) : -1.f;
-	UE_LOG(LogTemp, Display, TEXT("NPCDbg %s mode=%d move=%d hover=%d vel=%.0f acc=%.0f maxwalk=%.0f anim=%s mode=%d GroundSpeed=%s ShouldMove=%s IsFalling=%s footL=%.1f footR=%.1f stride=%.0f tickopt=%d rendered=%d blend=%d stamps=%d stopped=%d cursor=%d dist=%.0f want=%.0f"),
+	UE_LOG(LogTemp, Display, TEXT("NPCDbg %s mode=%d move=%d hover=%d vel=%.0f acc=%.0f maxwalk=%.0f anim=%s mode=%d GroundSpeed=%s ShouldMove=%s IsFalling=%s footL=%.1f footR=%.1f stride=%.0f tickopt=%d rendered=%d blend=%d stamps=%d stopped=%d cursor=%d dist=%.0f want=%.0f err=%.0f yield=%d steer=%.0f yaw=%.0f pace=%.0f"),
 		*Id.ToString(), int32(Mode), CM ? int32(CM->MovementMode) : -1, int32(bHover), GetVelocity().Size2D(), CM ? CM->GetCurrentAcceleration().Size2D() : -1.f,
 		CM ? CM->MaxWalkSpeed : -1.f, A ? *A->GetClass()->GetName() : TEXT("none"), M ? int32(M->GetAnimationMode()) : -1,
 		*Num(TEXT("GroundSpeed")), *Num(TEXT("ShouldMove")), *Num(TEXT("IsFalling")), FL, FR, Stride,
 		M ? int32(M->VisibilityBasedAnimTickOption) : -1, M ? int32(M->WasRecentlyRendered(0.5f)) : -1, int32(bBlendWalk), Stamps, int32(bFollowStopped), TrailCursor,
-		UGameplayStatics::GetPlayerPawn(this, 0) ? float(FVector::Dist2D(GetActorLocation(), UGameplayStatics::GetPlayerPawn(this, 0)->GetActorLocation())) : -1.f, FollowSpeed);
+		UGameplayStatics::GetPlayerPawn(this, 0) ? float(FVector::Dist2D(GetActorLocation(), UGameplayStatics::GetPlayerPawn(this, 0)->GetActorLocation())) : -1.f, FollowSpeed,
+		FollowErr, int32(bFollowYield), SteerYaw, float(GetActorRotation().Yaw), LeaderPace);
 }
 
 // ------------------------------------------------------------------------------------------------ overlay

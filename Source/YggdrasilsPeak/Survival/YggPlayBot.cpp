@@ -136,7 +136,7 @@ namespace
 		const int32 T = FMath::Max(0, FMath::RoundToInt(S));
 		return T >= 3600 ? FString::Printf(TEXT("%d:%02d:%02d"), T / 3600, (T / 60) % 60, T % 60) : FString::Printf(TEXT("%d:%02d"), T / 60, T % 60);
 	}
-	FString Cm(const FVector& V) { return FString::Printf(TEXT("%.0f %.0f %.0f"), V.X, V.Y, V.Z); }
+	FString PlayBotCm(const FVector& V) { return FString::Printf(TEXT("%.0f %.0f %.0f"), V.X, V.Y, V.Z); }
 	void SetCVar(const TCHAR* Name, const TCHAR* Value)
 	{
 		if (IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(Name)) { V->Set(Value, ECVF_SetByConsole); }
@@ -524,7 +524,7 @@ void UYggPlayBot::OnStoryLine(const FString& Full, bool bWarning)
 			if (!B.Near.IsEmpty() && Resolve(B.Near, At)) { B.FiredPlace = B.Near; B.FiredDist = float(FVector::Dist(B.FiredPos, At)); }
 			else { float D = 0.f; B.FiredPlace = NearestPlace(B.FiredPos, D); B.FiredDist = D; }
 		}
-		Note(FString::Printf(TEXT("beat %s fired at %s (%s)"), *Id, *Cm(B.FiredPos), *B.FiredPlace));
+		Note(FString::Printf(TEXT("beat %s fired at %s (%s)"), *Id, *PlayBotCm(B.FiredPos), *B.FiredPlace));
 		return;
 	}
 	if (Line.StartsWith(TEXT("Story: ")) && Line.EndsWith(TEXT(" finished"))) { bChapterFinished = true; return; }
@@ -587,7 +587,7 @@ void UYggPlayBot::Decide(APawn* P)
 	if (bHaveLastPos && FVector::Dist(Pos, LastPos) > 5000.0 && GameT - LastBotTeleport > 1.0)
 	{
 		++Jumps;
-		Note(FString::Printf(TEXT("the climber jumped %.0f m (story cut, respawn...) to %s"), FVector::Dist(Pos, LastPos) / 100.0, *Cm(Pos)));
+		Note(FString::Printf(TEXT("the climber jumped %.0f m (story cut, respawn...) to %s"), FVector::Dist(Pos, LastPos) / 100.0, *PlayBotCm(Pos)));
 		LastProgress = GameT;
 		Best = 1e12f;
 		CutPos = Pos;
@@ -601,7 +601,7 @@ void UYggPlayBot::Decide(APawn* P)
 		if (Drift > 30.f && RigView != uint8(EYggView::Walk) && RigView != uint8(EYggView::Crawl))
 		{
 			Note(FString::Printf(TEXT("WARNING the climber is %.0f cm from where the story's cut put him (%s), posed: something blocks his capsule there"),
-				Drift, *Cm(CutPos)));
+				Drift, *PlayBotCm(CutPos)));
 		}
 		CutT = -1.0;
 	}
@@ -808,7 +808,7 @@ void UYggPlayBot::CheckStuck(APawn* P)
 		FBotStuck S{ GameT, Beats[NavBeat].Id, Pos, D, FString() };
 		if (bOk && TeleportTo(P, To, TEXT("stuck")))
 		{
-			S.Action = FString::Printf(TEXT("no progress %.0f s: teleport 15 m ahead to %s"), NoProg, *Cm(P->GetActorLocation()));
+			S.Action = FString::Printf(TEXT("no progress %.0f s: teleport 15 m ahead to %s"), NoProg, *PlayBotCm(P->GetActorLocation()));
 		}
 		else { S.Action = FString::Printf(TEXT("no progress %.0f s: nowhere to teleport (target %.0f m away), waiting for the beat cap"), NoProg, D / 100.f); }
 		Stucks.Add(S);
@@ -865,7 +865,7 @@ bool UYggPlayBot::TeleportTo(APawn* P, const FVector& Where, const FString& Why)
 	LastBotTeleport = GameT;
 	LastPos = To;
 	++Teleports;
-	Note(FString::Printf(TEXT("teleport (%s): %s -> %s%s"), *Why, *Cm(From), *Cm(To), (bLow || bHigh) ? TEXT("") : TEXT(" (no ground found there)")));
+	Note(FString::Printf(TEXT("teleport (%s): %s -> %s%s"), *Why, *PlayBotCm(From), *PlayBotCm(To), (bLow || bHigh) ? TEXT("") : TEXT(" (no ground found there)")));
 	return true;
 }
 
@@ -1194,7 +1194,7 @@ FString UYggPlayBot::BuildReport(bool bFinal) const
 		if (B.bFired)
 		{
 			S.Appendf(TEXT("| %d | %s | %s | %s | %s | %s | %.1f | %.0f | %s |\n"), i + 1, *B.Id, *Clock(B.FiredGame), *Clock(B.FiredReal), *B.FiredPlace,
-				*Cm(B.FiredPos), B.FiredDist >= 0.f ? B.FiredDist / 100.f : -1.f, B.SegFps, *Info);
+				*PlayBotCm(B.FiredPos), B.FiredDist >= 0.f ? B.FiredDist / 100.f : -1.f, B.SegFps, *Info);
 		}
 		else
 		{
@@ -1206,7 +1206,7 @@ FString UYggPlayBot::BuildReport(bool bFinal) const
 	else
 	{
 		S.Append(TEXT("| Game | Target beat | Player at (cm) | Target (m) | What the bot did |\n|---|---|---|---|---|\n"));
-		for (const FBotStuck& St : Stucks) { S.Appendf(TEXT("| %s | %s | %s | %.0f | %s |\n"), *Clock(St.Game), *St.Beat, *Cm(St.Pos), St.Dist / 100.f, *St.Action); }
+		for (const FBotStuck& St : Stucks) { S.Appendf(TEXT("| %s | %s | %s | %.0f | %s |\n"), *Clock(St.Game), *St.Beat, *PlayBotCm(St.Pos), St.Dist / 100.f, *St.Action); }
 	}
 	S.Append(TEXT("\n## FPS\n\n"));
 	if (Frames > 0 && FrameSum > 0.0)
@@ -1220,7 +1220,7 @@ FString UYggPlayBot::BuildReport(bool bFinal) const
 			TArray<FBotHitch> H = Hitches;
 			H.Sort([](const FBotHitch& A, const FBotHitch& B) { return A.Ms > B.Ms; });
 			S.Append(TEXT("\nWorst hitches (after the first 15 s):\n\n| Game | ms | Player at (cm) | Target beat |\n|---|---|---|---|\n"));
-			for (const FBotHitch& X : H) { S.Appendf(TEXT("| %s | %.0f | %s | %s |\n"), *Clock(X.Game), X.Ms, *Cm(X.Pos), *X.Beat); }
+			for (const FBotHitch& X : H) { S.Appendf(TEXT("| %s | %.0f | %s | %s |\n"), *Clock(X.Game), X.Ms, *PlayBotCm(X.Pos), *X.Beat); }
 		}
 	}
 	else { S.Append(TEXT("No frames recorded.\n")); }

@@ -90,7 +90,7 @@ namespace
 		const int32 T = FMath::Max(0, FMath::RoundToInt(S));
 		return T >= 3600 ? FString::Printf(TEXT("%d:%02d:%02d"), T / 3600, (T / 60) % 60, T % 60) : FString::Printf(TEXT("%d:%02d"), T / 60, T % 60);
 	}
-	FString Cm(const FVector& V) { return FString::Printf(TEXT("%.0f %.0f %.0f"), V.X, V.Y, V.Z); }
+	FString RouteBotCm(const FVector& V) { return FString::Printf(TEXT("%.0f %.0f %.0f"), V.X, V.Y, V.Z); }
 	FString ShortCamp(FString Name)
 	{
 		Name.Split(TEXT(" - "), &Name, nullptr); Name.Split(TEXT(" ("), &Name, nullptr);   // as the HUD writes it
@@ -363,7 +363,7 @@ void UYggRouteBot::Tick(float DeltaTime)
 		if (PhaseT > 8.0 && bGround)
 		{
 			Seed(P->GetActorLocation());
-			Note(FString::Printf(TEXT("on the ground at %s, %.0f m a.s.l., %.0f m along, %.1f m off the route"), *Cm(P->GetActorLocation()),
+			Note(FString::Printf(TEXT("on the ground at %s, %.0f m a.s.l., %.0f m along, %.1f m off the route"), *RouteBotCm(P->GetActorLocation()),
 				Sv ? Sv->GetSnapshot().ElevationMeters : 0.f, S / 100.f, Lat / 100.f));
 			if (AtM > 0.f && TeleportAlong(P, AtM * 100.f, TEXT("at"))) { Seed(P->GetActorLocation()); }
 			// game speed: the world's time dilation (the "slomo" console command is a cheat and does nothing in the game build)
@@ -452,7 +452,7 @@ void UYggRouteBot::Begin(APawn* P)
 	for (TActorIterator<ACrevasseCrossing> It(GetWorld()); It; ++It) { Crossings.Add(*It); }
 	Ex->TeleportToCamp(Raw[FromLeg].Get());
 	Seg = 0;
-	Note(FString::Printf(TEXT("camp jump to %s (%s)"), *Raw[FromLeg]->LandmarkName, *Cm(Raw[FromLeg]->GetActorLocation())));
+	Note(FString::Printf(TEXT("camp jump to %s (%s)"), *Raw[FromLeg]->LandmarkName, *RouteBotCm(Raw[FromLeg]->GetActorLocation())));
 	Phase = EPhase::Settle;
 	PhaseT = 0.0;
 }
@@ -554,7 +554,7 @@ void UYggRouteBot::Walk(APawn* P, float Dt)
 			if (GetWorld()->SweepSingleByChannel(B, From, From + Go * 150.f, FQuat::Identity, ECC_Pawn, FCollisionShape::MakeCapsule(Cap->GetScaledCapsuleRadius(), Cap->GetScaledCapsuleHalfHeight()), BQ))
 			{
 				Issue(TEXT("blocked"), FString::Printf(TEXT("blocked by %s (normal z %.2f, %.0f cm over the capsule bottom, %.0f cm ahead) at %s"), *Blocker(B), B.ImpactNormal.Z,
-					B.ImpactPoint.Z - (From.Z - Cap->GetScaledCapsuleHalfHeight()), B.Distance, *Cm(From)), P);
+					B.ImpactPoint.Z - (From.Z - Cap->GetScaledCapsuleHalfHeight()), B.Distance, *RouteBotCm(From)), P);
 			}
 			else { Note(FString::Printf(TEXT("stuck at %.0f m along: nothing in the way 1.5 m ahead"), S / 100.f)); }
 		}
@@ -562,7 +562,7 @@ void UYggRouteBot::Walk(APawn* P, float Dt)
 		if (C && FMath::Fmod(Ph, 6.0) < Dt * 1.5) { C->Jump(); ++Sidesteps; }
 		if (NoProg > 30.0)
 		{
-			Issue(TEXT("stuck"), FString::Printf(TEXT("no progress for %.0f s at %s: teleported 10 m along the route"), NoProg, *Cm(P->GetActorLocation())), P);
+			Issue(TEXT("stuck"), FString::Printf(TEXT("no progress for %.0f s at %s: teleported 10 m along the route"), NoProg, *RouteBotCm(P->GetActorLocation())), P);
 			if (TeleportAlong(P, S + 1000.f, TEXT("stuck"))) { Seed(P->GetActorLocation()); }
 			LastProgressT = GameT;
 			BestS = S;
@@ -824,7 +824,7 @@ bool UYggRouteBot::TeleportAlong(APawn* P, float ToS, const FString& Why)
 	FCollisionQueryParams Q(SCENE_QUERY_STAT(YggRouteBotTp), false, P);
 	if (!GetWorld()->LineTraceSingleByChannel(H, At + FVector(0, 0, 15000), At - FVector(0, 0, 20000), ECC_Pawn, Q))
 	{
-		Note(FString::Printf(TEXT("teleport (%s) refused: no ground under %s"), *Why, *Cm(At)));
+		Note(FString::Printf(TEXT("teleport (%s) refused: no ground under %s"), *Why, *RouteBotCm(At)));
 		return false;
 	}
 	const FVector To = H.ImpactPoint + FVector(0, 0, C->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 10.f);
@@ -834,7 +834,7 @@ bool UYggRouteBot::TeleportAlong(APawn* P, float ToS, const FString& Why)
 	if (PC && PC->PlayerCameraManager) { PC->PlayerCameraManager->SetGameCameraCutThisFrame(); }
 	if (UYggViewRigComponent* R = UYggViewRigComponent::Find(P)) { if (R->GetView() == EYggView::Walk) { R->HardReset(PC ? PC->GetControlRotation() : P->GetActorRotation(), EYggView::Walk); } }
 	if (Why != TEXT("at")) { ++Teleports; }
-	Note(FString::Printf(TEXT("teleport (%s) to %s, onto %s"), *Why, *Cm(To), *Blocker(H)));
+	Note(FString::Printf(TEXT("teleport (%s) to %s, onto %s"), *Why, *RouteBotCm(To), *Blocker(H)));
 	return true;
 }
 
@@ -964,7 +964,7 @@ FString UYggRouteBot::BuildReport(bool bFinal) const
 		R.Append(TEXT("\n| game | m along | leg | m a.s.l. | kind | what | where (BugItGo) |\n|---|---|---|---|---|---|---|\n"));
 		for (const FIssue& I : Issues)
 		{
-			R.Appendf(TEXT("| %s | %.0f | %d | %.0f | %s | %s | %s |\n"), *Clock(I.T), I.S, I.Leg, I.Elev, *I.Kind, *I.Text.Replace(TEXT("|"), TEXT("/")), *Cm(I.Pos));
+			R.Appendf(TEXT("| %s | %.0f | %d | %.0f | %s | %s | %s |\n"), *Clock(I.T), I.S, I.Leg, I.Elev, *I.Kind, *I.Text.Replace(TEXT("|"), TEXT("/")), *RouteBotCm(I.Pos));
 		}
 	}
 
@@ -981,7 +981,7 @@ FString UYggRouteBot::BuildReport(bool bFinal) const
 			F.Num(), 1000.f / Avg, Avg, F[F.Num() / 2], P99, 1000.f / P99, F.Last());
 		const FPoint* Worst = nullptr;
 		for (const FPoint& Pt : Points) { if (Pt.Fps > 0.f && (!Worst || Pt.Fps < Worst->Fps)) { Worst = &Pt; } }
-		if (Worst) { R.Appendf(TEXT("- Slowest stretch: the %.0f m before %.0f m along (leg %d, %.0f m a.s.l.): %.0f fps; BugItGo %s\n"), EveryM, Worst->S, Worst->Leg, Worst->Elev, Worst->Fps, *Cm(Worst->Pos)); }
+		if (Worst) { R.Appendf(TEXT("- Slowest stretch: the %.0f m before %.0f m along (leg %d, %.0f m a.s.l.): %.0f fps; BugItGo %s\n"), EveryM, Worst->S, Worst->Leg, Worst->Elev, Worst->Fps, *RouteBotCm(Worst->Pos)); }
 	}
 
 	R.Append(TEXT("\n## Checkpoints\n\n| m along | leg | game | m a.s.l. | off route m | boots-collision cm | boots-visible cm | ground | rope / flag / clue / checkpoint ahead m | clipped | HUD next | leg to | simple over | fps | picture |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"));
