@@ -444,7 +444,9 @@ void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 
 	// Only feet in snow press into it; deep powder all the way, hard crust just a little. Other people's prints
 	// (StampOtherFoot) are drawn whether or not the player stands in snow.
-	const bool bOwnFeet = GroundSoftness > 0.f || CurrentSink > 0.5f;
+	// Each foot is asked about its own ground (2026-11-20, #69): the body's ground alone let a foot on rock or rubble
+	// beside snow stamp, and the easing sink kept both feet stamping ~1 s after stepping onto moraine.
+	const bool bOwnFeet = (GroundSoftness > 0.f || CurrentSink > 0.5f) && (Feet[0].bOnSnow || Feet[1].bOnSnow);
 	if (!bOwnFeet && OtherPrints.Num() == 0)
 	{
 		SoftenTrailMap();
@@ -482,6 +484,11 @@ void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 	{
 		if (!bOwnFeet) { break; }
 		const FVector FootLocation = Body->GetSocketLocation(Foot.Bone);
+		// not snow under this boot, or not measured here (standing still after a teleport): no print, no channel (2026-11-20)
+		if (!Foot.bOnSnow || FVector::DistSquared2D(FootLocation, Foot.SnowCheckedAt) > FMath::Square(50.0))
+		{
+			continue;
+		}
 		if (Foot.bPlanted)
 		{
 			// A planted foot leaves a boot print...
@@ -646,11 +653,13 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	UpdateFoot(Feet[1], WalkDirection, DeltaTime);
 
 	// Safety net: walking steps went silent after a weather change while running steps stayed (play-test 2026-11-11,
-	// cause not found yet). If no foot has planted for over two step lengths (~80 cm a step), play the step anyway and
-	// say so in the log with the foot heights, so the real cause can be found.
+	// cause not found yet). If no foot has planted for over a step length and a third (~80 cm a step), play the step anyway
+	// and say so in the log with the foot heights. (2026-11-20, #46: it waited 2.2 step lengths, so a walk whose plant
+	// detection was stuck got one step in every 2.2 - sparse. The cause, a stuck lowest foot height, is fixed in UpdateFoot;
+	// the third of slack keeps the net from doubling real steps that are a little longer than 80 cm.)
 	TimeSinceStep += DeltaTime;
 	const float StepEvery = FMath::Clamp(80.f / FMath::Max(float(Velocity.Size2D()), 1.f), 0.25f, 0.9f);
-	if (TimeSinceStep > StepEvery * 2.2f)
+	if (TimeSinceStep > StepEvery * 1.35f)
 	{
 		const FVector Centre = Character->GetActorLocation();
 		FCollisionQueryParams Params(SCENE_QUERY_STAT(SnowTrailCadence), false, Character);
@@ -699,7 +708,17 @@ void USnowTrailComponent::OnFootContact(bool bLeft, USkeletalMeshComponent* Mesh
 	FHitResult Hit;
 	if (!World->LineTraceSingleByChannel(Hit, Land + FVector(0.f, 0.f, 60.f), Land - FVector(0.f, 0.f, 150.f), ECC_Visibility, Params))
 	{
-		return;
+		// nothing under the landing spot (a gap in the collision, a ray past a ledge): the ground under the body instead,
+		// so the contact still sounds (2026-11-20, #46: a missed ray dropped the step and left it to the cadence net)
+		const FVector Centre = Character->GetActorLocation();
+		if (!World->LineTraceSingleByChannel(Hit, Centre, Centre - FVector(0.f, 0.f, Character->GetSimpleCollisionHalfHeight() + 60.f), ECC_Visibility, Params))
+		{
+			return;
+		}
+		if (CVarStepLog.GetValueOnGameThread() != 0)
+		{
+			UE_LOG(LogTemp, Display, TEXT("Contact %s: no ground under the landing spot, used the ground under the body"), bLeft ? TEXT("L") : TEXT("R"));
+		}
 	}
 	TimeSinceStep = 0.f;
 	float Delay = 0.f;
@@ -728,8 +747,12 @@ void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirect
 	FHitResult Hit;
 	if (!GetWorld()->LineTraceSingleByChannel(Hit, FootLocation + FVector(0.f, 0.f, 60.f), FootLocation - FVector(0.f, 0.f, 120.f), ECC_Visibility, Params))
 	{
+		Foot.bOnSnow = false;
 		return;
 	}
+	// this foot's own ground decides its print and trench (UpdateTrailMap), from the same trace (2026-11-20, #69)
+	Foot.bOnSnow = IsSnow(Hit);
+	Foot.SnowCheckedAt = FootLocation;
 	// The animated body's foot IK keeps its feet on the snow surface even while sunk, so no correction is needed.
 	const float Height = float(FootLocation.Z - Hit.ImpactPoint.Z);
 	Foot.Height = Height;
@@ -751,9 +774,22 @@ void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirect
 
 	// Each foot's own lowest and highest height over the last steps: the planted height depends on the skeleton
 	// (Mixamo ankles sit higher than the mannequin's) and the lift on the clip, so thresholds sit inside that range.
-	const float Drift = SwingDriftCmPerSecond * DeltaTime;
-	Foot.Lowest = FMath::Min(Height, Foot.Lowest + Drift);
-	Foot.Highest = FMath::Max(Height, Foot.Highest - Drift);
+	// Kept over two windows of about one foot cycle each, so an odd height is forgotten within two windows (2026-11-20,
+	// #46: the old lowest crept back up at only 3 cm/s, so one odd trace of -45 cm - the ray hit something above the
+	// boot - kept the plant line out of reach for ~10 s and walking steps went silent; logs showed low -45 at height -10..+3).
+	const float Window = FMath::Clamp(120.f / WalkSpeed, 0.5f, 2.f);   // 0.8 s at a 150 cm/s walk (a foot cycle ~1.1 s)
+	Foot.WindowLow = FMath::Min(Foot.WindowLow, Height);
+	Foot.WindowHigh = FMath::Max(Foot.WindowHigh, Height);
+	Foot.WindowAge += DeltaTime;
+	if (Foot.WindowAge > Window)
+	{
+		Foot.PrevLow = Foot.WindowLow;
+		Foot.PrevHigh = Foot.WindowHigh;
+		Foot.WindowLow = Foot.WindowHigh = Height;
+		Foot.WindowAge = 0.f;
+	}
+	Foot.Lowest = FMath::Min(Foot.WindowLow, Foot.PrevLow);
+	Foot.Highest = FMath::Max(Foot.WindowHigh, Foot.PrevHigh);
 	const float Swing = FMath::Max(Foot.Highest - Foot.Lowest, MinSwingCm);
 	const float PlantBelow = Foot.Lowest + Swing * PlantFraction;
 	if (Foot.bPlanted)
@@ -780,7 +816,8 @@ void USnowTrailComponent::UpdateFoot(FFootState& Foot, const FVector& WalkDirect
 		if (CVarStepLog.GetValueOnGameThread() != 0)
 		{
 			UE_LOG(LogTemp, Display, TEXT("Step %s: height %.1f (low %.1f high %.1f), foot speed %.2f x walk, %.0f ms after it got low, %s, walk %.0f cm/s at %s"),
-				Foot.bLeft ? TEXT("L") : TEXT("R"), Height, Foot.Lowest, Foot.Highest, Foot.SpeedRatio, Foot.LowSeconds * 1000.f, IsRock(Hit) ? TEXT("rock") : TEXT("other"),
+				Foot.bLeft ? TEXT("L") : TEXT("R"), Height, Foot.Lowest, Foot.Highest, Foot.SpeedRatio, Foot.LowSeconds * 1000.f,
+				IsRock(Hit) ? TEXT("rock") : Foot.bOnSnow ? TEXT("snow") : TEXT("other (no print)"),
 				GetOwner()->GetVelocity().Size2D(), *Hit.ImpactPoint.ToCompactString());
 		}
 		Foot.bPlanted = true;
@@ -1065,6 +1102,25 @@ namespace
 			}));
 		return nullptr;
 	}
+
+	/** True while a route tile's rock faces are not known yet (packaged game, its _col still loading): IsRock answers
+	 *  "not rock" then, which made the first steps on a rocky tile count as snow (2026-11-20). */
+	bool SnowTrailTileRockPending(const FHitResult& Hit)
+	{
+		const UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Hit.GetComponent());
+		const UStaticMesh* Asset = Mesh ? Mesh->GetStaticMesh() : nullptr;
+		if (!Asset)
+		{
+			return false;
+		}
+#if WITH_EDITORONLY_DATA
+		if (Asset->ComplexCollisionMesh.Get())
+		{
+			return false;   // the editor reads the collision mesh directly (IsRock)
+		}
+#endif
+		return SnowTrailColSections(Asset) == nullptr;
+	}
 }
 
 bool USnowTrailComponent::IsRock(const FHitResult& Hit)
@@ -1111,7 +1167,13 @@ bool USnowTrailComponent::IsRock(const FHitResult& Hit)
 bool USnowTrailComponent::IsSnow(const FHitResult& Hit)
 {
 	// The mountain's own snow: not tents, props, rock or glacier rubble / bare ice.
-	return IsTerrain(Hit) && !IsRock(Hit) && !IsGlacierHard(Hit.ImpactPoint);
+	if (!IsTerrain(Hit) || IsRock(Hit) || IsGlacierHard(Hit.ImpactPoint))
+	{
+		return false;
+	}
+	// a tile whose rock faces are still loading is not known to be snow: no print, trench or sinking on it for that
+	// moment (2026-11-20; the landscape is never pending: it is not a static mesh)
+	return Cast<ALandscapeProxy>(Hit.GetActor()) != nullptr || !SnowTrailTileRockPending(Hit);
 }
 
 void USnowTrailComponent::UpdateSinking(float DeltaTime)

@@ -23,6 +23,7 @@
 #include "Misc/Paths.h"
 #include "TextureResource.h"
 #include "Survival/FirstPersonBodyComponent.h"
+#include "Survival/YggViewRig.h"
 
 namespace
 {
@@ -104,7 +105,13 @@ namespace
 			const float Yaw = Args.Num() > 3 ? FCString::Atof(*Args[3]) : C->GetActorRotation().Yaw;
 			const float Pitch = Args.Num() > 4 ? FCString::Atof(*Args[4]) : 0.f;
 			const bool bOk = C->TeleportTo(To, FRotator(0.f, Yaw, 0.f));
-			PC->SetControlRotation(FRotator(Pitch, Yaw, 0.f));
+			// (2026-11-20) a teleport is a camera cut and a rig reset, as the bots do it (HardReset sets the control rotation)
+			if (bOk)
+			{
+				if (PC->PlayerCameraManager) { PC->PlayerCameraManager->SetGameCameraCutThisFrame(); }
+				if (UYggViewRigComponent* R = UYggViewRigComponent::Find(C)) { R->HardReset(FRotator(Pitch, Yaw, 0.f), EYggView::Walk); }
+				else { PC->SetControlRotation(FRotator(Pitch, Yaw, 0.f)); }
+			}
 			UE_LOG(LogTemp, Display, TEXT("GroundProbe.Go: %s %s"), *To.ToCompactString(), bOk ? TEXT("ok") : TEXT("FAILED (blocked)"));
 		}));
 
@@ -142,9 +149,12 @@ namespace
 			const bool bSoles = B && B->GetOwnSoles(SL, SR);
 			auto Under = [&](const FVector& P, double& Col, double& Vis)
 			{
+				// (2026-11-20) start higher the further out the cell is (an uphill cell on a steep slope was over Top), and
+				// capture from 4 m above the cell's own collision, as VisibleZ says
 				FHitResult Hh;
-				Col = CollisionZ(W, C, P, Top, Hh) ? Hh.ImpactPoint.Z : NaN;
-				Vis = VisibleZ(C, P, From);
+				const double Reach = FVector::Dist2D(P, Cap) * 2.0;
+				Col = CollisionZ(W, C, P, Top + Reach, Hh) ? Hh.ImpactPoint.Z : NaN;
+				Vis = VisibleZ(C, P, FMath::IsNaN(Col) ? From + Reach : Col + 400.0);
 			};
 			double ColL = NaN, VisL = NaN, ColR = NaN, VisR = NaN, ColE = NaN, VisE = NaN;
 			if (bSoles) { Under(SL, ColL, VisL); Under(SR, ColR, VisR); }

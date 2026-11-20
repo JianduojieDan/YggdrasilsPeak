@@ -590,6 +590,20 @@ void UYggPlayBot::Decide(APawn* P)
 		Note(FString::Printf(TEXT("the climber jumped %.0f m (story cut, respawn...) to %s"), FVector::Dist(Pos, LastPos) / 100.0, *Cm(Pos)));
 		LastProgress = GameT;
 		Best = 1e12f;
+		CutPos = Pos;
+		CutT = GameT;
+	}
+	// 3 s after a cut, still posed (lying / sitting / kneeling: he cannot walk), he should be where the cut put him. If he is
+	// not, the physics pushed him out of something there (2026-11-20: 1.7 m off tent_start, the duffel beat out of reach)
+	if (CutT >= 0.0 && GameT - CutT > 3.0)
+	{
+		const float Drift = float(FVector::Dist(Pos, CutPos));
+		if (Drift > 30.f && RigView != uint8(EYggView::Walk) && RigView != uint8(EYggView::Crawl))
+		{
+			Note(FString::Printf(TEXT("WARNING the climber is %.0f cm from where the story's cut put him (%s), posed: something blocks his capsule there"),
+				Drift, *Cm(CutPos)));
+		}
+		CutT = -1.0;
 	}
 	LastPos = Pos;
 	bHaveLastPos = true;
@@ -681,7 +695,9 @@ void UYggPlayBot::Decide(APawn* P)
 	if (B.StandWait > (bInReach ? 120.f : 30.f))
 	{
 		B.bSkipped = true;
-		B.SkipWhy = bInReach ? TEXT("in reach, but it did not fire in 2 min") : TEXT("posed out of its reach for 30 s");
+		// the numbers the story's trigger uses: the 3D distance from the capsule centre to the place (YggStory Conditions)
+		B.SkipWhy = bInReach ? FString(TEXT("in reach, but it did not fire in 2 min"))
+			: FString::Printf(TEXT("posed out of its reach for 30 s: %.1f m from %s, reach %.1f m"), FVector::Dist(Pos, NavPos) / 100.0, *B.Near, B.R / 100.f);
 		Note(FString::Printf(TEXT("beat %s skipped (%s)"), *B.Id, *B.SkipWhy));
 		NavBeat = INDEX_NONE;
 		return;

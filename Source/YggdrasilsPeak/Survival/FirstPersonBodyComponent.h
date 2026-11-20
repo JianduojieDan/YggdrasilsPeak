@@ -40,6 +40,17 @@ enum class EYggView : uint8;
  *  so the world body is lowered until the lower boot reaches its ground and each boot is fitted to the ground under it
  *  (the uphill knee bends), in the owner's own legs (FeetBody) and in what others, mirrors and the shadow see (WorldBody).
  */
+/** (bug #72) One physics-asset body of the owner's torso, measured by UFirstPersonBodyComponent::MeasureOwnFront. */
+struct FOwnBodyBox
+{
+	/** In the Origin/Forward frame (X forward, Y right, Z up, cm); exact extremes along each axis for these convex shapes. */
+	FBox Box = FBox(ForceInit);
+	FName Bone = NAME_None;
+	/** Shoulder / upper arm: swings with every step, so the eye clearance ignores it (it is shrunk if it reaches the eye). */
+	bool bArm = false;
+};
+using FOwnBodyBoxes = TArray<FOwnBodyBox, TInlineAllocator<32>>;
+
 UCLASS(ClassGroup=(Survival), meta=(BlueprintSpawnableComponent))
 class YGGDRASILSPEAK_API UFirstPersonBodyComponent : public UActorComponent
 {
@@ -270,6 +281,37 @@ public:
 	/** The owner's own world-space body (legs; torso and arms with one body): things worn on the chest attach here
 	 *  (the khata). Null before BeginPlay or without the first-person layout. */
 	UPoseableMeshComponent* GetOwnBody() const { return FeetBody; }
+
+	/**
+	 *  (bug #72, 2026-11-20) The front of the owner's own torso, for the view rig's eye clearance: the forward-most point
+	 *  (cm along Forward from Origin, Forward horizontal) of the world body's physics-asset bodies at this frame's pose,
+	 *  counting only bodies whose top reaches above MinZ (cm above Origin) and that overlap LateralCenter +- LateralHalf
+	 *  (cm to the right of Forward). Hidden bones (head, neck) and forearms / hands are left out. LeanDeg tips the
+	 *  bodies above the lean bone back as ApplyOwnerLean does. False without a physics asset or any matching body.
+	 *  OutBoxes (optional) receives every counted body (see FOwnBodyBox); OutFront ignores the arms.
+	 */
+	bool MeasureOwnFront(const FVector& Origin, const FVector& Forward, float MinZ, float LateralCenter, float LateralHalf,
+		float LeanDeg, float& OutFront, FOwnBodyBoxes* OutBoxes = nullptr) const;
+
+	/** How the owner's visible torso is drawn: 1 = world space (FeetBody with one body), the camera's first-person scale for
+	 *  the first-person mesh (it is pulled towards the eye by that factor, so the clearance must grow by 1 / scale), 0 = no
+	 *  torso of yours on screen (posed, climbing view). */
+	float GetOwnTorsoDepthScale() const;
+
+	/** The rig tips FeetBody's torso back by this much (degrees, about the first spine joint) as the player looks down: the
+	 *  usual first-person-body trick, so the chest clears the eye and the boots show beyond it. Owner only: the world
+	 *  body, its shadow and mirrors are untouched. */
+	void SetOwnerLean(float Deg) { OwnerLeanDeg = FMath::Clamp(Deg, 0.f, 30.f); }
+	float GetOwnerLean() const { return OwnerLeanDeg; }
+
+	/** (bug #72) How far the rig moved the eye off its normal spot this frame to clear the torso (world cm): the raised
+	 *  hands (axe, story hands) are placed relative to the camera, so this is taken off their targets and they stay
+	 *  where they were (the shoulders don't move with the eye: never stretch the arm). */
+	void SetEyeClearOffset(const FVector& WorldOffset) { EyeClearOffset = WorldOffset; }
+
+	/** (bug #72) Bones of your own body (FeetBody) the eye still reaches after the capped push and lift: shrunk at their own
+	 *  joints for the owner while listed (the rig holds each a moment so a swinging arm doesn't flicker). */
+	void SetClipShrunk(const TArray<FName, TInlineAllocator<8>>& Bones);
 
 	/** Raised story hands trail the view by about 70 ms (the axe hand keeps HandFollowSpeed). */
 	UPROPERTY(EditAnywhere, Category="First Person|Hands In Use", meta=(ClampMin="1"))
@@ -600,6 +642,8 @@ private:
 	float StuckCheck = 0.f;
 	/** True while the capsule rests on a slope too steep to stand on (a short sweep under it hits within SlideProbeCm). */
 	bool DetectSlide(float DeltaTime);
+	/** (2026-11-20) Not sliding: SlideHold, bSliding and each boot's SlideTuck back to 0. */
+	void ClearSlide();
 	/** Falling, hardly moving and deep (> 5 cm) in a blocking surface: pushed out along the penetration so it can land. */
 	void UnstickFromGround(float DeltaTime);
 
@@ -612,6 +656,47 @@ private:
 
 	/** Copies the animated pose onto a posable copy of the same mesh, in place (no allocation each frame). */
 	static void CopyBodyPose(UPoseableMeshComponent* Copy, USkeletalMeshComponent* Source);
+
+	// ---- Hidden bones on the posable copies (bug #72) ----
+	// HideBoneByName skins a hidden bone with its PARENT's matrix scaled to zero (SkeletalRender.cpp, ApplyScale(0)), which
+	// pulls every vertex with any weight on it towards the mesh root at the boots: on the AI-rigged climber (wide auto
+	// weights) the hidden neck / spine / thighs tore long black shards from the collar and the hem down to the feet.
+	// FeetBody and ViewBody instead give each "hidden" bone a near-zero scale at its OWN joint after every pose copy, so
+	// its vertices close onto that joint (inside the collar, the hips) and nothing is stretched.
+	/** Bone indices kept shrunk on FeetBody / ViewBody. */
+	TArray<int32> FeetShrunk;
+	TArray<int32> ViewShrunk;
+	/** FeetBody bones shrunk because the eye reaches them (SetClipShrunk); applied together with FeetShrunk. */
+	TArray<int32> FeetClipShrunk;
+	FVector EyeClearOffset = FVector::ZeroVector;
+	/** Things attached to FeetBody's torso bones (the khata) ride on the world body while that torso is shrunk away, and
+	 *  come back when it shows again. */
+	TArray<TWeakObjectPtr<USceneComponent>> TorsoChildrenOnWorld;
+	void SyncTorsoChildren();
+	bool IsTorsoBone(int32 BoneIndex) const;
+	TArray<int32>* ShrunkListFor(const UPoseableMeshComponent* Copy);
+	/** Adds / removes Bone (by name) from Copy's shrunk list; applied at once to the current pose. */
+	void SetBoneShrunk(UPoseableMeshComponent* Copy, FName Bone, bool bShrunk);
+	/** Re-applies Copy's shrunk bones to its pose (call after every pose copy). */
+	void ApplyShrunk(UPoseableMeshComponent* Copy);
+
+	// ---- Owner lean and the measured torso front (bug #72) ----
+	float OwnerLeanDeg = 0.f;
+	/** First bone of FeetBody's spine branch: the lean pivots on its joint. */
+	int32 LeanBoneIndex = INDEX_NONE;
+	/** Tips FeetBody's torso back by OwnerLeanDeg about LeanBoneIndex's joint (after the pose copy, torso shown only). */
+	void ApplyOwnerLean(UPoseableMeshComponent* Copy, const USkeletalMeshComponent* Source);
+	struct FFrontBody
+	{
+		int32 Bone = INDEX_NONE;
+		int32 Setup = INDEX_NONE;
+		bool bLeans = false;
+		bool bArm = false;
+	};
+	/** The physics-asset bodies MeasureOwnFront counts, built once per physics asset. */
+	mutable TArray<FFrontBody> FrontBodies;
+	mutable TWeakObjectPtr<const UObject> FrontBodiesFor;
+	mutable bool bWarnedNoPhysicsAsset = false;
 
 	/** The ClimbingComponent, if the owner has one (kept as its base class so this header needs no climbing include).
 	 *  ExpeditionComponent adds it at run time, possibly after this BeginPlay, so IsClimbing looks it up until found. */

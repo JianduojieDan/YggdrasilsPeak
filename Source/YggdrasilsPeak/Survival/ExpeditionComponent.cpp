@@ -348,6 +348,8 @@ void UExpeditionComponent::TickSummitBeat()
 
 void UExpeditionComponent::FinishSummitBeat()
 {
+	bSummitScreenPending = false;   // the screen is shown now (2026-11-20)
+	WriteSave();
 	Say(FText::Format(NSLOCTEXT("Expedition", "Summit", "SUMMIT - {0}. Now get back down alive."), FText::FromString(SummitName)), 10.f);
 	// the summit camp by the World Tree is the end of the climb: the summit screen (2026-11-11)
 	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
@@ -434,6 +436,7 @@ void UExpeditionComponent::UpdateCamps()
 	if (Inside->Kind == ERouteLandmarkKind::Summit && !bSummitReached)
 	{
 		bSummitReached = true;
+		bSummitScreenPending = true;   // saved with the checkpoint below; cleared when the screen shows (2026-11-20)
 		LastCamp = Inside;
 		SaveCheckpoint(Inside, Inside->LandmarkName);
 		SummitName = Inside->LandmarkName;
@@ -536,6 +539,14 @@ void UExpeditionComponent::Respawn()
 	{
 		Pack->RestoreCheckpoint();
 	}
+	// died during the summit beat: the summit screen is still owed (2026-11-20)
+	if (bSummitScreenPending && !bSummitBeat)
+	{
+		if (!StartSummitBeat())
+		{
+			FinishSummitBeat();
+		}
+	}
 }
 
 void UExpeditionComponent::SaveCheckpoint(AActor* Where, const FString& Name)
@@ -574,6 +585,7 @@ void UExpeditionComponent::WriteSave()
 	Save->CarriedBottles = CheckpointBottles;
 	Save->AdaptedAltitude = Survival.IsValid() ? Survival->GetAdaptedAltitude() : -1.f;
 	Save->bSummitReached = bSummitReached;
+	Save->bSummitScreenPending = bSummitScreenPending;
 	Save->Deaths = Deaths;
 	Save->PlaySeconds = SavedPlaySeconds + GetWorld()->GetTimeSeconds() - StartTime;
 	Save->Clues = FoundClues.Array();
@@ -631,6 +643,7 @@ void UExpeditionComponent::LoadSavedExpedition()
 	LastCheckpoint = Where;
 	LastCheckpointName = Save->CampName;
 	bSummitReached = Save->bSummitReached;
+	bSummitScreenPending = Save->bSummitScreenPending;
 	Deaths = Save->Deaths;
 	SavedPlaySeconds = Save->PlaySeconds;
 	StartTime = GetWorld()->GetTimeSeconds();
@@ -654,6 +667,15 @@ void UExpeditionComponent::LoadSavedExpedition()
 	}
 	SayAmbient(FText::Format(NSLOCTEXT("Expedition", "Continue", "Continuing from {0}. (Console: ygg.NewGame for a fresh start.)"),
 		FText::FromString(Save->CampName)), 6.f);
+	// quit or crashed during the summit beat: the summit screen is still owed (2026-11-20)
+	if (bSummitScreenPending)
+	{
+		SummitName = Save->CampName;   // the checkpoint is the summit camp; the line on the screen needs its name
+		if (!StartSummitBeat())
+		{
+			FinishSummitBeat();
+		}
+	}
 }
 
 void UExpeditionComponent::SetReadableClue(AStoryClue* Clue)

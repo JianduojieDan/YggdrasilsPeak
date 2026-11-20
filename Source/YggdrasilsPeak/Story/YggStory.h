@@ -314,10 +314,24 @@ private:
 	FVector PendingTeleportLast = FVector::ZeroVector;   // where the climber was last frame (a jump of metres = not walking)
 	float PendingTeleportYaw = 0.f, PendingTeleportTime = 0.f;
 	bool bHeldForGround = false;
+	float HeldForGroundTime = 0.f;   // (2026-11-20) seconds held for ground that never loaded; after 10 the climber is put on the far ground
 	bool bPendingReached = false;   // the climber has stood at the spot: from then on only a story Move lease or a jump puts him back
 	void UpdatePendingTeleport(float Dt);
 	/** Ends the check: a climber still held in the air for the ground falls normally again. */
 	void ClearPendingTeleport();
+	// a story posture right after a cut (lying, sitting, kneeling where the story put him) is pinned to the cut spot: the
+	// climber cannot walk in it, so any move of his capsule is the physics pushing him out of something. 2026-11-20: woken
+	// 1.2-1.7 m off tent_start (once past the tent wall), the duffel 2.4 m away and its beat skipped. While pinned the
+	// movement is off (MOVE_None: no gravity, no depenetration); walking or crawling hands it back (ygg.Story.PinPosed).
+	FVector PinSpot = FVector::ZeroVector;
+	double PinCutClock = -1.0;
+	bool bPinSpot = false;
+	bool bPinned = false;
+	void UpdatePosedPin();
+	/** Movement back on (MOVE_Walking) if the pin holds it; forgets the cut spot. */
+	void ReleasePosedPin();
+	/** Logs every component that blocks the climber's capsule at Where (a cut's destination): what the physics pushes him out of. */
+	void LogCutOverlaps(const FString& PlaceName, const FVector& Where) const;
 
 	int32 ChoiceResult = -1;
 	bool bChoiceOpen = false;
@@ -341,6 +355,8 @@ private:
 	float LightBase[4] = {};
 	FName LightName[4];
 	TArray<TWeakObjectPtr<class ULightComponent>> LightComps[4];
+	/** (2026-11-20) each tagged light's own intensity and visibility, seen the first time a story takes it; Stop puts them back so a restart reads the real values. */
+	TMap<TWeakObjectPtr<class ULightComponent>, TPair<float, bool>> LightOrig;
 	/** NPC looks loaded in the background at the chapter start (spec 6.16): DressAs then finds them in memory. */
 	TSharedPtr<FStreamableHandle> PreloadHandle;
 	/** ygg.Climb.Camera while the chapter plays (0: a grab never swaps to the climbing arm); restored at Stop. */

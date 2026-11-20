@@ -40,5 +40,5 @@ float2 uv = (WP.xy - Area.xy) / Area.z + 0.5;
 float2 edge = abs(uv - 0.5);
 float fade = 1.0 - smoothstep(0.40, 0.48, max(edge.x, edge.y));
 if (fade <= 0.0) return saturate(Base);
-float h = th.Height(Trail, TrailSampler, uv, WP.xy, 18.0, 7.0) * fade * (1.0 - Rock) * (1.0 - th.GlacierHard(Mask, MaskSampler, WP, VN));
+float h = th.Height(Trail, TrailSampler, uv, WP.xy, 18.0, 7.0) * fade * (1.0 - smoothstep(0.03, 0.2, Rock)) * (1.0 - th.GlacierHard(Mask, MaskSampler, WP, VN));
 return saturate(Base + h / 400.0);

@@ -178,7 +178,8 @@ public:
 	UPROPERTY(EditAnywhere, Category="Snow Trail", meta=(ClampMin="0.5"))
 	float MinSwingCm = 4.f;
 
-	/** How fast the remembered lowest/highest foot heights relax towards each other (cm/s), so slopes and clip changes are followed. */
+	/** Unused since 2026-11-20 (#46): the lowest/highest foot heights are now kept over two short windows (UpdateFoot), which
+	 *  follow slopes and clip changes and forget an odd trace. Was: how fast they relaxed towards each other (cm/s). */
 	UPROPERTY(EditAnywhere, Category="Snow Trail", meta=(ClampMin="0"))
 	float SwingDriftCmPerSecond = 3.f;
 
@@ -241,7 +242,8 @@ public:
 	static bool IsRock(const FHitResult& Hit);
 
 	/** True when the hit is the mountain's snow (not its rock or glacier rubble/ice, not a prop). Rock on the detail
-	 *  tiles comes from their collision faces (a rock physical material on rock triangles). */
+	 *  tiles comes from their collision faces (a rock physical material on rock triangles). A tile whose rock faces are
+	 *  still loading (packaged game) is not snow yet (2026-11-20). */
 	static bool IsSnow(const FHitResult& Hit);
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
@@ -263,6 +265,12 @@ private:
 		/** Lowest / highest foot height over the last steps (cm), relaxing towards each other at SwingDriftCmPerSecond. */
 		float Lowest = 1000.f;
 		float Highest = -1000.f;
+		/** Lowest / highest in the current window and the one before it (each about one foot cycle, 2026-11-20 #46). */
+		float WindowLow = 1000.f;
+		float WindowHigh = -1000.f;
+		float PrevLow = 1000.f;
+		float PrevHigh = -1000.f;
+		float WindowAge = 0.f;
 		/** How fast the foot moves, as a share of the walking speed (smoothed): ~0 planted, ~2 mid-swing. */
 		float SpeedRatio = 0.f;
 		/** The foot's own velocity (cm/s, smoothed): where it will land a moment from now. */
@@ -271,6 +279,11 @@ private:
 		bool bHasLast = false;
 		/** Seconds the lifted foot has been low enough to count as landed without having stopped yet. */
 		float LowSeconds = 0.f;
+		/** The ground under this foot is the mountain's snow (IsSnow on its own trace), and where that was measured. Only
+		 *  then the foot presses a print / ploughs the trench (2026-11-20, #69: the body's ground decided for both feet,
+		 *  and the sink kept the trench going ~1 s onto rock). */
+		bool bOnSnow = false;
+		FVector SnowCheckedAt = FVector::ZeroVector;
 	};
 
 	/** Samples the snow under the player and eases the body's sink depth towards it. */

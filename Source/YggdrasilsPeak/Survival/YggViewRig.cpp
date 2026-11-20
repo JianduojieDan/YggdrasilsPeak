@@ -14,6 +14,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/WorldPartitionStreamingSourceComponent.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -24,6 +25,7 @@
 #include "GameFramework/WorldSettings.h"
 #include "HAL/IConsoleManager.h"
 #include "InputCoreTypes.h"
+#include "Interfaces/Interface_PostProcessVolume.h"
 #include "Kismet/GameplayStatics.h"
 #include "Stats/Stats.h"
 
@@ -43,6 +45,9 @@ namespace
 	TAutoConsoleVariable<float> CVarViewBreath(TEXT("ygg.View.Breath"), 1.f, TEXT("Breathing motion scale (test switch; 0 = off)."));
 	TAutoConsoleVariable<float> CVarViewEyeFwd(TEXT("ygg.View.EyeFwd"), 16.f, TEXT("The eye sits this far (cm) in front of the body axis (out of the jacket collar)."));
 	TAutoConsoleVariable<float> CVarViewNeck(TEXT("ygg.View.Neck"), 1.f, TEXT("Neck and waist model scale (test switch; 0 = the eye turns on the spot)."));
+	TAutoConsoleVariable<int32> CVarViewClear(TEXT("ygg.View.Clear"), 1,
+		TEXT("(bug #72) 1 = looking down, the eye keeps EyeClearCm in front of your own measured torso and the torso tips back (OwnerLeanMaxDeg); ")
+		TEXT("0 = off (the eye can end up inside the jacket: black shards); 2 = on, and draws the measured bodies (cyan), the front (red) and the numbers."));
 	TAutoConsoleVariable<int32> CVarViewOneBody(TEXT("ygg.View.OneBody"), 1,
 		TEXT("1 = walking shows one world-space body (FeetBody with torso and arms, no seam at the hips); 0 = the older two-projection body."));
 	TAutoConsoleVariable<int32> CVarViewLog(TEXT("ygg.View.Log"), 0, TEXT("1 = log every lease taken / released and the posture steps."));
@@ -218,6 +223,41 @@ namespace
 			Rig->Audit().ParseIntoArrayLines(Lines);
 			for (const FString& L : Lines) { UE_LOG(LogYggView, Display, TEXT("%s"), *L); }
 		}));
+
+	// (2026-11-20) the level's exposure compensation at the camera, blended the way the engine does it (UWorld::
+	// AddPostProcessingSettings: the r.DefaultFeature.AutoExposure.Bias default, every enabled volume in priority order weighted
+	// by its blend radius, then the camera's own settings). The rig's exposure channel ADDS to this: blending PPBias at weight 1
+	// with only the rig's sum used to REPLACE it, so a +0.3 story pulse or the sanity breath (-0.35) dimmed the whole screen by
+	// 0.7-1.35 stops (user #72, "the whole screen dims at the camp").
+	float LevelExposureBias(UWorld* World, const FMinimalViewInfo& POV)
+	{
+		static const TConsoleVariableData<float>* VarBias = IConsoleManager::Get().FindTConsoleVariableDataFloat(TEXT("r.DefaultFeature.AutoExposure.Bias"));
+		float Bias = VarBias ? VarBias->GetValueOnGameThread() : 1.f;
+		if (World)
+		{
+			for (IInterface_PostProcessVolume& V : World->GetPostProcessVolumeIterator())
+			{
+				const FPostProcessVolumeProperties P = V.GetProperties();
+				if (!P.bIsEnabled || !P.Settings || !P.Settings->bOverride_AutoExposureBias)
+				{
+					continue;
+				}
+				float Wt = FMath::Clamp(P.BlendWeight, 0.f, 1.f);
+				if (!P.bIsUnbound)
+				{
+					float D = 0.f;
+					V.EncompassesPoint(POV.Location, 0.f, &D);
+					Wt = (D < 0.f || D > P.BlendRadius) ? 0.f : (P.BlendRadius >= 1.f ? Wt * (1.f - D / P.BlendRadius) : Wt);
+				}
+				if (Wt > 0.f) { Bias = FMath::Lerp(Bias, P.Settings->AutoExposureBias, Wt); }
+			}
+		}
+		if (POV.PostProcessSettings.bOverride_AutoExposureBias && POV.PostProcessBlendWeight > 0.f)
+		{
+			Bias = FMath::Lerp(Bias, POV.PostProcessSettings.AutoExposureBias, FMath::Clamp(POV.PostProcessBlendWeight, 0.f, 1.f));
+		}
+		return Bias;
+	}
 }
 
 // ------------------------------------------------------------------------------------------------ set-up
@@ -1792,15 +1832,22 @@ void UYggViewRigComponent::ComposeEye(float Dt)
 	// neck: the eye sits in front of and above the neck pivot, so looking down brings it forward and down
 	const float NeckK = FMath::Clamp(CVarViewNeck.GetValueOnGameThread(), 0.f, 2.f);
 	const FVector N = NeckScale * NeckK * FVector(NeckFwdCm, 0.f, NeckUpCm);
-	E += FRotator(Pitch, Yaw, 0.f).RotateVector(N) - YawRot.RotateVector(N);
+	// (bug #72) the nod keeps its forward swing, but its drop is capped: at -85 it lowered the eye 12 cm, into the collar
+	FVector NeckMove = FRotator(Pitch, Yaw, 0.f).RotateVector(N) - YawRot.RotateVector(N);
+	NeckMove.Z = FMath::Max(float(NeckMove.Z), -FMath::Max(NeckDropMaxCm, 0.f));
+	E += NeckMove;
 	// the eyes sit in front of the neck: on the capsule axis the camera was inside the jacket collar ring whenever the
-	// player looked down (2026-11-20 check). Walking and kneeling only; takeovers place the eye themselves.
-	if (!InTakeover()) { E += Fwd * CVarViewEyeFwd.GetValueOnGameThread() * FMath::Clamp(H / StandEyeCm, 0.5f, 1.2f); }
+	// player looked down (2026-11-20 check). All postures; takeovers place the eye themselves, so it eases out
+	// (2026-11-20) over their edges instead of jumping 16 cm in one frame.
+	EyeFwdW = ExpTo(EyeFwdW, InTakeover() ? 0.f : 1.f, 0.07f, Dt);
+	E += Fwd * CVarViewEyeFwd.GetValueOnGameThread() * FMath::Clamp(H / StandEyeCm, 0.5f, 1.2f) * EyeFwdW;
 	// waist: a steep look down leans over the chest to the boots, not into the collar
 	const float Wl = FMath::SmoothStep(WaistLeanFromDeg, FMath::Max(WaistLeanFullDeg, WaistLeanFromDeg + 1.f), -Pitch) * NeckK;
 	E += Fwd * (WaistLeanFwdCm * Wl) - FVector::UpVector * (WaistLeanDownCm * Wl);
-	E.Z += BobZ + BreathZ + LandZ;
-	E += Right * BobY;
+	// (bug #72) the clearance below is tested against the eye without the step bob, breathing and landing dip (tested with
+	// them, every step pumped the push)
+	const FVector BobMove = FVector::UpVector * (BobZ + BreathZ + LandZ) + Right * BobY;
+	E += BobMove;
 	E += Fwd * TakeLoc.X + Right * TakeLoc.Y + FVector::UpVector * TakeLoc.Z;
 
 	// invariants (spec 4.6), every build
@@ -1811,6 +1858,152 @@ void UYggViewRigComponent::ComposeEye(float Dt)
 		Off2D = Off2D.GetSafeNormal() * EyeHorizMaxCm;
 		E.X = CapLoc.X + Off2D.X;
 		E.Y = CapLoc.Y + Off2D.Y;
+	}
+
+	// (bug #72) Looking down, the eye never enters your own body (eye inside the jacket = see-through torso with black
+	// shards; r.SetNearClipPlane 2 did not help). Measured every frame from the body's physics asset at this frame's pose
+	// (with the owner lean): the eye goes EyeClearCm in front of every torso body that reaches within EyeClearBandCm under
+	// it, but at most EyeClearPushMaxCm forward (the raised hands are placed from the camera: SetEyeClearOffset keeps them
+	// put); where that is not enough, EyeClearBandCm above it, at most EyeClearLiftMaxCm. Whatever the eye still reaches
+	// after that (and any shoulder / upper arm it reaches: they swing every step, so they never move the eye) is shrunk
+	// for the owner only (SetClipShrunk). Soft gates, tested without the bob, eased in EyeClearAttackSec / out
+	// EyeClearReleaseSec; fades in with the look down, so level walking is unchanged.
+	{
+		const FVector EyeBefore = E;
+		const int32 ClearMode = CVarViewClear.GetValueOnGameThread();
+		const float Down = -Pitch;
+		float PushWant = 0.f, LiftWant = 0.f, LeanWant = 0.f;
+		bClearMeasured = false;
+		FName ClearBone = NAME_None;
+		float Short = 0.f;
+		const float DepthTarget = B ? B->GetOwnTorsoDepthScale() : 0.f;
+		// the axe / two-projection layout draws the torso first-person-scaled (0.6): eased between layouts, no 1 <-> 0.6 jump
+		ClearDepthScale = DepthTarget > 0.f ? (ClearDepthScale > 0.f ? ExpTo(ClearDepthScale, DepthTarget, 0.15f, Dt) : DepthTarget) : 0.f;
+		const float DepthScale = ClearDepthScale;
+		const float Soft = FMath::Max(EyeClearSoftCm, 0.5f);
+		auto Over = [Soft](float Edge, float Value) { return FMath::SmoothStep(Edge - 0.5f * Soft, Edge + 0.5f * Soft, Value); };
+		const float MaxH = FMath::Max(EyeClearMaxCm, EyeHorizMaxCm);
+		for (int32 i = ClipHold.Num() - 1; i >= 0; --i)
+		{
+			ClipHold[i].Value -= Dt;
+			if (ClipHold[i].Value <= 0.f) { ClipHold.RemoveAt(i); }
+		}
+		if (ClearMode > 0 && B && !bTake && !bFlyActive && View == EYggView::Walk && DepthScale > 0.f)
+		{
+			LeanWant = FMath::Max(OwnerLeanMaxDeg, 0.f) * FMath::SmoothStep(OwnerLeanFromDeg, FMath::Max(OwnerLeanFullDeg, OwnerLeanFromDeg + 1.f), Down);
+			const float W = FMath::SmoothStep(EyeClearFromDeg, FMath::Max(EyeClearFullDeg, EyeClearFromDeg + 1.f), Down);
+			if (W > 0.f)
+			{
+				const FVector Rel = E - BobMove - CapLoc;
+				const float EyeX = float(FVector::DotProduct(Rel, Fwd));
+				const float EyeY = float(FVector::DotProduct(Rel, Right));
+				const float EyeZ = float(Rel.Z);
+				const float Cx = FMath::Max(EyeClearCm, 0.f) / DepthScale;
+				const float Cz = FMath::Max(EyeClearBandCm, 0.f) / DepthScale;
+				const float L = FMath::Max(EyeClearLateralCm, 0.f);
+				FOwnBodyBoxes Boxes;
+				float Front = 0.f;
+				// every body, measured with the lean the body has now (it eases), so eye and torso agree this frame
+				bClearMeasured = B->MeasureOwnFront(CapLoc, Fwd, -1.0e6f, EyeY, 1.0e6f, B->GetOwnerLean(), Front, &Boxes);
+				// lateral weight: 1 while the body is within L of the eye's line, 0 from L + Soft
+				auto Side = [&](const FBox& Box)
+				{
+					const float D = FMath::Max3(0.f, float(Box.Min.Y) - EyeY, EyeY - float(Box.Max.Y));
+					return 1.f - Over(L, D);
+				};
+				// 1. forward: in front of every torso body whose top reaches within Cz under the eye (soft), capped
+				float NeedX = 0.f;
+				for (const FOwnBodyBox& Ob : Boxes)
+				{
+					if (Ob.bArm) { continue; }
+					const float Need = Side(Ob.Box) * Over(EyeZ - Cz, float(Ob.Box.Max.Z)) * FMath::Max(0.f, float(Ob.Box.Max.X) + Cx - EyeX);
+					if (Need > NeedX) { NeedX = Need; ClearBone = Ob.Bone; }
+				}
+				const float LimitX = FMath::Sqrt(FMath::Max(FMath::Square(MaxH) - FMath::Square(EyeY), 0.f));
+				const float PushX = FMath::Clamp(FMath::Min(NeedX, LimitX - EyeX), 0.f, FMath::Max(EyeClearPushMaxCm, 0.f));
+				const float NewX = EyeX + PushX;
+				// 2. up: above every torso body the eye is still inside (in X) after that push (soft)
+				float NeedZ = 0.f;
+				for (const FOwnBodyBox& Ob : Boxes)
+				{
+					if (Ob.bArm) { continue; }
+					const float Inside = Over(NewX, float(Ob.Box.Max.X) + Cx) * (1.f - Over(NewX, float(Ob.Box.Min.X) - Cx));
+					const float Need = Side(Ob.Box) * Inside * FMath::Max(0.f, float(Ob.Box.Max.Z) + Cz - EyeZ);
+					if (Need > NeedZ) { NeedZ = Need; ClearBone = Ob.Bone; }
+				}
+				const float LiftMax = FMath::Max(EyeClearLiftMaxCm, 0.f);
+				const float LiftZ = FMath::Min(NeedZ, LiftMax);
+				Short = FMath::Max(0.f, NeedZ - LiftMax);
+				PushWant = PushX * W;
+				LiftWant = LiftZ * W;
+				ClearFront = Front;
+				ClearEyeX = EyeX;
+				// 3. what the eye still reaches (within EyeClipReachCm of it, at the spot it is heading for): shrunk for the
+				// owner, held EyeClipHoldSec so a swinging arm doesn't flicker
+				const FVector EyeAt(NewX, EyeY, EyeZ + LiftZ);
+				const float Reach = FMath::Max(EyeClipReachCm, 0.f) / DepthScale;
+				for (const FOwnBodyBox& Ob : Boxes)
+				{
+					// FeetBody's own torso only: the first-person torso's arms are posed in front of the camera on purpose
+					if (W >= 0.5f && DepthTarget >= 0.999f && Ob.Box.ExpandBy(Reach).IsInside(EyeAt))
+					{
+						bool bFound = false;
+						for (TPair<FName, float>& Hold : ClipHold)
+						{
+							if (Hold.Key == Ob.Bone) { Hold.Value = EyeClipHoldSec; bFound = true; }
+						}
+						if (!bFound) { ClipHold.Emplace(Ob.Bone, EyeClipHoldSec); }
+					}
+				}
+				if (ClearMode >= 2 && GetWorld())
+				{
+					const FTransform Frame(FRotator(0.f, Yaw, 0.f), CapLoc);
+					for (const FOwnBodyBox& Ob : Boxes)
+					{
+						const FName BoneName = Ob.Bone;
+						const bool bClip = ClipHold.ContainsByPredicate([BoneName](const TPair<FName, float>& Hold) { return Hold.Key == BoneName; });
+						DrawDebugBox(GetWorld(), Frame.TransformPosition(Ob.Box.GetCenter()), Ob.Box.GetExtent(), Frame.GetRotation(),
+							bClip ? FColor::Magenta : Ob.Bone == ClearBone ? FColor::Red : Ob.bArm ? FColor::Yellow : FColor::Cyan, false, -1.f, 0, 0.3f);
+					}
+				}
+			}
+		}
+		// eased both ways: in fast (a quick look down must not dip into the jacket), out gently
+		const float Attack = FMath::Max(EyeClearAttackSec, 0.005f), Release = FMath::Max(EyeClearReleaseSec, 0.01f);
+		ClearPush = ExpTo(ClearPush, PushWant, PushWant > ClearPush ? Attack : Release, Dt);
+		ClearLift = ExpTo(ClearLift, LiftWant, LiftWant > ClearLift ? Attack : Release, Dt);
+		OwnerLean = ExpTo(OwnerLean, LeanWant, 0.12f, Dt);
+		if (ClearPush > 0.01f)
+		{
+			E += Fwd * ClearPush;
+			FVector Off(E.X - CapLoc.X, E.Y - CapLoc.Y, 0.f);
+			if (Off.SizeSquared() > FMath::Square(MaxH))
+			{
+				Off = Off.GetSafeNormal() * MaxH;
+				E.X = CapLoc.X + Off.X;
+				E.Y = CapLoc.Y + Off.Y;
+			}
+		}
+		E.Z += ClearLift;
+		ClearOffset = E - EyeBefore;   // the wall sweep below may take some of it back
+		if (ClearMode >= 2)
+		{
+			FString Clipped;
+			for (const TPair<FName, float>& Hold : ClipHold) { Clipped += Hold.Key.ToString() + TEXT(" "); }
+			const FString Line = FString::Printf(TEXT("ygg.View.Clear: pitch %.0f | eye fwd %.1f up %.1f cm over capsule | front %s | push %.1f lift %.1f | short %.1f cm | by %s | shrunk %s| lean %.1f | depth scale %.2f"),
+				Pitch, ClearEyeX, float(E.Z - CapLoc.Z), bClearMeasured ? *FString::Printf(TEXT("%.1f"), ClearFront) : TEXT("-"),
+				ClearPush, ClearLift, Short, *ClearBone.ToString(), Clipped.IsEmpty() ? TEXT("- ") : *Clipped, OwnerLean, DepthScale);
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(uint64(0x59676C72), 0.f, FColor(255, 200, 120), Line);
+			}
+			ClearLogT -= Dt;
+			if (ClearLogT <= 0.f)
+			{
+				ClearLogT = 0.5f;
+				UE_LOG(LogYggView, Display, TEXT("%s"), *Line);
+			}
+		}
 	}
 	if (!bTake && Phase == EPhase::Holding && !bFlyActive)
 	{
@@ -1830,6 +2023,29 @@ void UYggViewRigComponent::ComposeEye(float Dt)
 		MaxZ = FMath::Max(MaxZ, FloorZ + StandEyeCm + PoseDef(View).BandCm);
 	}
 	E.Z = FMath::Clamp(float(E.Z), FMath::Min(MinZ, MaxZ), MaxZ);
+
+	// (bug #72) the eye may leave the capsule (eye-forward offset, clearance push): a small sphere swept from the capsule
+	// axis at eye height to the eye keeps it out of tent walls and rock (walking only; takeovers place the eye themselves)
+	if (!bTake && !bFlyActive && EyeWallRadiusCm > 0.f && GetWorld())
+	{
+		const FVector Start(CapLoc.X, CapLoc.Y, E.Z);
+		const FVector Way = E - Start;
+		if (Way.SizeSquared() > 1.f)
+		{
+			FHitResult Hit;
+			FCollisionQueryParams Params(SCENE_QUERY_STAT(YggEyeWall), false, C);
+			TArray<AActor*> Carried;
+			C->GetAttachedActors(Carried);
+			Params.AddIgnoredActors(Carried);
+			if (GetWorld()->SweepSingleByChannel(Hit, Start, E, FQuat::Identity, ECC_Camera, FCollisionShape::MakeSphere(EyeWallRadiusCm), Params)
+				&& !Hit.bStartPenetrating)
+			{
+				const FVector Back = Way.GetSafeNormal() * (Way.Size() - Hit.Distance);
+				E -= Back;
+				ClearOffset -= Back;
+			}
+		}
+	}
 
 	Eye = E;
 	bEyeValid = true;
@@ -1866,6 +2082,17 @@ void UYggViewRigComponent::PushBody()
 		PushedOneBody = One;
 		B->SetOneBody(One != 0);
 	}
+	// (bug #72) the owner's torso tipped back while looking down (ComposeEye eases it)
+	if (FMath::Abs(OwnerLean - PushedOwnerLean) > 0.05f)
+	{
+		PushedOwnerLean = OwnerLean;
+		B->SetOwnerLean(OwnerLean);
+	}
+	// the hands stay put while the eye clears the torso, and what it still reaches is shrunk for you
+	B->SetEyeClearOffset(ClearOffset);
+	TArray<FName, TInlineAllocator<8>> Clip;
+	for (const TPair<FName, float>& Hold : ClipHold) { Clip.Add(Hold.Key); }
+	B->SetClipShrunk(Clip);
 	// the posture for the body: standing legs hidden while posed, the first-person mesh lowered under the low eye
 	const float Drop = GetPostureDrop();
 	if (View != PushedBodyView || FMath::Abs(Drop - PushedBodyDrop) > 0.25f)
@@ -2045,7 +2272,7 @@ void UYggViewRigComponent::ApplyView(APlayerCameraManager* PCM, float Dt, FMinim
 	{
 		// the fly camera: its FOV, and the exposure channel; nothing else is touched
 		if (bFlyActive) { POV.FOV = FlyFovNow; }
-		if (FMath::Abs(ExposureSum) > 0.005f) { PPBias.AutoExposureBias = ExposureSum; PCM->AddCachedPPBlend(PPBias, 1.f); }
+		if (FMath::Abs(ExposureSum) > 0.005f) { PPBias.AutoExposureBias = LevelExposureBias(GetWorld(), POV) + ExposureSum; PCM->AddCachedPPBlend(PPBias, 1.f); }
 		return;
 	}
 	if (VT != GetOwner() || !bRigOn)
@@ -2058,7 +2285,8 @@ void UYggViewRigComponent::ApplyView(APlayerCameraManager* PCM, float Dt, FMinim
 	const float Yaw = Norm(R.Yaw + ViewYawOff);
 	float Roll = ViewRollOff;
 	float MinP, MaxP, RollMax;
-	if (Scripted == EYggScripted::Fall)
+	// (2026-11-20) the wait for the lids after a fall keeps the fall's limits (the 30 deg roll snapped to 2)
+	if (Scripted == EYggScripted::Fall || bFallSnapPending)
 	{
 		MinP = -72.f; MaxP = 80.f; RollMax = RollMaxFallDeg;
 	}
@@ -2082,7 +2310,7 @@ void UYggViewRigComponent::ApplyView(APlayerCameraManager* PCM, float Dt, FMinim
 	}
 	if (FMath::Abs(ExposureSum) > 0.005f)
 	{
-		PPBias.AutoExposureBias = ExposureSum;
+		PPBias.AutoExposureBias = LevelExposureBias(GetWorld(), POV) + ExposureSum;   // added to the level's, not instead of it
 		PCM->AddCachedPPBlend(PPBias, 1.f);
 	}
 	if (InspAlpha > 0.001f)
@@ -2189,7 +2417,9 @@ void UYggViewRigComponent::SetDilation(float D, float AudioPitch)
 		Dilation = D;
 	}
 	const bool bPitch = !FMath::IsNearlyEqual(AudioPitch, 1.f, 0.001f);
-	if ((bPitch || bAudioPitched) && !FMath::IsNearlyEqual(AudioPitch, LastAudioPitch, 0.01f))
+	// (2026-11-20) back to 1 is always applied: the 0.01 step test let a ramp end at ~0.993 and then skip the reset, leaving
+	// bAudioPitched set, the sound 1% low, and the watchdog "repairing" it every frame (~1,700 warnings per chapter run)
+	if ((bPitch || bAudioPitched) && (!FMath::IsNearlyEqual(AudioPitch, LastAudioPitch, 0.01f) || !bPitch))
 	{
 		if (FAudioDeviceHandle Device = World->GetAudioDevice())
 		{
@@ -2207,7 +2437,13 @@ void UYggViewRigComponent::Fall(int32 Owner, float Seconds, float Side)
 	{
 		return;
 	}
-	const float S = Seconds > 0.2f ? Seconds : 1.5f;
+	// (2026-11-20) at most 2.5 s: the Fall lease is capped at 3 s (LeaseCap), a longer fall lost it early
+	const float SWant = Seconds > 0.2f ? Seconds : 1.5f;
+	const float S = FMath::Clamp(SWant, 0.2f, 2.5f);
+	if (S != SWant)
+	{
+		UE_LOG(LogYggView, Warning, TEXT("Rig: fall of %.2f s clamped to %.2f s (beat %d)"), SWant, S, Owner);
+	}
 	AcquireLease(Owner, EYggLease::Look, 0.f);
 	AcquireLease(Owner, EYggLease::Move, 0.f);
 	if (bGentle)
@@ -2341,6 +2577,7 @@ void UYggViewRigComponent::TickScripted(float Dt)
 				TakeRot = FRotator::ZeroRotator;
 				TakeFade = 0.f;
 				Cut();
+				EyeFwdW = 1.f;   // (2026-11-20) the eye-forward offset back at once, behind the closed lids
 				UE_LOG(LogYggView, Display, TEXT("Rig: fall offsets reset behind closed eyes (cut)"));
 			}
 			else
@@ -2858,11 +3095,23 @@ void UYggViewRigComponent::SetHands(int32 Owner, FName Item)
 
 void UYggViewRigComponent::Cut()
 {
+	ResetClearance();
 	if (APlayerCameraManager* PCM = GetPCM())
 	{
 		PCM->SetGameCameraCutThisFrame();
 	}
 	LastCutTime = Clock;
+}
+
+void UYggViewRigComponent::ResetClearance()
+{
+	// (bug #72) a cut / hard reset starts the eye clearance over: no push, lift or lean carried across it
+	ClearPush = ClearLift = 0.f;
+	ClearOffset = FVector::ZeroVector;
+	ClearDepthScale = 0.f;
+	OwnerLean = 0.f;
+	PushedOwnerLean = -1.f;
+	ClipHold.Reset();
 }
 
 bool UYggViewRigComponent::WasCutRecently() const
@@ -2896,6 +3145,8 @@ void UYggViewRigComponent::HardReset(const FRotator& Facing, EYggView Pose)
 	TakeRot = FRotator::ZeroRotator;
 	TakeFade = 0.f;
 	bFallSnapPending = false;
+	EyeFwdW = 1.f;   // (2026-11-20)
+	ResetClearance();   // (bug #72)
 	if (UWorld* World = GetWorld())
 	{
 		if (World->GetWorldSettings() && !FMath::IsNearlyEqual(World->GetWorldSettings()->TimeDilation, 1.f))

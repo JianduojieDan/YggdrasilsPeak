@@ -25,6 +25,7 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "YggSummitBot.generated.h"
 
+class AActor;
 class APawn;
 class APlayerController;
 class FYggSummitBotLog;
@@ -81,6 +82,8 @@ private:
 	FString TreeInfo;
 	FVector TreeAim = FVector::ZeroVector;
 	bool bHaveTree = false;
+	// the actors that make up the World Tree (the stuck-teleport trace ignores them, 2026-11-20)
+	TArray<TWeakObjectPtr<AActor>> TreeActors;
 	// the route (leg 7) as a 2D polyline
 	TArray<FVector> Route;
 	TArray<float> Cum;
@@ -116,10 +119,14 @@ private:
 	TArray<FString> ExpeditionLines;
 	double NextSample = 0.0, NextCheck = 0.0;
 	TArray<float> FrameMs;
+	// frames right after a ground probe (it freezes the game 4-10 s): kept apart so they do not pollute the frame statistics (2026-11-20)
+	TArray<float> ProbeMs;
+	int32 SkipFrameStats = 0;
 	TSharedPtr<FYggSummitBotLog> LogDevice;
 	FDelegateHandle ShotHandle;
 	FString PendingShot;
 	bool bShotPending = false;
+	double ShotAt = 0.0;   // real time the pending picture was asked for (2026-11-20)
 
 	void Note(const FString& Text);
 	void Issue(const FString& Kind, const FString& Text, APawn* P);

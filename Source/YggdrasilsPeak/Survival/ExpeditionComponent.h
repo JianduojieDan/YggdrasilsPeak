@@ -242,6 +242,8 @@ private:
 	/** Play time carried over from the save game. */
 	float SavedPlaySeconds = 0.f;
 	bool bSummitReached = false;
+	/** The summit screen is still owed (set on arrival, cleared when it shows): a death or quit in the beat must not lose it (2026-11-20). */
+	bool bSummitScreenPending = false;
 	bool bFinished = false;
 
 	// The summit beat (Development_Plan A5): Content/Story/Summit.ygs, then the summit screen.

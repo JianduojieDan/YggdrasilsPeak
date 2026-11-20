@@ -26,6 +26,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Engine/AssetManager.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/SpotLight.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StreamableManager.h"
@@ -269,12 +270,16 @@ namespace
 	TSharedPtr<FJsonObject> StoryCast()
 	{
 		static TSharedPtr<FJsonObject> Cast;
-		static bool bTried = false;
-		if (!bTried)
+		// (2026-11-20) re-read when the file changes, so "regenerate the cast, then play" works in one editor session
+		static FDateTime Stamp;
+		const FString Path = FPaths::ProjectContentDir() / TEXT("Story/Cast.ygs");
+		const FDateTime Now = IFileManager::Get().GetTimeStamp(*Path);
+		if (!Cast.IsValid() || Now != Stamp)
 		{
-			bTried = true;
+			Stamp = Now;
+			Cast.Reset();
 			FString Text;
-			if (FFileHelper::LoadFileToString(Text, *(FPaths::ProjectContentDir() / TEXT("Story/Cast.ygs"))))
+			if (FFileHelper::LoadFileToString(Text, *Path))
 			{
 				TSharedRef<TJsonReader<>> R = TJsonReaderFactory<>::Create(Text);
 				FJsonSerializer::Deserialize(R, Cast);
@@ -358,6 +363,8 @@ namespace
 		TEXT("1 = story people's planted feet press prints into the player's snow trail map (within 60 m)."));
 	TAutoConsoleVariable<float> CVarStoryHeadlampLm(TEXT("ygg.Story.HeadlampLm"), 35.f,   // 600 burned a hard white disc into the night snow (2026-11-20)
 		TEXT("The player's story headlamp (light headlamp): lumens. Spot 25 degrees, 25 m, no shadows (spec 6.15)."));
+	TAutoConsoleVariable<int32> CVarStoryPinPosed(TEXT("ygg.Story.PinPosed"), 1,
+		TEXT("1 = a story posture right after a cut (lie / sit / kneel) holds the climber on the cut spot (movement off until he walks or crawls), so the physics cannot push him off it; 0 = old behaviour."));
 }
 
 // ------------------------------------------------------------------------------------------------ NPC
@@ -597,6 +604,7 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 		SteerYaw = 0.f;
 		StuckTime = 0.f;
 		HopFails = 0;
+		TrailCursor = -1;   // (2026-11-20) a stale crumb from before a goto made her walk back; -1 forces the nearest-crumb search
 	}
 	TalkLeft = FMath::Max(0.f, TalkLeft - DeltaSeconds);
 	if (FaceLeft > 0.f) { FaceLeft = FMath::Max(0.f, FaceLeft - DeltaSeconds); if (FaceLeft <= 0.f) { FaceActor = nullptr; } }
@@ -886,7 +894,9 @@ void AYggStoryNPC::TickFollow(float DeltaSeconds, APawn* P, const FVector& Me, c
 			int32 K = N - 1;
 			while (K > 0 && SPlayer - CL[K] < FollowBehind) { --K; }
 			const FVector View = P->GetControlRotation().Vector().GetSafeNormal2D();
-			if (FVector::DotProduct(View, (C[K] - PLoc).GetSafeNormal2D()) < 0.2f)
+			// (2026-11-20) a trail too short to hold a point FollowBehind back (C[K] on top of the player) skips the catch-up
+			const FVector ToK = C[K] - PLoc;
+			if (ToK.SizeSquared2D() > FMath::Square(FollowBehind * 0.5f) && FVector::DotProduct(View, ToK.GetSafeNormal2D()) < 0.2f)
 			{
 				TeleportTo(C[K] + FVector(0.f, 0.f, 120.f), GetActorRotation());
 				TrailCursor = S->TrailFirst + K;
@@ -1436,6 +1446,7 @@ void UYggStorySubsystem::Stop()
 	Tweens.Reset();
 	EndHand();
 	ClearPendingTeleport();   // a climber held in the air for the ground must not stay flying once the story is gone
+	ReleasePosedPin();        // nor pinned with his movement off (the chapter ends sitting in the night tent)
 	// the chapter end, Stop, the end of the world: every story hold goes and the view is plain walking again (spec 4.4)
 	if (bWasRunning || StoryLeases.Num() > 0) { ResetCamera(0.4f); }
 	UWorld* World = GetWorld();
@@ -1448,6 +1459,12 @@ void UYggStorySubsystem::Stop()
 	if (Headlamp) { Headlamp->DestroyComponent(); Headlamp = nullptr; }
 	for (AActor* A : SpawnedLights) { if (A) { A->Destroy(); } }
 	SpawnedLights.Reset();
+	// (2026-11-20) a light the story faded to 0 / hidden goes back to how the level had it, or the next run reads 0 as its base
+	for (const TPair<TWeakObjectPtr<ULightComponent>, TPair<float, bool>>& KV : LightOrig)
+	{
+		if (ULightComponent* L = KV.Key.Get()) { L->SetIntensity(KV.Value.Key); L->SetVisibility(KV.Value.Value); }
+	}
+	LightOrig.Reset();
 	for (int32 i = 0; i < 4; ++i) { LightComps[i].Reset(); LightName[i] = NAME_None; LightK[i] = 0.f; }
 	if (WornKhata) { WornKhata->DestroyComponent(); WornKhata = nullptr; }
 	PreloadHandle.Reset();
@@ -1545,6 +1562,10 @@ void UYggStorySubsystem::ReleaseAll()
 	bLidsShutRequested = false;
 	EndHand();
 	ClearPendingTeleport();
+	// (2026-11-20) forget a posed pin WITHOUT touching the movement: death switched it off and must keep it off (the next
+	// UpdatePosedPin would otherwise hand a dead climber MOVE_Walking); Respawn sets walking itself
+	bPinned = false;
+	bPinSpot = false;
 	ReleaseCompass();
 	LocalLidTime = -1.f;
 	LocalLid = 0.f;
@@ -1687,8 +1708,80 @@ void UYggStorySubsystem::ClearPendingTeleport()
 		if (Move && Move->MovementMode == MOVE_Flying) { Move->SetMovementMode(MOVE_Falling); }
 	}
 	bHeldForGround = false;
+	HeldForGroundTime = 0.f;
 	bPendingReached = false;
 	PendingTeleportTime = 0.f;
+}
+
+void UYggStorySubsystem::UpdatePosedPin()
+{
+	ACharacter* Ch = Cast<ACharacter>(Player());
+	UCharacterMovementComponent* Move = Ch ? Ch->GetCharacterMovement() : nullptr;
+	const UYggViewRigComponent* R = RigCache.Get();
+	if (!Move || !R || !bPinSpot) { return; }
+	const EYggView V = R->GetView();
+	const bool bPosed = V == EYggView::Lie || V == EYggView::Sit || V == EYggView::Kneel1 || V == EYggView::Kneel2;
+	if (bPosed && CVarStoryPinPosed.GetValueOnGameThread() != 0)
+	{
+		const float Off = float(FVector::Dist(Ch->GetActorLocation(), PinSpot));
+		if (Off > 15.f)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Story: posed climber %.0f cm off the cut spot (now %s) - put back and held"), Off, *Ch->GetActorLocation().ToCompactString());
+			Ch->TeleportTo(PinSpot, Ch->GetActorRotation(), false, true);
+		}
+		// every frame, not once: a teleport can switch a held climber to falling (UCharacterMovementComponent::OnTeleported)
+		if (Move->MovementMode != MOVE_None)
+		{
+			Move->StopMovementImmediately();
+			Move->DisableMovement();
+		}
+		bPinned = true;
+		return;
+	}
+	// walking or crawling: he moves himself again. The cut's own frame is a standing one (the rig's hard reset) before the
+	// posture that follows it, so the spot is kept for the first second after the cut
+	if (bPinned)
+	{
+		if (Move->MovementMode == MOVE_None) { Move->SetMovementMode(MOVE_Walking); }   // only undo our own hold (2026-11-20)
+		bPinned = false;
+	}
+	if (Clock - PinCutClock > 1.0) { bPinSpot = false; }
+}
+
+void UYggStorySubsystem::ReleasePosedPin()
+{
+	if (bPinned)
+	{
+		ACharacter* Ch = Cast<ACharacter>(Player());
+		UCharacterMovementComponent* Move = Ch ? Ch->GetCharacterMovement() : nullptr;
+		if (Move && Move->MovementMode == MOVE_None) { Move->SetMovementMode(MOVE_Walking); }
+	}
+	bPinned = false;
+	bPinSpot = false;
+}
+
+void UYggStorySubsystem::LogCutOverlaps(const FString& PlaceName, const FVector& Where) const
+{
+	ACharacter* Ch = Cast<ACharacter>(Player());
+	UCapsuleComponent* Cap = Ch ? Ch->GetCapsuleComponent() : nullptr;
+	UWorld* W = GetWorld();
+	if (!Cap || !W) { return; }
+	TArray<FOverlapResult> Hits;
+	FCollisionQueryParams Q(SCENE_QUERY_STAT(StoryCutOverlap), false, Ch);
+	FCollisionResponseParams RP;
+	Cap->InitSweepCollisionParams(Q, RP);
+	W->OverlapMultiByChannel(Hits, Where, Cap->GetComponentQuat(), Cap->GetCollisionObjectType(), Cap->GetCollisionShape(), Q, RP);
+	for (const FOverlapResult& O : Hits)
+	{
+		if (!O.bBlockingHit) { continue; }
+		const AActor* A = O.GetActor();
+		const UPrimitiveComponent* C = O.GetComponent();
+		FString Tags;
+		if (A) { for (const FName& T : A->Tags) { Tags += T.ToString() + TEXT(" "); } }
+		UE_LOG(LogTemp, Warning, TEXT("Story: cut %s: the climber's capsule (r %.0f, half %.0f cm) overlaps %s / %s [%s] - the physics will push him off the spot"),
+			*PlaceName, Cap->GetScaledCapsuleRadius(), Cap->GetScaledCapsuleHalfHeight(), A ? *A->GetName() : TEXT("?"), C ? *C->GetName() : TEXT("?"),
+			*Tags.TrimEnd());
+	}
 }
 
 void UYggStorySubsystem::UpdatePendingTeleport(float Dt)
@@ -1722,11 +1815,30 @@ void UYggStorySubsystem::UpdatePendingTeleport(float Dt)
 	{
 		if (!bHeldForGround) { UE_LOG(LogTemp, Display, TEXT("Story: no ground under the teleport spot yet - holding the climber")); }
 		bHeldForGround = true;
+		// (2026-11-20) the hold has a way out: after 30 s (collision streaming on a laptop can be slow) put him on ground found
+		// far below and let go; with nothing below at all, keep holding (letting go there would drop him into the void)
+		HeldForGroundTime += Dt;
+		if (HeldForGroundTime > 30.f)
+		{
+			FHitResult Far;
+			if (GetWorld()->LineTraceSingleByChannel(Far, From, From - FVector(0.f, 0.f, 10000.f), ECC_Visibility, Q))
+			{
+				Ch->TeleportTo(Far.ImpactPoint + FVector(0.f, 0.f, Ch->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.f), Ch->GetActorRotation(), false, true);
+				if (bPinSpot) { PinSpot = Ch->GetActorLocation(); }   // a posed pin holds him here, not back up in the air
+				UE_LOG(LogTemp, Warning, TEXT("Story: no ground under the teleport spot after 30 s - put on the ground %.0f cm below and released"),
+					From.Z - Far.ImpactPoint.Z);
+				ClearPendingTeleport();
+				return;
+			}
+			UE_LOG(LogTemp, Warning, TEXT("Story: still no ground under the teleport spot after 30 s (nothing within 100 m) - holding on"));
+			HeldForGroundTime = 0.f;
+		}
 		Move->StopMovementImmediately();
 		Move->SetMovementMode(MOVE_Flying);
 		PendingTeleportTime = FMath::Max(PendingTeleportTime, 0.5f);   // keep holding until the ground is there
 		return;
 	}
+	HeldForGroundTime = 0.f;
 	if (bHeldForGround)
 	{
 		bHeldForGround = false;
@@ -1817,6 +1929,7 @@ void UYggStorySubsystem::Tick(float DeltaTime)
 	TickLights(Dt);
 	TickInspect(Dt);
 	UpdatePendingTeleport(Dt);
+	UpdatePosedPin();
 	// eyelids: the rig's value (it ticks before the story, so this is this frame's), drawn by the overlay
 	Overlay->Lid = CurrentLid();
 	// lids the story shut: the black veil takes over the dark, so a page or a title can outlast the rig's 8 s lid lease
@@ -2264,7 +2377,7 @@ float UYggStorySubsystem::DoAction(FRun& Run, const TSharedPtr<FJsonObject>& A)
 	if (LegacyAction(Run, A, LegacyWait)) { return LegacyWait; }
 
 	// First the actions that carry another action's name as an option: hand (hint, pace), pose (hold, face), blink (hold),
-	// exposure (hold), flyout (look, fov, path), lure (sound), npc (look, at, path), inspect (text). Checked after them, the
+	// exposure (hold), flyout (look, fov, path), lure (sound), npc (look, at, path), inspect (text), say (npc). Checked after them, the
 	// option's own branch would swallow the action (the dawn lock never held, 2026-11-19 play-test).
 	if (A->HasField(TEXT("hand")))
 	{
@@ -2416,7 +2529,7 @@ float UYggStorySubsystem::DoAction(FRun& Run, const TSharedPtr<FJsonObject>& A)
 		else { UE_LOG(LogTemp, Warning, TEXT("Story: lure target %s missing (beat %s)"), *JStr(A, TEXT("lure")), *BeatId); }
 		return 0.f;
 	}
-	if (A->HasField(TEXT("npc")) || A->HasField(TEXT("npc_mode")))
+	if ((A->HasField(TEXT("npc")) || A->HasField(TEXT("npc_mode"))) && !A->HasField(TEXT("say")))   // (2026-11-20) a say may carry an npc (who talks)
 	{
 		const FString Id = A->HasField(TEXT("npc")) ? JStr(A, TEXT("npc")) : JStr(A, TEXT("npc_mode"));
 		AYggStoryNPC* N = Person(Id);
@@ -2645,7 +2758,7 @@ float UYggStorySubsystem::DoAction(FRun& Run, const TSharedPtr<FJsonObject>& A)
 	}
 	if (A->HasField(TEXT("fall")))
 	{
-		const float Len = FMath::Max(0.3f, JNum(A, TEXT("fall"), 1.5f));
+		const float Len = FMath::Clamp(JNum(A, TEXT("fall"), 1.5f), 0.3f, 2.5f);
 		if (R)
 		{
 			R->Fall(Owner, Len, SideOf(JStr(A, TEXT("side"))));
@@ -3038,9 +3151,9 @@ bool UYggStorySubsystem::Unblocked(FRun& Run, float Dt)
 		const float Timeout = JNum(A, TEXT("timeout"), 0.f);
 		if (Timeout > 0.f) { Overlay->ChoiceTimeLeft = 1.f - float(Open) / Timeout; }
 		static const FKey Keys[4] = { EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four };
-		for (int32 i = 0; i < 4 && C; ++i) { if (C->WasInputKeyJustPressed(Keys[i])) { ChoiceResult = i; } }
-		if (bAuto && Open > 1.5) { ChoiceResult = 0; }
 		const TArray<FString> Opts = JStrs(A, TEXT("choice"));
+		for (int32 i = 0; i < FMath::Min(4, Opts.Num()) && C; ++i) { if (C->WasInputKeyJustPressed(Keys[i])) { ChoiceResult = i; } }   // (2026-11-20) only keys that have an option
+		if (bAuto && Open > 1.5) { ChoiceResult = 0; }
 		if (ChoiceResult < 0 && Timeout > 0.f && Open > Timeout) { ChoiceResult = int32(JNum(A, TEXT("default"), -1.f)); if (ChoiceResult < 0) { ChoiceResult = 99; } }
 		if (ChoiceResult < 0) { return false; }
 		const TArray<FString> Fl = JStrs(A, TEXT("flags"));
@@ -3286,7 +3399,11 @@ void UYggStorySubsystem::CutTo(const FString& PlaceName, const FVector& At, cons
 	if (C && C->PlayerCameraManager) { C->PlayerCameraManager->SetGameCameraCutThisFrame(); }
 	// no encroachment check: the story decides where the climber is. With the check the engine refused the jump from the
 	// Balcony to the tent in a play-test and the player stayed at 8,400 m (2026-11-19)
-	const FVector Dest = At + FVector(0.f, 0.f, Up);
+	// (2026-11-20) the capsule's bottom never starts inside the ground: the default "up" (100) fits a half height of 96 cm;
+	// the climber's capsule now measures ~110, started 10 cm under the tent floor and the depenetration threw it 1.2-1.7 m aside
+	const ACharacter* PCh = Cast<ACharacter>(P);
+	const float Half = PCh && PCh->GetCapsuleComponent() ? PCh->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 0.f;
+	const FVector Dest = At + FVector(0.f, 0.f, FMath::Max(Up, Half + 2.f));
 	const bool bMoved = P->TeleportTo(Dest, FRotator(0.f, Facing.Yaw, 0.f), false, true);
 	if (ACharacter* Ch = Cast<ACharacter>(P))
 	{
@@ -3295,6 +3412,11 @@ void UYggStorySubsystem::CutTo(const FString& PlaceName, const FVector& At, cons
 	}
 	ClearPendingTeleport();   // a hold from an earlier jump ends here (this jump sets the walking mode itself)
 	PendingTeleport = Dest; PendingTeleportLast = Dest; PendingTeleportYaw = Facing.Yaw; PendingTeleportTime = 2.5f;
+	// what blocks the capsule here is what the physics will push him out of (the tent wake, 2026-11-20): say it by name
+	LogCutOverlaps(PlaceName, Dest);
+	// a posture that follows this cut (the tent wake, the night tent) is held on this spot until he walks or crawls
+	bPinned = false;   // SetMovementMode(MOVE_Walking) above already ended an earlier pin
+	PinSpot = Dest; PinCutClock = Clock; bPinSpot = true;
 	const FRotator Face(FMath::Clamp(FRotator::NormalizeAxis(Facing.Pitch), -60.f, 60.f), Facing.Yaw, 0.f);
 	// the one absolute view write the story keeps (spec R2): a teleport's facing, behind closed eyelids
 	if (C) { C->SetControlRotation(Face); }
@@ -3471,6 +3593,10 @@ void UYggStorySubsystem::SetLight(const FString& Name, bool bOn, float Seconds)
 			}
 		}
 		if (LightComps[Slot].Num() == 0) { UE_LOG(LogTemp, Warning, TEXT("Story: no light %s (no tagged actor, no place)"), *Name); return; }
+		for (const TWeakObjectPtr<ULightComponent>& L : LightComps[Slot])
+		{
+			if (L.IsValid() && !LightOrig.Contains(L)) { LightOrig.Add(L, TPair<float, bool>(L->Intensity, L->IsVisible())); }
+		}
 		LightBase[Slot] = LightComps[Slot][0]->Intensity;
 		LightK[Slot] = LightComps[Slot][0]->IsVisible() ? 1.f : 0.f;
 	}

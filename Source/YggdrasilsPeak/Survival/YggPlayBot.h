@@ -133,6 +133,9 @@ private:
 	double NextSprint = 0.0;
 	FVector LastPos = FVector::ZeroVector;
 	bool bHaveLastPos = false;
+	// where a story cut landed the climber: 3 s later the report says if he is no longer there (the physics pushed him)
+	FVector CutPos = FVector::ZeroVector;
+	double CutT = -1.0;
 	double LastBotTeleport = -100.0;
 	int32 Teleports = 0, CapTeleports = 0, PutBacks = 0, Jumps = 0;
 

@@ -45,6 +45,10 @@ public:
 	UPROPERTY()
 	bool bSummitReached = false;
 
+	/** The summit screen was not shown yet (died or quit during the summit beat, 2026-11-20). */
+	UPROPERTY()
+	bool bSummitScreenPending = false;
+
 	UPROPERTY()
 	int32 Deaths = 0;
 

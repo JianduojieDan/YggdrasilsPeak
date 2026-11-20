@@ -37,7 +37,7 @@ if (Area.w < 0.5) return Col;
 float2 uv = (WP.xy - Area.xy) / Area.z + 0.5;
 float2 edge = abs(uv - 0.5);
 // no trench shade on rock, glacier rubble or bare ice (it painted a blue channel across the moraine, 2026-11-11)
-float fade = (1.0 - smoothstep(0.40, 0.48, max(edge.x, edge.y))) * (1.0 - Rock) * (1.0 - th.GlacierHard(Mask, MaskSampler, WP, VN));
+float fade = (1.0 - smoothstep(0.40, 0.48, max(edge.x, edge.y))) * (1.0 - smoothstep(0.03, 0.2, Rock)) * (1.0 - th.GlacierHard(Mask, MaskSampler, WP, VN));
 if (fade <= 0.0) return Col;
 float t = 1.0 / Area.z;            // uv per cm
 float e = 2.5;                      // cm between gradient samples (was 4: the walls read soft up close)

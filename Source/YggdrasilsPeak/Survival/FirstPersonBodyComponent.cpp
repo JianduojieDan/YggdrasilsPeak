@@ -18,6 +18,8 @@
 #include "Survival/SnowTrailComponent.h"
 #include "Survival/YggViewRig.h"
 #include "Engine/SkeletalMesh.h"
+#include "PhysicsEngine/PhysicsAsset.h"
+#include "PhysicsEngine/SkeletalBodySetup.h"
 #include "HAL/IConsoleManager.h"
 #include "TwoBoneIK.h"
 #include "UObject/ConstructorHelpers.h"
@@ -298,13 +300,20 @@ void UFirstPersonBodyComponent::BeginPlay()
 		const FReferenceSkeleton& Ref = Body->GetSkeletalMeshAsset()->GetRefSkeleton();
 		const int32 HipsIndex = Ref.FindBoneIndex(Hips);
 		FeetTorsoBones.Reset();
+		LeanBoneIndex = INDEX_NONE;
 		for (int32 Bone = 0; Bone < Ref.GetNum(); ++Bone)
 		{
 			const FName Name = Ref.GetBoneName(Bone);
 			if (Ref.GetParentIndex(Bone) == HipsIndex && Name != LeftLegBones[0] && Name != RightLegBones[0])
 			{
 				FeetTorsoBones.Add(Name);
-				FeetBody->HideBoneByName(Name, PBO_None);
+				SetBoneShrunk(FeetBody, Name, true);   // (bug #72) shrunk at its own joint, not HideBoneByName
+				// the owner lean pivots on the spine's first joint (the first branch off the hips if none says "spine")
+				const bool bSpine = Name.ToString().Contains(TEXT("spine"));
+				if (LeanBoneIndex == INDEX_NONE || (bSpine && !Ref.GetBoneName(LeanBoneIndex).ToString().Contains(TEXT("spine"))))
+				{
+					LeanBoneIndex = Bone;
+				}
 			}
 		}
 		bFeetTorsoShown = false;
@@ -314,15 +323,21 @@ void UFirstPersonBodyComponent::BeginPlay()
 		{
 			const int32 NeckIndex = Ref.GetParentIndex(HeadIndex);
 			const bool bNeck = NeckIndex != INDEX_NONE && Ref.GetBoneName(NeckIndex).ToString().Contains(TEXT("neck"));
-			FeetBody->HideBoneByName(bNeck ? Ref.GetBoneName(NeckIndex) : HiddenBone, PBO_None);
+			SetBoneShrunk(FeetBody, bNeck ? Ref.GetBoneName(NeckIndex) : HiddenBone, true);
 		}
-		for (USkinnedMeshComponent* FirstPersonBody : { static_cast<USkinnedMeshComponent*>(TemplateArms.Get()), static_cast<USkinnedMeshComponent*>(ViewBody.Get()) })
+		// the first frame, before the first pose copy, already without head and torso
+		FeetBody->MarkRefreshTransformDirty();
+		// legs are FeetBody's: the template mesh (animated, so still HideBoneByName: only seen with ygg.View.OneBody 0) and
+		// the posable view body (shrunk at the hip joints)
+		if (TemplateArms)
 		{
-			if (FirstPersonBody)
-			{
-				FirstPersonBody->HideBoneByName(LeftLegBones[0], PBO_None);
-				FirstPersonBody->HideBoneByName(RightLegBones[0], PBO_None);
-			}
+			TemplateArms->HideBoneByName(LeftLegBones[0], PBO_None);
+			TemplateArms->HideBoneByName(RightLegBones[0], PBO_None);
+		}
+		if (ViewBody)
+		{
+			SetBoneShrunk(ViewBody, LeftLegBones[0], true);
+			SetBoneShrunk(ViewBody, RightLegBones[0], true);
 		}
 
 		// What others, mirrors and the shadow see: the animated world body can't have its legs bent onto a slope from code
@@ -432,13 +447,16 @@ bool UFirstPersonBodyComponent::EnsureViewBody(bool bWithTool)
 		ViewBody->SetVisibility(false);
 	}
 	ViewBody->RegisterComponent();
-	ViewBody->HideBoneByName(HiddenBone, PBO_None);
+	// (bug #72) shrunk at their own joints after every pose copy instead of HideBoneByName (which stretched the collar)
+	ViewShrunk.Reset();
+	SetBoneShrunk(ViewBody, HiddenBone, true);
 	if (!bWithTool && AnimatedBody->GetBoneIndex(LeftLegBones[0]) != INDEX_NONE)
 	{
 		// legs are FeetBody's (BeginPlay hides them on the first-person meshes it finds; this copy came later)
-		ViewBody->HideBoneByName(LeftLegBones[0], PBO_None);
-		ViewBody->HideBoneByName(RightLegBones[0], PBO_None);
+		SetBoneShrunk(ViewBody, LeftLegBones[0], true);
+		SetBoneShrunk(ViewBody, RightLegBones[0], true);
 	}
+	ViewBody->MarkRefreshTransformDirty();
 	for (int32 Slot = 0; Slot < AnimatedBody->GetNumMaterials(); ++Slot)
 	{
 		ViewBody->SetMaterial(Slot, AnimatedBody->GetMaterial(Slot));
@@ -769,6 +787,8 @@ void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
 	{
 		// climbing places the body itself (ClimbingComponent::FitBodyToFace); the fit fades back in afterwards
 		FeetAlpha = 0.f;
+		// (2026-11-20) no slide while climbing: clear it so it can't carry over to the next walk
+		ClearSlide();
 		return;
 	}
 	if (bPosedVisual)
@@ -776,6 +796,8 @@ void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
 		// sitting, kneeling, lying, crawling: the standing legs are hidden from the owner and no boot is fitted (no traces);
 		// the fit and the hips drop ease out, as when climbing, and come back once standing
 		FeetAlpha = FMath::FInterpTo(FeetAlpha, 0.f, DeltaTime, 6.f);
+		// (2026-11-20) no slide in a posed visual: clear it so it can't carry over to standing
+		ClearSlide();
 		FootDropTarget = 0.f;
 		FootDrop = FMath::FInterpTo(FootDrop, 0.f, DeltaTime, 4.f);
 		ViewDrop = FMath::FInterpTo(ViewDrop, 0.f, DeltaTime, 6.f);
@@ -794,8 +816,10 @@ void UFirstPersonBodyComponent::UpdateFootDrop(float DeltaTime)
 	// movement switched off (dead, resting in a tent) still stands where it stopped: boots stay on the ground (easing the drop
 	// out there lifted the body, and now the eye, off a slope while the death screen came up)
 	UnstickFromGround(DeltaTime);
-	// sliding down a slope too steep to stand on counts as ground for the boots (see DetectSlide)
-	const bool bOnGround = Movement->IsMovingOnGround() || Movement->MovementMode == MOVE_None || DetectSlide(DeltaTime);
+	// sliding down a slope too steep to stand on counts as ground for the boots (see DetectSlide); run every frame
+	// (2026-11-20) so the slide state is cleared on landing, not kept frozen while walking
+	const bool bSlide = DetectSlide(DeltaTime);
+	const bool bOnGround = Movement->IsMovingOnGround() || Movement->MovementMode == MOVE_None || bSlide;
 	FeetAlpha = FMath::FInterpTo(FeetAlpha, bOnGround ? 1.f : 0.f, DeltaTime, 10.f);
 	if (Movement->CurrentFloor.bBlockingHit)
 	{
@@ -917,8 +941,23 @@ bool UFirstPersonBodyComponent::DetectSlide(float DeltaTime)
 	ACharacter* Character = Cast<ACharacter>(GetOwner());
 	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
 	UCapsuleComponent* Cap = Character ? Character->GetCapsuleComponent() : nullptr;
+	// (2026-11-20) only falling can be sliding: walking, landed or switched off clears it at once
+	if (!Movement || Movement->MovementMode == MOVE_None)
+	{
+		ClearSlide();
+		return false;
+	}
+	if (!Movement->IsFalling())
+	{
+		// walking: not sliding, but the hold decays instead of zeroing, so a walk/fall flicker on a steep bumpy slope keeps the
+		// boots fitted (second review, 2026-11-20)
+		SlideHold = FMath::Max(0.f, SlideHold - DeltaTime);
+		bSliding = false;
+		return false;
+	}
 	bool bContact = false;
-	if (Movement && Cap && Movement->IsFalling() && CVarFeetSlide.GetValueOnGameThread() != 0)
+	// (2026-11-20) rising (a jump take-off) is never a slide
+	if (Cap && Movement->Velocity.Z <= 50.f && CVarFeetSlide.GetValueOnGameThread() != 0)
 	{
 		FCollisionQueryParams Q(SCENE_QUERY_STAT(FeetSlide), false, Character);
 		FCollisionResponseParams RP;
@@ -926,13 +965,24 @@ bool UFirstPersonBodyComponent::DetectSlide(float DeltaTime)
 		const FVector From = Cap->GetComponentLocation();
 		const float Slim = 1.f;
 		FHitResult S;
+		// (2026-11-20) only ground too steep to stand on counts: flat ground under a jump or a landing is not a slide
 		bContact = GetWorld()->SweepSingleByChannel(S, From, From - FVector(0.f, 0.f, SlideProbeCm), FQuat::Identity, Cap->GetCollisionObjectType(),
 			FCollisionShape::MakeCapsule(Cap->GetScaledCapsuleRadius() - Slim, Cap->GetScaledCapsuleHalfHeight() - Slim), Q, RP)
-			&& !S.bStartPenetrating && S.ImpactNormal.Z >= FMath::Cos(FMath::DegreesToRadians(80.f));
+			&& !S.bStartPenetrating && !Movement->IsWalkable(S) && S.ImpactNormal.Z >= FMath::Cos(FMath::DegreesToRadians(80.f));
 	}
 	SlideHold = bContact ? SlideHoldSec : FMath::Max(0.f, SlideHold - DeltaTime);
-	bSliding = Movement && Movement->IsFalling() && SlideHold > 0.f;
+	bSliding = SlideHold > 0.f;
 	return bSliding;
+}
+
+void UFirstPersonBodyComponent::ClearSlide()
+{
+	SlideHold = 0.f;
+	bSliding = false;
+	for (FLegFit& Leg : Legs)
+	{
+		Leg.SlideTuck = 0.f;
+	}
 }
 
 void UFirstPersonBodyComponent::UnstickFromGround(float DeltaTime)
@@ -1047,6 +1097,7 @@ void UFirstPersonBodyComponent::PoseViewBody(float DeltaTime)
 	if (HeldTool)
 	{
 		ViewBody->CopyPoseFromSkeletalComponent(AnimatedBody);
+		ApplyShrunk(ViewBody);
 		UpdateHandMotion(DeltaTime);
 		PoseArm(Arms[0], DeltaTime);
 		if (bShowLeftHand)
@@ -1062,6 +1113,7 @@ void UFirstPersonBodyComponent::PoseViewBody(float DeltaTime)
 	}
 	// story hands: the animated arms, with each raised arm blended onto its spot (eased in and out)
 	CopyBodyPose(ViewBody, AnimatedBody);
+	ApplyShrunk(ViewBody);
 	UpdateHandMotion(DeltaTime);
 	for (FViewArm& Arm : Arms)
 	{
@@ -1128,6 +1180,345 @@ void UFirstPersonBodyComponent::CopyBodyPose(UPoseableMeshComponent* Copy, USkel
 	}
 }
 
+TArray<int32>* UFirstPersonBodyComponent::ShrunkListFor(const UPoseableMeshComponent* Copy)
+{
+	if (!Copy)
+	{
+		return nullptr;
+	}
+	return Copy == FeetBody.Get() ? &FeetShrunk : Copy == ViewBody.Get() ? &ViewShrunk : nullptr;
+}
+
+void UFirstPersonBodyComponent::SetBoneShrunk(UPoseableMeshComponent* Copy, FName Bone, bool bShrunk)
+{
+	TArray<int32>* List = ShrunkListFor(Copy);
+	const int32 Index = Copy && List ? Copy->GetBoneIndex(Bone) : INDEX_NONE;
+	if (Index == INDEX_NONE)
+	{
+		return;
+	}
+	if (bShrunk)
+	{
+		List->AddUnique(Index);
+		ApplyShrunk(Copy);
+	}
+	else
+	{
+		List->Remove(Index);
+		// its real scale comes back with the next pose copy (this frame: UpdateBodyVisibility runs before PlaceFeet)
+		if (Copy->BoneSpaceTransforms.IsValidIndex(Index) && !(Copy == FeetBody.Get() && FeetClipShrunk.Contains(Index)))
+		{
+			Copy->BoneSpaceTransforms[Index].SetScale3D(FVector::OneVector);
+		}
+	}
+	Copy->MarkRefreshTransformDirty();
+}
+
+void UFirstPersonBodyComponent::ApplyShrunk(UPoseableMeshComponent* Copy)
+{
+	const TArray<int32>* List = ShrunkListFor(Copy);
+	if (!List)
+	{
+		return;
+	}
+	// a near-zero scale at the bone's own joint: its vertices (and its children's) close onto that joint; partly weighted
+	// neighbours only lean a little towards it. Never exactly 0 (a singular matrix breaks the tangent basis).
+	for (const int32 Index : *List)
+	{
+		if (Copy->BoneSpaceTransforms.IsValidIndex(Index))
+		{
+			Copy->BoneSpaceTransforms[Index].SetScale3D(FVector(1e-3f));
+		}
+	}
+	if (Copy == FeetBody.Get())
+	{
+		for (const int32 Index : FeetClipShrunk)
+		{
+			if (Copy->BoneSpaceTransforms.IsValidIndex(Index))
+			{
+				Copy->BoneSpaceTransforms[Index].SetScale3D(FVector(1e-3f));
+			}
+		}
+	}
+}
+
+void UFirstPersonBodyComponent::SetClipShrunk(const TArray<FName, TInlineAllocator<8>>& Bones)
+{
+	if (!FeetBody)
+	{
+		return;
+	}
+	TArray<int32, TInlineAllocator<8>> Want;
+	for (const FName& Bone : Bones)
+	{
+		const int32 Index = FeetBody->GetBoneIndex(Bone);
+		if (Index != INDEX_NONE)
+		{
+			Want.AddUnique(Index);
+		}
+	}
+	bool bChanged = false;
+	for (int32 i = FeetClipShrunk.Num() - 1; i >= 0; --i)
+	{
+		const int32 Index = FeetClipShrunk[i];
+		if (!Want.Contains(Index))
+		{
+			FeetClipShrunk.RemoveAt(i);
+			// back to its real scale with the next pose copy, unless hidden for good / with the torso
+			if (FeetBody->BoneSpaceTransforms.IsValidIndex(Index) && !FeetShrunk.Contains(Index))
+			{
+				FeetBody->BoneSpaceTransforms[Index].SetScale3D(FVector::OneVector);
+			}
+			bChanged = true;
+		}
+	}
+	for (const int32 Index : Want)
+	{
+		if (!FeetClipShrunk.Contains(Index))
+		{
+			FeetClipShrunk.Add(Index);
+			bChanged = true;
+		}
+	}
+	if (bChanged)
+	{
+		ApplyShrunk(FeetBody);
+		FeetBody->MarkRefreshTransformDirty();
+	}
+}
+
+bool UFirstPersonBodyComponent::IsTorsoBone(int32 BoneIndex) const
+{
+	if (!FeetBody || !FeetBody->GetSkinnedAsset() || BoneIndex == INDEX_NONE)
+	{
+		return false;
+	}
+	const FReferenceSkeleton& Ref = FeetBody->GetSkinnedAsset()->GetRefSkeleton();
+	for (int32 B = BoneIndex; B != INDEX_NONE; B = Ref.GetParentIndex(B))
+	{
+		if (FeetTorsoBones.Contains(Ref.GetBoneName(B)))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void UFirstPersonBodyComponent::SyncTorsoChildren()
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* World = Character ? Character->GetMesh() : nullptr;
+	if (!FeetBody || !World)
+	{
+		return;
+	}
+	// torso of FeetBody shrunk away (two-projection body, hands up): whatever is worn on it (the khata) would shrink with
+	// it, so it rides on the world body's same bone meanwhile (same mesh, same socket, same relative transform)
+	const bool bTorsoAway = !bFeetTorsoShown;
+	if (bTorsoAway)
+	{
+		const TArray<TObjectPtr<USceneComponent>> Children = FeetBody->GetAttachChildren();   // a copy: re-attaching edits the list
+		for (USceneComponent* Child : Children)
+		{
+			const FName Socket = Child ? Child->GetAttachSocketName() : NAME_None;
+			if (Socket != NAME_None && IsTorsoBone(FeetBody->GetBoneIndex(Socket)))
+			{
+				Child->AttachToComponent(World, FAttachmentTransformRules::KeepRelativeTransform, Socket);
+				TorsoChildrenOnWorld.AddUnique(Child);
+			}
+		}
+	}
+	else if (TorsoChildrenOnWorld.Num() > 0)
+	{
+		for (const TWeakObjectPtr<USceneComponent>& Weak : TorsoChildrenOnWorld)
+		{
+			USceneComponent* Child = Weak.Get();
+			if (Child && Child->GetAttachParent() == World)
+			{
+				Child->AttachToComponent(FeetBody, FAttachmentTransformRules::KeepRelativeTransform, Child->GetAttachSocketName());
+			}
+		}
+		TorsoChildrenOnWorld.Reset();
+	}
+}
+
+void UFirstPersonBodyComponent::ApplyOwnerLean(UPoseableMeshComponent* Copy, const USkeletalMeshComponent* Source)
+{
+	ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (!Copy || !Source || !Character || OwnerLeanDeg <= 0.01f || !bFeetTorsoShown || LeanBoneIndex == INDEX_NONE)
+	{
+		return;
+	}
+	const FReferenceSkeleton& Ref = Copy->GetSkinnedAsset()->GetRefSkeleton();
+	const int32 Parent = Ref.GetParentIndex(LeanBoneIndex);
+	const TArray<FTransform>& Pose = Source->GetComponentSpaceTransforms();
+	if (Parent == INDEX_NONE || !Pose.IsValidIndex(Parent) || !Copy->BoneSpaceTransforms.IsValidIndex(LeanBoneIndex))
+	{
+		return;
+	}
+	// a component-space rotation about the bone's own joint that tips "up" towards "back" (the actor's forward reversed);
+	// the bone's new local rotation = Parent^-1 * Q * Parent * Local
+	const FTransform BodyXf = Source->GetComponentTransform();
+	const FVector UpCS = BodyXf.InverseTransformVectorNoScale(FVector::UpVector).GetSafeNormal();
+	const FVector FwdCS = BodyXf.InverseTransformVectorNoScale(Character->GetActorForwardVector()).GetSafeNormal();
+	const float A = FMath::DegreesToRadians(OwnerLeanDeg);
+	const FQuat Q = FQuat::FindBetweenNormals(UpCS, (UpCS * FMath::Cos(A) - FwdCS * FMath::Sin(A)).GetSafeNormal());
+	const FQuat ParentRot = Pose[Parent].GetRotation();
+	FTransform& Local = Copy->BoneSpaceTransforms[LeanBoneIndex];
+	Local.SetRotation((ParentRot.Inverse() * Q * ParentRot * Local.GetRotation()).GetNormalized());
+}
+
+float UFirstPersonBodyComponent::GetOwnTorsoDepthScale() const
+{
+	if (bPosedVisual)
+	{
+		return 0.f;   // postures place the lowered body under the eye themselves
+	}
+	if (FeetBody && FeetBody->IsVisible() && bFeetTorsoShown)
+	{
+		return 1.f;
+	}
+	const UPrimitiveComponent* FirstPerson = ViewBody && ViewBody->IsVisible() ? static_cast<const UPrimitiveComponent*>(ViewBody.Get())
+		: TemplateArms && TemplateArms->IsVisible() ? static_cast<const UPrimitiveComponent*>(TemplateArms.Get()) : nullptr;
+	if (!FirstPerson)
+	{
+		return 0.f;
+	}
+	if (FirstPerson->FirstPersonPrimitiveType == EFirstPersonPrimitiveType::FirstPerson && ViewCamera && ViewCamera->bEnableFirstPersonScale)
+	{
+		return FMath::Clamp(ViewCamera->FirstPersonScale, 0.1f, 1.f);
+	}
+	return 1.f;
+}
+
+bool UFirstPersonBodyComponent::MeasureOwnFront(const FVector& Origin, const FVector& Forward, float MinZ, float LateralCenter,
+	float LateralHalf, float LeanDeg, float& OutFront, FOwnBodyBoxes* OutBoxes) const
+{
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	const USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
+	const UPhysicsAsset* PhysicsAsset = Mesh ? Mesh->GetPhysicsAsset() : nullptr;
+	if (!PhysicsAsset || !Mesh->GetSkinnedAsset() || Mesh->GetComponentSpaceTransforms().Num() == 0)
+	{
+		if (!bWarnedNoPhysicsAsset && Mesh)
+		{
+			bWarnedNoPhysicsAsset = true;
+			UE_LOG(LogTemp, Warning, TEXT("FirstPersonBody: %s has no physics asset: the view rig cannot measure the torso, no eye clearance"), *GetNameSafe(Mesh->GetSkinnedAsset()));
+		}
+		return false;
+	}
+
+	// which bodies count, once per physics asset: not the hidden head / neck (shrunk for the owner), not forearms and hands
+	// (they swing in front of the belly and reach out), not the legs
+	if (FrontBodiesFor.Get() != PhysicsAsset)
+	{
+		FrontBodiesFor = PhysicsAsset;
+		FrontBodies.Reset();
+		const FReferenceSkeleton& Ref = Mesh->GetSkinnedAsset()->GetRefSkeleton();
+		auto IsUnder = [&Ref](int32 Bone, int32 Ancestor)
+		{
+			for (int32 B = Bone; B != INDEX_NONE && Ancestor != INDEX_NONE; B = Ref.GetParentIndex(B))
+			{
+				if (B == Ancestor) { return true; }
+			}
+			return false;
+		};
+		int32 Hidden = Ref.FindBoneIndex(HiddenBone);
+		if (Hidden != INDEX_NONE)
+		{
+			const int32 Neck = Ref.GetParentIndex(Hidden);
+			if (Neck != INDEX_NONE && Ref.GetBoneName(Neck).ToString().Contains(TEXT("neck")))
+			{
+				Hidden = Neck;
+			}
+		}
+		const int32 LeftThigh = Ref.FindBoneIndex(LeftLegBones[0]);
+		const int32 RightThigh = Ref.FindBoneIndex(RightLegBones[0]);
+		for (int32 Setup = 0; Setup < PhysicsAsset->SkeletalBodySetups.Num(); ++Setup)
+		{
+			const USkeletalBodySetup* BodySetup = PhysicsAsset->SkeletalBodySetups[Setup];
+			const int32 Bone = BodySetup ? Ref.FindBoneIndex(BodySetup->BoneName) : INDEX_NONE;
+			if (Bone == INDEX_NONE || IsUnder(Bone, Hidden) || IsUnder(Bone, LeftThigh) || IsUnder(Bone, RightThigh))
+			{
+				continue;
+			}
+			bool bLimbEnd = false;
+			for (int32 B = Bone; B != INDEX_NONE && !bLimbEnd; B = Ref.GetParentIndex(B))
+			{
+				const FString Name = Ref.GetBoneName(B).ToString();
+				bLimbEnd = Name.Contains(TEXT("forearm")) || Name.Contains(TEXT("lowerarm")) || Name.Contains(TEXT("hand"));
+			}
+			if (bLimbEnd)
+			{
+				continue;
+			}
+			FFrontBody Entry;
+			Entry.Bone = Bone;
+			Entry.Setup = Setup;
+			Entry.bLeans = IsUnder(Bone, LeanBoneIndex);
+			// shoulder / upper arm (the forearms and hands are out already): they swing with every step
+			for (int32 B = Bone; B != INDEX_NONE && !Entry.bArm; B = Ref.GetParentIndex(B))
+			{
+				const FString Name = Ref.GetBoneName(B).ToString();
+				Entry.bArm = Name.Contains(TEXT("arm")) || Name.Contains(TEXT("shoulder")) || Name.Contains(TEXT("clavicle"));
+			}
+			FrontBodies.Add(Entry);
+		}
+		UE_LOG(LogTemp, Display, TEXT("FirstPersonBody: torso front measured from %d of %d bodies of %s"),
+			FrontBodies.Num(), PhysicsAsset->SkeletalBodySetups.Num(), *GetNameSafe(PhysicsAsset));
+	}
+
+	// the lean FeetBody gets (ApplyOwnerLean), about the lean bone's joint, in world space
+	const bool bLean = LeanDeg > 0.01f && bFeetTorsoShown && LeanBoneIndex != INDEX_NONE;
+	FTransform LeanXf = FTransform::Identity;
+	if (bLean)
+	{
+		const FVector Pivot = Mesh->GetBoneTransform(LeanBoneIndex).GetLocation();
+		const FVector Fwd = Character->GetActorForwardVector();
+		const float A = FMath::DegreesToRadians(LeanDeg);
+		const FQuat Q = FQuat::FindBetweenNormals(FVector::UpVector, (FVector::UpVector * FMath::Cos(A) - Fwd * FMath::Sin(A)).GetSafeNormal());
+		LeanXf = FTransform(-Pivot) * FTransform(Q) * FTransform(Pivot);
+	}
+
+	const FTransform Frame(FRotator(0.f, Forward.Rotation().Yaw, 0.f), Origin);
+	bool bAny = false;
+	float Front = -UE_BIG_NUMBER;
+	for (const FFrontBody& Fb : FrontBodies)
+	{
+		const USkeletalBodySetup* BodySetup = PhysicsAsset->SkeletalBodySetups.IsValidIndex(Fb.Setup) ? PhysicsAsset->SkeletalBodySetups[Fb.Setup].Get() : nullptr;
+		if (!BodySetup)
+		{
+			continue;
+		}
+		FTransform World = Mesh->GetBoneTransform(Fb.Bone);
+		if (bLean && Fb.bLeans)
+		{
+			World = World * LeanXf;
+		}
+		const FBox Box = BodySetup->AggGeom.CalcAABB(World.GetRelativeTransform(Frame));
+		if (!Box.IsValid || Box.Max.Z < MinZ || Box.Max.Y < LateralCenter - LateralHalf || Box.Min.Y > LateralCenter + LateralHalf)
+		{
+			continue;
+		}
+		if (!Fb.bArm)
+		{
+			Front = FMath::Max(Front, float(Box.Max.X));
+			bAny = true;
+		}
+		if (OutBoxes)
+		{
+			FOwnBodyBox& Out = OutBoxes->AddDefaulted_GetRef();
+			Out.Box = Box;
+			Out.Bone = BodySetup->BoneName;
+			Out.bArm = Fb.bArm;
+		}
+	}
+	if (bAny)
+	{
+		OutFront = Front;
+	}
+	return bAny;
+}
+
 void UFirstPersonBodyComponent::SyncWorldBody(USkeletalMeshComponent* Body)
 {
 	if (!Body)
@@ -1183,14 +1574,7 @@ void UFirstPersonBodyComponent::SetFeetTorso(bool bShow)
 	// the spine branch (torso, arms; the neck and head under it stay hidden on their own)
 	for (const FName& Bone : FeetTorsoBones)
 	{
-		if (bShow)
-		{
-			FeetBody->UnHideBoneByName(Bone);
-		}
-		else
-		{
-			FeetBody->HideBoneByName(Bone, PBO_None);
-		}
+		SetBoneShrunk(FeetBody, Bone, !bShow);   // (bug #72) not Hide/UnHideBoneByName
 	}
 }
 
@@ -1217,6 +1601,7 @@ void UFirstPersonBodyComponent::UpdateBodyVisibility(USkeletalMeshComponent* Bod
 			FeetBody->SetVisibility(bShow);
 		}
 		SetFeetTorso(bOneBody && !HeldTool && !bHands);
+		SyncTorsoChildren();   // (bug #72) the khata never shrinks with a hidden torso
 	}
 	if (bOwnerSeesBody)
 	{
@@ -1323,6 +1708,11 @@ void UFirstPersonBodyComponent::PlaceFeet()
 		if (Copy)
 		{
 			CopyBodyPose(Copy, Source);
+			if (Copy == FeetBody)
+			{
+				ApplyShrunk(Copy);              // hidden head / torso closed onto their own joints (bug #72)
+				ApplyOwnerLean(Copy, Source);   // the torso tipped back while looking down (the view rig sets the angle)
+			}
 		}
 	}
 
@@ -1659,7 +2049,8 @@ void UFirstPersonBodyComponent::PoseArm(FViewArm& Arm, float DeltaTime, float Bl
 	const FVector CameraRight = Camera.GetUnitAxis(EAxis::Y);
 
 	// The fist eases towards its spot in the view, so turning the head leaves the hands trailing a little.
-	const FVector GripTarget = Camera.TransformPosition(HandTargetInView(Arm));
+	// (bug #72) minus the eye's clearance offset: the shoulders stay on the body, so the hands stay put too
+	const FVector GripTarget = Camera.TransformPosition(HandTargetInView(Arm)) - ViewBody->GetComponentTransform().InverseTransformVector(EyeClearOffset);
 	FVector& SmoothedGrip = Arm.SmoothedGrip;
 	if (!Arm.bHasSmoothedGrip || DeltaTime <= 0.f)
 	{

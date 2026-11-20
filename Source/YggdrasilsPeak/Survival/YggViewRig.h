@@ -267,6 +267,42 @@ public:
 	UPROPERTY(Config) float WaistLeanFwdCm = 8.f;
 	UPROPERTY(Config) float WaistLeanDownCm = 3.5f;
 	UPROPERTY(Config) float EyeHorizMaxCm = 24.f;
+	/** (bug #72) The neck model may lower the eye at most this much (cm) looking down (it reached 12 cm: into the collar). */
+	UPROPERTY(Config) float NeckDropMaxCm = 6.f;
+	/** (bug #72) Eye clearance, ygg.View.Clear: walking and looking down, the eye stays EyeClearCm in front of the measured
+	 *  front of your own torso (physics-asset bodies at this frame's pose whose top is within EyeClearBandCm under the eye
+	 *  and that overlap EyeClearLateralCm either side of it); where the capped push can't, EyeClearBandCm above it. Fades in from EyeClearFromDeg to EyeClearFullDeg below level
+	 *  (level walking unchanged); the eye then goes at most EyeClearMaxCm from the capsule axis. */
+	UPROPERTY(Config) float EyeClearCm = 9.f;
+	UPROPERTY(Config) float EyeClearBandCm = 14.f;
+	UPROPERTY(Config) float EyeClearLateralCm = 20.f;
+	UPROPERTY(Config) float EyeClearFromDeg = 10.f;
+	UPROPERTY(Config) float EyeClearFullDeg = 30.f;
+	UPROPERTY(Config) float EyeClearMaxCm = 45.f;
+	/** When the capped forward push can't get the eye in front of a body, it rises EyeClearBandCm above that body's top,
+	 *  at most this much (cm; the look-down drop is about 10 cm, so ~20 is back to the standing eye). */
+	UPROPERTY(Config) float EyeClearLiftMaxCm = 20.f;
+	/** The clearance never moves the eye more than this forward (cm): the raised hands are placed from the camera while
+	 *  the shoulders stay on the body; beyond it the eye rises, then what it still reaches is shrunk for the owner. */
+	UPROPERTY(Config) float EyeClearPushMaxCm = 20.f;
+	/** Width (cm) of the soft gates (which bodies count, by height, side and depth): no snap as a body crosses an edge. */
+	UPROPERTY(Config) float EyeClearSoftCm = 6.f;
+	/** Seconds the clearance takes to push / lift out (fast, never in one frame). */
+	UPROPERTY(Config) float EyeClearAttackSec = 0.04f;
+	/** A body still within this distance (cm) of the eye after the push and lift is shrunk for the owner (near clip 10 cm),
+	 *  and stays shrunk EyeClipHoldSec after it last came that close. */
+	UPROPERTY(Config) float EyeClipReachCm = 12.f;
+	UPROPERTY(Config) float EyeClipHoldSec = 0.3f;
+	/** Walking, a sphere this big (cm) swept from the capsule axis to the eye keeps the eye out of walls and rock; 0 = off. */
+	UPROPERTY(Config) float EyeWallRadiusCm = 6.f;
+	/** Seconds the clearance takes to let go when the torso moves away again (it pushes out at once). */
+	UPROPERTY(Config) float EyeClearReleaseSec = 0.25f;
+	/** (bug #72) Your own visible torso (FeetBody, one body) tips back by up to OwnerLeanMaxDeg about the first spine joint,
+	 *  fading in from OwnerLeanFromDeg to OwnerLeanFullDeg below level: the chest clears the eye and the boots show
+	 *  beyond it. Owner only (shadow, mirrors and others see the plain body). 0 = off. */
+	UPROPERTY(Config) float OwnerLeanMaxDeg = 12.f;
+	UPROPERTY(Config) float OwnerLeanFromDeg = 30.f;
+	UPROPERTY(Config) float OwnerLeanFullDeg = 75.f;
 	UPROPERTY(Config) float EyeFloorMinCm = 20.f;
 	UPROPERTY(Config) float EyeFloorMinTakeoverCm = 30.f;
 	UPROPERTY(Config) float EyeTopMarginCm = 5.f;
@@ -660,6 +696,20 @@ private:
 	FVector TakeFadeLoc = FVector::ZeroVector;
 	FRotator TakeFadeRot = FRotator::ZeroRotator;
 	float TakeFadeLen = 0.3f;
+	float EyeFwdW = 1.f;   // (2026-11-20) 0..1: how much of ygg.View.EyeFwd is on; eased out in takeovers, back in after
+	// (bug #72) eye clearance in front of your own torso and the owner lean, see EyeClearCm / OwnerLeanMaxDeg
+	float ClearPush = 0.f;        // cm the eye is pushed forward now
+	float ClearLift = 0.f;        // cm the eye is lifted now (the push alone could not clear the torso)
+	float ClearLogT = 0.f;        // ygg.View.Clear 2: next log line
+	float ClearDepthScale = 0.f;  // eased GetOwnTorsoDepthScale (0 = no torso of yours on screen)
+	FVector ClearOffset = FVector::ZeroVector;   // world cm the clearance moved the eye this frame (after the wall sweep)
+	TArray<TPair<FName, float>, TInlineAllocator<8>> ClipHold;   // bones the eye reaches: seconds left shrunk
+	/** Clearance, lift, lean and shrunk bones back to none (Cut, HardReset). */
+	void ResetClearance();
+	float OwnerLean = 0.f;        // degrees FeetBody's torso is tipped back now (pushed to the body in PushBody)
+	float PushedOwnerLean = -1.f;
+	float ClearFront = 0.f, ClearEyeX = 0.f;   // last measurement (ygg.View.Clear 2)
+	bool bClearMeasured = false;
 	float Dilation = 1.f;
 	bool bAudioPitched = false;
 	float LastAudioPitch = 1.f;
@@ -763,7 +813,8 @@ private:
 	float LeaseCap(EYggLease Kind, bool bKeep) const;
 	bool IsLookLocked() const;
 	bool CanGuide() const;
-	bool InTakeover() const { return Scripted == EYggScripted::Fall || Scripted == EYggScripted::Knock || TakeFade > 0.f; }
+	// (2026-11-20) the wait for the lids after a fall counts too (the fallen view is held until the cut)
+	bool InTakeover() const { return Scripted == EYggScripted::Fall || Scripted == EYggScripted::Knock || TakeFade > 0.f || bFallSnapPending; }
 	APlayerController* GetPC() const;
 	APlayerCameraManager* GetPCM() const;
 	void EnsureModifier();

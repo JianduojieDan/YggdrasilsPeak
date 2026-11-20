@@ -33,9 +33,11 @@
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Misc/App.h"
+#include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDevice.h"
 #include "Misc/OutputDeviceRedirector.h"
+#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "Serialization/JsonReader.h"
@@ -109,6 +111,8 @@ void UYggSummitBot::Deinitialize()
 	if (Phase != EPhase::Idle && Phase != EPhase::Quitting) { Finish(TEXT("the world closed during the run")); }
 	if (LogDevice.IsValid() && GLog) { GLog->RemoveOutputDevice(LogDevice.Get()); }
 	if (ShotHandle.IsValid()) { UGameViewportClient::OnScreenshotCaptured().Remove(ShotHandle); ShotHandle.Reset(); }
+	if (bShotPending && FScreenshotRequest::IsScreenshotRequested()) { FScreenshotRequest::Reset(); }   // (2026-11-20)
+	bShotPending = false;
 	Phase = EPhase::Idle;
 	Super::Deinitialize();
 }
@@ -116,6 +120,12 @@ void UYggSummitBot::Deinitialize()
 void UYggSummitBot::Run(const TArray<FString>& Args)
 {
 	if (Phase != EPhase::Idle) { UE_LOG(LogYggSummitBot, Warning, TEXT("SummitBot: already running")); return; }
+	// the run teleports to the South Col and would save that checkpoint over the player's save (2026-11-20)
+	if (!FParse::Param(FCommandLine::Get(), TEXT("YggNoSave")))
+	{
+		UE_LOG(LogYggSummitBot, Warning, TEXT("SummitBot: needs -YggNoSave (it would overwrite your save). Use Tools/Bot/run_bot.ps1 -Chapter summit."));
+		return;
+	}
 	bFast = bNoO2 = false;
 	StayMin = 0.f; DownM = 300.f; CapMin = 60.f; FromM = 0.f;
 	for (int32 i = 0; i < Args.Num(); ++i)
@@ -133,6 +143,10 @@ void UYggSummitBot::Run(const TArray<FString>& Args)
 	UpStartT = SummitT = MenuT = DownStartT = DownEndT = DeathT = DeathZoneMsgT = StayStartT = -1.0;
 	FirstHypT = FirstFrostT = FirstFaintT = FirstDamageT = FirstExhT = -1.0;
 	Samples.Reset(); Issues.Reset(); Shots.Reset(); Events.Reset(); ExpeditionLines.Reset(); FrameMs.Reset(); OffRope.Reset();
+	ProbeMs.Reset(); SkipFrameStats = 0;
+	// a second run in the same session starts clean (2026-11-20)
+	NextSample = NextCheck = 0.0; bShotPending = false; PendingShot.Reset();
+	if (ShotHandle.IsValid()) { UGameViewportClient::OnScreenshotCaptured().Remove(ShotHandle); ShotHandle.Reset(); }
 	Teleports = Sidesteps = Probes = Falls = 0;
 	RopeOnSec = RopeOffSec = FallSec = MaxLat = MaxFloor = 0.f;
 	MaxHyp = MaxFrost = MaxExh = MaxFaint = MaxHeart = 0.f; MinSpO2 = 100.f; MinHealth = 100.f; MinCore = 40.f;
@@ -264,7 +278,21 @@ void UYggSummitBot::Tick(float DeltaTime)
 	GameT += DeltaTime;
 	PhaseT += DeltaTime;
 	DrainLog();
-	if (Phase != EPhase::Waiting && RealDt > 0.f && FrameMs.Num() < 400000) { FrameMs.Add(RealDt * 1000.f); }
+	// a picture that never comes back (a failed capture gives no callback) must not block all later ones (2026-11-20)
+	if (bShotPending && FPlatformTime::Seconds() - ShotAt > 5.0)
+	{
+		UGameViewportClient::OnScreenshotCaptured().Remove(ShotHandle);
+		ShotHandle.Reset();
+		bShotPending = false;
+		Note(FString::Printf(TEXT("picture %s lost (no capture in 5 s)"), *PendingShot));
+		PendingShot.Reset();
+	}
+	// the frames after a ground probe are the tool's own freeze, and the camp jump / settle is loading: not game frames (2026-11-20)
+	if (Phase != EPhase::Waiting && Phase != EPhase::Settle && RealDt > 0.f)
+	{
+		if (SkipFrameStats > 0) { --SkipFrameStats; ProbeMs.Add(RealDt * 1000.f); }
+		else if (FrameMs.Num() < 400000) { FrameMs.Add(RealDt * 1000.f); }
+	}
 	if (GameT > CapMin * 60.0) { Finish(FString::Printf(TEXT("cap: %.0f min of game time"), CapMin)); return; }
 
 	if (Phase == EPhase::Waiting)
@@ -433,6 +461,7 @@ void UYggSummitBot::FindTree()
 	// the World Tree: the static mesh SM_Yggdrasil_* on the summit (Tools/Art/world_tree_summit.py)
 	FBox Box(ForceInit);
 	FString Names;
+	TreeActors.Reset();
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
 	{
 		TInlineComponentArray<UStaticMeshComponent*> Comps(*It);
@@ -442,6 +471,7 @@ void UYggSummitBot::FindTree()
 			if (M && M->GetName().Contains(TEXT("Yggdrasil")))
 			{
 				Box += C->Bounds.GetBox();
+				TreeActors.AddUnique(*It);
 				if (Names.Len() < 200) { Names += FString::Printf(TEXT("%s%s/%s"), Names.IsEmpty() ? TEXT("") : TEXT(", "), *It->GetName(), *M->GetName()); }
 			}
 		}
@@ -511,7 +541,7 @@ void UYggSummitBot::Walk(APawn* P, float Dt, bool bDown)
 	if ((!bDown && S >= NextGroundProbeS) || (bDown && S <= NextGroundProbeS))
 	{
 		NextGroundProbeS = bDown ? S - 10000.f : S + 10000.f;
-		if (GEngine) { GEngine->Exec(GetWorld(), *FString::Printf(TEXT("ygg.GroundProbe A5_%s_%04.0fm"), bDown ? TEXT("down") : TEXT("up"), S / 100.f)); ++Probes; }
+		if (GEngine) { GEngine->Exec(GetWorld(), *FString::Printf(TEXT("ygg.GroundProbe A5_%s_%04.0fm"), bDown ? TEXT("down") : TEXT("up"), S / 100.f)); ++Probes; SkipFrameStats = 2; }
 	}
 	Check(P, Dt, true);
 }
@@ -748,6 +778,8 @@ bool UYggSummitBot::TeleportAlong(APawn* P, float ToS, const FString& Why)
 	At.Z = FMath::Max(At.Z, P->GetActorLocation().Z);
 	FHitResult H;
 	FCollisionQueryParams Q(SCENE_QUERY_STAT(YggSummitBotTp), false, P);
+	// the World Tree (and its roots) is solid to this trace: a teleport landed on the roots 10 m above the route (2026-11-20)
+	for (const TWeakObjectPtr<AActor>& A : TreeActors) { if (A.IsValid()) { Q.AddIgnoredActor(A.Get()); } }
 	if (!GetWorld()->LineTraceSingleByChannel(H, At + FVector(0, 0, 15000), At - FVector(0, 0, 20000), ECC_Pawn, Q))
 	{
 		Note(FString::Printf(TEXT("teleport (%s) refused: no ground under %s"), *Why, *Cm(At)));
@@ -785,6 +817,7 @@ void UYggSummitBot::Shot(const FString& Stage, bool bUI)
 	Shots.Add(X);
 	PendingShot = X.File;
 	bShotPending = true;
+	ShotAt = FPlatformTime::Seconds();
 	// the pixels come to OnShot and a worker writes the PNG (the engine's own PNG write freezes the game thread)
 	ShotHandle = UGameViewportClient::OnScreenshotCaptured().AddUObject(this, &UYggSummitBot::OnShot);
 	FScreenshotRequest::RequestScreenshot(PendingShot, bUI, false);
@@ -885,7 +918,7 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 	{
 		const float ClimbSec = float(SummitT - UpStartT);
 		R.Appendf(TEXT("\nAverage along the route %.2f m/s; %.0f m of height in %.1f min.\n"), RouteLen / 100.f / ClimbSec,
-			Samples.Num() ? 0.f : 0.f, ClimbSec / 60.f);
+			SummitElev - StartElev, ClimbSec / 60.f);
 	}
 
 	R.Append(TEXT("\n## Route, rope, ground\n\n"));
@@ -943,6 +976,12 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 		const float P99 = F[FMath::Clamp(int32(F.Num() * 0.99), 0, F.Num() - 1)];
 		const float Med = F[F.Num() / 2];
 		R.Appendf(TEXT("\n## Frames\n\n- %d frames: average %.1f fps, median %.1f ms, 99th percentile %.1f ms (1%% low %.1f fps), worst %.0f ms\n"), F.Num(), 1000.0 * F.Num() / Sum, Med, P99, 1000.f / P99, F.Last());
+		if (ProbeMs.Num() > 0)
+		{
+			float WorstProbe = 0.f;
+			for (float V : ProbeMs) { WorstProbe = FMath::Max(WorstProbe, V); }
+			R.Appendf(TEXT("- ground-probe frames (left out above): %d, worst %.0f ms\n"), ProbeMs.Num(), WorstProbe);
+		}
 	}
 
 	R.Append(TEXT("\n## Pictures\n\n"));
