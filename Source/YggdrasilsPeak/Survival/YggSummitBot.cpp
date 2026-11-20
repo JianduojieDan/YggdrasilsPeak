@@ -14,6 +14,7 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Containers/Queue.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -116,7 +117,7 @@ void UYggSummitBot::Run(const TArray<FString>& Args)
 {
 	if (Phase != EPhase::Idle) { UE_LOG(LogYggSummitBot, Warning, TEXT("SummitBot: already running")); return; }
 	bFast = bNoO2 = false;
-	StayMin = 0.f; DownM = 300.f; CapMin = 60.f;
+	StayMin = 0.f; DownM = 300.f; CapMin = 60.f; FromM = 0.f;
 	for (int32 i = 0; i < Args.Num(); ++i)
 	{
 		const FString A = Args[i].ToLower();
@@ -126,6 +127,7 @@ void UYggSummitBot::Run(const TArray<FString>& Args)
 		else if (A == TEXT("stay")) { StayMin = FMath::Max(0.f, Next); ++i; }
 		else if (A == TEXT("down")) { DownM = FMath::Max(0.f, Next); ++i; }
 		else if (A == TEXT("cap")) { CapMin = FMath::Max(5.f, Next); ++i; }
+		else if (A == TEXT("from")) { FromM = FMath::Max(0.f, Next); ++i; }
 	}
 	GameT = 0.0; RealStart = FPlatformTime::Seconds(); LastReport = RealStart; PhaseT = 0.0;
 	UpStartT = SummitT = MenuT = DownStartT = DownEndT = DeathT = DeathZoneMsgT = StayStartT = -1.0;
@@ -276,6 +278,9 @@ void UYggSummitBot::Tick(float DeltaTime)
 
 	// no oxygen means none: the South Col pickups would put bottles in the pack (and on, once saturation falls)
 	if (bNoO2 && Sv && (Sv->GetCarriedBottles() > 0 || Sv->GetBottleSecondsLeft() > 0.f)) { Sv->SetCarriedBottles(0); Sv->ClearOxygenBottle(); }
+	// with oxygen the kit is one bottle on and one spare (17 kg pack): the camp's eight pickups would fill the pack to three
+	// spares (23 kg, walk x0.83), which no summit push carries
+	if (!bNoO2 && Sv && Phase != EPhase::Settle && Sv->GetCarriedBottles() > 1) { Sv->SetCarriedBottles(1); }
 
 	// death: the time, the place, the cause; the death screen's picture; then the report
 	if (Sv && Sv->IsDead())
@@ -312,8 +317,15 @@ void UYggSummitBot::Tick(float DeltaTime)
 				StartHealth = Sv->GetSnapshot().Health;
 				StartElev = Sv->GetSnapshot().ElevationMeters;
 			}
-			StartS = S;
 			Shot(TEXT("1_southcol"), true);
+			// testing a stretch: a teleport up the route first (the times are then not the demo's)
+			if (FromM > 0.f && TeleportAlong(P, FromM * 100.f, TEXT("from")))
+			{
+				Seg = 0;
+				while (Seg < Route.Num() - 2 && Cum[Seg + 1] < FromM * 100.f) { ++Seg; }
+				Locate(P->GetActorLocation(), false);
+			}
+			StartS = S;
 			Phase = EPhase::Up;
 			PhaseT = 0.0;
 			UpStartT = GameT;
@@ -464,6 +476,21 @@ void UYggSummitBot::Walk(APawn* P, float Dt, bool bDown)
 	{
 		// stuck: a sidestep (2 s of every 6, alternating sides) and a jump, then a 10 m teleport along the route
 		const double Ph = NoProg - 8.0;
+		if (C && Ph <= Dt * 1.5)
+		{
+			// what holds the climber: the capsule swept 1.5 m towards the target (the report names it)
+			UCapsuleComponent* Cap = C->GetCapsuleComponent();
+			FHitResult B;
+			FCollisionQueryParams BQ(SCENE_QUERY_STAT(YggSummitBotBlock), false, P);
+			const FVector From = P->GetActorLocation();
+			if (GetWorld()->SweepSingleByChannel(B, From, From + Go * 150.f, FQuat::Identity, ECC_Pawn, FCollisionShape::MakeCapsule(Cap->GetScaledCapsuleRadius(), Cap->GetScaledCapsuleHalfHeight()), BQ))
+			{
+				Note(FString::Printf(TEXT("stuck at %.0f m along: blocked by %s / %s (normal z %.2f, %.0f cm over the capsule bottom, %.0f cm ahead)"), S / 100.f,
+					B.GetActor() ? *B.GetActor()->GetActorNameOrLabel() : TEXT("?"), *GetNameSafe(B.GetComponent()), B.ImpactNormal.Z,
+					B.ImpactPoint.Z - (From.Z - Cap->GetScaledCapsuleHalfHeight()), B.Distance));
+			}
+			else { Note(FString::Printf(TEXT("stuck at %.0f m along: nothing in the way 1.5 m ahead"), S / 100.f)); }
+		}
 		if (FMath::Fmod(Ph, 6.0) < 2.0) { Go = Go.RotateAngleAxis((int32(Ph / 6.0) % 2) == 0 ? 70.f : -70.f, FVector::UpVector); }
 		if (C && FMath::Fmod(Ph, 6.0) < Dt * 1.5) { C->Jump(); ++Sidesteps; }
 		if (NoProg > 30.0)
@@ -532,7 +559,8 @@ void UYggSummitBot::Check(APawn* P, float Dt, bool bWalking)
 	{
 		FHitResult H;
 		FCollisionQueryParams Q(SCENE_QUERY_STAT(YggSummitBotUnder), false, P);
-		if (GetWorld()->LineTraceSingleByChannel(H, Pos + FVector(0, 0, 3000), Pos - FVector(0, 0, 3000), ECC_Pawn, Q) && H.ImpactPoint.Z > Bottom + 80.f)
+		if (GetWorld()->LineTraceSingleByChannel(H, Pos + FVector(0, 0, 3000), Pos - FVector(0, 0, 3000), ECC_Pawn, Q) && H.ImpactPoint.Z > Bottom + 80.f
+			&& !Cast<UInstancedStaticMeshComponent>(H.GetComponent()))   // an arch of rock or root overhead is not ground
 		{
 			UnderFor += Step;
 			if (UnderFor > 1.f && !bUnderNoted) { bUnderNoted = true; Issue(TEXT("under"), FString::Printf(TEXT("ground (%s) %.0f cm above the capsule's bottom"), *GetNameSafe(H.GetComponent()), H.ImpactPoint.Z - Bottom), P); }
@@ -713,18 +741,26 @@ bool UYggSummitBot::TeleportAlong(APawn* P, float ToS, const FString& Why)
 {
 	ACharacter* C = Cast<ACharacter>(P);
 	if (!C) { return false; }
-	const FVector At = PointAt(ToS);
+	// route.json's heights are the ground when the route was planned: near the top they are 60-80 m under the raised
+	// summit (a teleport to them dropped the climber inside the mountain, 2026-11-20). So the ground is traced from 150 m
+	// above the higher of the route and the climber, and without ground there is no teleport.
+	FVector At = PointAt(ToS);
+	At.Z = FMath::Max(At.Z, P->GetActorLocation().Z);
 	FHitResult H;
 	FCollisionQueryParams Q(SCENE_QUERY_STAT(YggSummitBotTp), false, P);
-	const bool bHit = GetWorld()->LineTraceSingleByChannel(H, At + FVector(0, 0, 3000), At - FVector(0, 0, 5000), ECC_Pawn, Q);
-	const FVector To = (bHit ? H.ImpactPoint : At) + FVector(0, 0, C->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 10.f);
+	if (!GetWorld()->LineTraceSingleByChannel(H, At + FVector(0, 0, 15000), At - FVector(0, 0, 20000), ECC_Pawn, Q))
+	{
+		Note(FString::Printf(TEXT("teleport (%s) refused: no ground under %s"), *Why, *Cm(At)));
+		return false;
+	}
+	const FVector To = H.ImpactPoint + FVector(0, 0, C->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 10.f);
 	if (!P->SetActorLocation(To, false, nullptr, ETeleportType::TeleportPhysics)) { return false; }
 	C->GetCharacterMovement()->StopMovementImmediately();
 	APlayerController* PC = Cast<APlayerController>(P->GetController());
 	if (PC && PC->PlayerCameraManager) { PC->PlayerCameraManager->SetGameCameraCutThisFrame(); }
 	if (UYggViewRigComponent* R = UYggViewRigComponent::Find(P)) { if (R->GetView() == EYggView::Walk) { R->HardReset(PC ? PC->GetControlRotation() : P->GetActorRotation(), EYggView::Walk); } }
 	++Teleports;
-	Note(FString::Printf(TEXT("teleport (%s) to %s"), *Why, *Cm(To)));
+	Note(FString::Printf(TEXT("teleport (%s) to %s, onto %s / %s"), *Why, *Cm(To), H.GetActor() ? *H.GetActor()->GetActorNameOrLabel() : TEXT("?"), *GetNameSafe(H.GetComponent())));
 	return true;
 }
 
@@ -830,7 +866,7 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 	R.Appendf(TEXT("# Summit robot run %s\n\n"), *RunName);
 	R.Appendf(TEXT("- Result: %s\n"), bFinal ? *EndWhy : TEXT("(running)"));
 	R.Appendf(TEXT("- Now: %s, game %s, %.0f m along leg 7 of %.0f m\n"), PhaseName(uint8(Phase)), *Clock(GameT), S / 100.f, RouteLen / 100.f);
-	R.Appendf(TEXT("- Mode: %s, %s; stay %.0f min, down %.0f m\n"), bNoO2 ? TEXT("no oxygen") : TEXT("bottled oxygen (a full bottle at the start + one spare)"),
+	R.Appendf(TEXT("- Mode: %s, %s; stay %.0f min, down %.0f m\n"), bNoO2 ? TEXT("no oxygen") : TEXT("bottled oxygen (a full bottle on at the start + one spare, never more)"),
 		bFast ? TEXT("sprinting whenever stamina allows (fast)") : TEXT("plain walk (no sprint)"), StayMin, DownM);
 	R.Appendf(TEXT("- Start: camp jump to %s; oxygen pickups within 40 m of it: %d\n"), *SouthColName, PickupsAtCol);
 	R.Appendf(TEXT("- World Tree: %s\n\n"), *TreeInfo);

@@ -43,6 +43,10 @@ public:
 	UPROPERTY(EditAnywhere, Category="Expedition", meta=(ClampMin="100"))
 	float CampRadius = 1600.f;
 
+	/** The summit camp counts only within this height (cm) of its centre as well (not from inside the mountain under it). */
+	UPROPERTY(EditAnywhere, Category="Expedition", meta=(ClampMin="100"))
+	float SummitMaxHeightDiff = 3000.f;
+
 	/** Seconds between death and coming back at the last camp. */
 	UPROPERTY(EditAnywhere, Category="Expedition", meta=(ClampMin="0"))
 	float RespawnDelay = 5.f;

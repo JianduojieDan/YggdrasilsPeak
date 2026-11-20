@@ -410,7 +410,10 @@ void UExpeditionComponent::UpdateCamps()
 	ARouteLandmark* Inside = nullptr;
 	for (const TWeakObjectPtr<ARouteLandmark>& Camp : Camps)
 	{
-		if (Camp.IsValid() && FVector::DistSquared2D(Here, Camp->GetActorLocation()) < FMath::Square(CampRadius))
+		// the summit also needs the climber up there: it counted from 650 m under the surface once (a fall through the
+		// mountain right below it, A5 robot run 2026-11-20)
+		if (Camp.IsValid() && FVector::DistSquared2D(Here, Camp->GetActorLocation()) < FMath::Square(CampRadius)
+			&& (Camp->Kind != ERouteLandmarkKind::Summit || FMath::Abs(Here.Z - Camp->GetActorLocation().Z) < SummitMaxHeightDiff))
 		{
 			Inside = Camp.Get();
 			break;

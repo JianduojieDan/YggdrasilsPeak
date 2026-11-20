@@ -90,7 +90,9 @@ powershell -File Tools/Bot/run_bot.ps1 -Chapter summit -Fast                    
 powershell -File Tools/Bot/run_bot.ps1 -Chapter summit -SummitArgs "noo2 stay 15"                                     # no oxygen, then stand at the top
 ```
 
-`ygg.Bot.Summit [fast] [noo2] [stay <min>] [down <m>] [cap <min>]` (`UYggSummitBot`, `Source/YggdrasilsPeak/Survival/YggSummitBot.*`):
+`ygg.Bot.Summit [fast] [noo2] [stay <min>] [down <m>] [cap <min>] [from <m>]` (`UYggSummitBot`, `Source/YggdrasilsPeak/Survival/YggSummitBot.*`;
+`from 2110` = testing a stretch: teleport that far along leg 7 after the South Col, the times are then not the demo's; when stuck it
+names what blocks the capsule, and each teleport names what it landed on):
 camp jump to the South Col (`UExpeditionComponent::TeleportToCamp`, as `ygg.Expedition.Go`), then route.json leg 7 by pure
 pursuit 7 m ahead (the fixed rope lies on that line). Oxygen: a full bottle on at the start plus one spare, or with `noo2`
 none at all (taken away again if the camp's pickups hand some over). At the summit it waits for the summit beat
@@ -105,3 +107,8 @@ Writes `Saved/Bot/summit_<time>_<o2|noo2>[_fast]/report.md` (times, rope, ground
 issues, frames, pictures), `samples.csv` (one row per second) and pictures `Saved/Review/A5/<run>_<stage>.png`
 (1 South Col, 2 death zone, 3 climb 8300 / 8600, 4 summit beat, 5 summit screen, 6 World Tree / up / view down, 7-8 descent,
 death). `ygg.Bot.Summit.Stop` ends it with a report, `ygg.Bot.Summit.Quit 0` keeps the game open afterwards.
+
+Gotcha (2026-11-20): the climber stuck at 2,140 m and 2,160-2,172 m was the World Tree root meshes' single auto convex hull
+(an invisible blob over the arch, 0-11 m over the snow; the teleport landed on top of it). Traces with complex collision
+(`clear_route_corridor.py`, any editor trace with trace_complex=True) do not see it; check with simple collision. Fixed by a
+convex decomposition (15 and 24 hulls) on SM_wjvpcilfa_tier_0 and xiciaat_tier_1.

@@ -65,6 +65,8 @@ private:
 	// options
 	bool bFast = false, bNoO2 = false;
 	float StayMin = 0.f, DownM = 300.f, CapMin = 60.f;
+	/** Testing: start the climb this far along leg 7 (m) by a teleport after the South Col (0 = from the camp). */
+	float FromM = 0.f;
 	// run
 	FString RunName, Dir, ShotDir, EndWhy;
 	double GameT = 0.0, RealStart = 0.0, LastReport = 0.0, PhaseT = 0.0;
