@@ -122,13 +122,13 @@ strong demo of the sleep and acclimatisation model on demo route 1, which alread
 | Camp 1 stock | 3 oxygen bottles [Measured: `place_camps.py` camp 4, `o2=3`] plus the load carried in Chapter 5 |
 | Body (default if no save) | fatigue about 55 of 100; water about 45%; stamina low; adapted altitude about 5,300 m (the Base Camp nights); SpO₂ about 70 at rest (the model decides) |
 | Flags read | `c5_collapse_behind` / `c5_collapse_ahead` (the serac collapse near the top of the Icefall), `c5_cave` (the ice-cave cache), `c5_ownline` (left Nima's line), Nima's trust. Names are proposals: align them with Chapter 5's story file |
-| Taught before | clipping at anchors and ladders (Chapter 5), the heel-to-toe test (Dr. Hale's tent, Chapter 4), the radio and SpO₂ (Chapter 1) |
+| Taught before | clipping at anchors and ladders (Chapter 5); the heel-to-toe test, the night gasp of periodic breathing, and the 19:00 check (Chapter 4's design); the radio and SpO₂ (Chapter 1). From the puja (Chapter 4): the red protection cord (sungdi) at Sangye's and Nima's necks |
 
 ### 2.2 Out to Chapter 7 · Thick Air
 
 | Item | Value |
 |---|---|
-| Place | Base Camp, the mess tent |
+| Place | Base Camp, the kitchen tent (breakfast) |
 | Clock | game day 6, about 07:30 (early start) or about 11:30 (late start) |
 | Forecast | two calm days, then **a dark realm on day 8** (v1: "a dark realm in three days"). Chapter 7's night storm at Base Camp is this realm |
 | Dr. Hale | wants Sangye's numbers in person (she can find a radio lie there) |
@@ -319,14 +319,19 @@ Each beat says **When** (its trigger), **Does / Sees / Hears**, **Says** (lines,
   - If `headache_told`: *"And take half a Diamox from the kit tonight. Tell me how you are at seven."* [Medical check:
     acetazolamide for mild AMS; never show a dose on screen]
   - After the lie: *"Eighty-one? Lucky you. Keep drinking."*
-  - After "fine": *"Fine is not a number, Sangye. ... All right. Seven tomorrow, numbers."*
+  - After "fine": *"Fine is not a number, Sangye. ... All right. Seven tomorrow, numbers."* If the player heard the
+    father's last call in Chapter 4 (Dr. Hale's log: "fine, can see the way", 54% at the Balcony; flag name to agree
+    with Chapter 4), she adds after a pause: *"Your father said 'fine' too."*
+  - If the player lied at the Base Camp check (`med_lied`, Chapter 4) and lies again now, nothing is said tonight; the
+    two lies are counted together when she measures him in person (Chapter 7).
   - Nima reads his own: *"Seventy-six. Eighty-four."*
   - If `becker_hale`: Dr. Hale: *"And Paul. Marek, put him on."* Paul's voice, slow, the words joined. Dr. Hale: *"Paul
     goes down at first light. Not up. That is not a suggestion, Marek."* → sets `becker_down`, flag `becker_down_hale`.
-  - **The forecast:** *"Forecast. Two calm days. Then on the eighth a deep low comes in from the west. Wind on the
-    summit over a hundred kilometres an hour, eighty at Base Camp. I want everybody down by the seventh."*
-  - After the static, Nima, quietly: *"The eighth. The old people would say a realm is passing. Something hungry."*
-    [Cultural check: how a Sherpa of his age would speak of the realms; which realm Chapter 7 uses]
+  - **The forecast** (it sharpens Chapter 4's "something I don't like coming from the west"): *"Forecast. Two calm
+    days. Then the thing from the west arrives, on the eighth. A deep low. Wind on the summit over a hundred kilometres
+    an hour, eighty at Base Camp. I want everybody down by the seventh."*
+  - After the static, Nima, quietly: *"The eighth. The old people say on such days the cold hells breathe out."*
+    [Cultural check: a folk way of speaking we must not invent; which realm Chapter 7 uses, see D7]
 - **Sees:** the forecast card on the HUD (the existing realm wheel symbol): day 6 calm, day 7 calm, day 8 a dark realm.
 - **Camera:** `inspect` on the oximeter (Inspect lease, closed by the player); then seated.
 - **Ends:** radio off. Dr. Hale's trust: + for truth, − for "fine"; the lie has no effect *now* (it is found later).
@@ -357,6 +362,9 @@ Each beat says **When** (its trigger), **Does / Sees / Hears**, **Says** (lines,
   silence for about 10 s. Wind touches the fabric.
 - **Then:** a gasp. The eyes open (`blink open` 0.3 s, no wake flutter: this is a shock). The body jerks up to sitting
   (`pose sit` 1.6 s: the body explains the move).
+- **Builds on Chapter 4** (its design: the 01:40 gasp at Base Camp; holding still for 6 s lets the breath settle; Nima
+  says through the wall "Breathe slow. It passes."). Here, 850 m higher, the pause is longer and holding still must
+  last **10 s**. Moving makes the gasps return. **Nobody says it passes**: Nima sleeps.
 - **Sees:** darkness; starlight through the fabric; frost from your breath glittering on the inner wall; Nima a dark
   shape, asleep.
 - **Hears:** your panting; Nima's slow snoring; the camp asleep. Then, far away, an avalanche roars down the Nuptse wall.
@@ -416,8 +424,8 @@ Each beat says **When** (its trigger), **Does / Sees / Hears**, **Says** (lines,
      - Wait: `blink sleep`, clock → 08:30; start 09:00; warm, light; the serac clock runs ×1 and ×1.7 from 11:00
        [Measured]; if Dr. Hale said "come down at first light" this disobeys her (her trust −).
   4. Outside: kneels to strap the crampons (`pose kneel1`, hold [F] 2 s each).
-  5. Nima touches the red protection cord at his neck and murmurs a mantra (*Om mani padme hum*) before he clips in.
-     [Cultural check: the sungdi cord from the puja; whether a Sherpa would do this at the top of the Icefall]
+  5. Nima touches the red protection cord the lama tied at the puja (Chapter 4) and murmurs a mantra (*Om mani padme
+     hum*) before he clips in. [Cultural check: whether a Sherpa would do this at the top of the Icefall]
 - **Camera:** Sit → Crawl → stand at the door; Kneel1 for the crampons.
 - **Ends:** standing at the rope; Nima clips in. If `becker_down`: Paul and Dawa come out of their tent, Paul short-roped
   to Dawa.
@@ -495,10 +503,10 @@ Each beat says **When** (its trigger), **Does / Sees / Hears**, **Says** (lines,
   night at 6,130 m, Base Camp air feels thick. This is the reward, felt in the body.
 - **Hears (before sight):** the generator; a pressure cooker whistling in the kitchen tent; prayer flags
   (`Story_Flags_Loop`, exists); voices.
-- **Says:** the cook: *"Sangye! Nima-dai! Chiya, chiya!"* (tea) [Cultural check: how a Sherpa cook greets a young
-  climbing Sherpa]. Dr. Hale, at the mess door, in person: *"Welcome down. Eat first. Then my tent: I want your numbers
-  in person."*
-- **Does:** sits in the mess tent (`pose sit`) with sweet milk tea.
+- **Says:** Pasang, the head cook (Chapter 4's design), at the kitchen tent: *"Sangye! Nima-dai! Chiya, chiya!"* (tea)
+  [Cultural check: how a Sherpa cook greets a young climbing Sherpa]. Dr. Hale, at the kitchen door, in person:
+  *"Welcome down. Eat first. Then my tent: I want your numbers in person."*
+- **Does:** sits on the stone bench in the kitchen tent (`pose sit`), where the Sherpas eat, with sweet milk tea.
 - **Ends:** `blink sleep` → black → title **CHOMOLUNGMA · Chapter 6 · First Night High** → caption ***"Three days to
   rest. A dark realm is coming."*** → end.
 
@@ -511,7 +519,7 @@ One new thing per scene, in four steps (introduce, develop, twist, conclude), ta
 | Stove and water | Nima lights it | feed snow, fill thermoses | 04:30: cold gas will not light | warm it in the jacket; hot tea | Nima |
 | Heat | the sun on the tent | body temperature climbs | the noon Cwm doubles water loss | open doors, rest, drink | Nima |
 | Radio check | 19:00, she asks numbers | the oximeter shows the truth | you can lie | her answer depends; the lie is remembered | Dr. Hale |
-| Sleeping high | lie down | the gasp at 03:00 | alone; the bottle tempts | 04:30: a better number at rest | the body |
+| Sleeping high | (Chapter 4: the gasp at Base Camp; hold still) | at 6,130 m the gasp is longer; hold still 10 s | alone, nobody says "it passes"; the bottle tempts | 04:30: a better number at rest | the body |
 | Arm wrap and rappel | Nima goes first | brake and run | the steep step: too fast is a slip | the big step without words | Nima |
 | Ladders down | (Chapter 5) | looking down | now you hold for another | everyone across | Nima |
 
@@ -560,7 +568,7 @@ The story never moves the view itself (camera spec R1). It asks the rig, with th
 
 | Posture / lease | Where | Notes |
 |---|---|---|
-| Sit + Move hold | the tent: C6-01/02/03, C6-06/07, C6-09/10, the mess tent | released before every walk |
+| Sit + Move hold | the tent: C6-01/02/03, C6-06/07, C6-09/10; the Base Camp kitchen tent | released before every walk |
 | Crawl (with `exit`) | out of and into the tent door | the Chapter 1 tent exit, reused |
 | Lie | C6-08 (played down over 2.5 s) | sleeping-bag prop |
 | Kneel1 | crampons at 04:30; the canister (optional) | |
@@ -673,7 +681,7 @@ tools already do this for other camps).
 | **Dr. Ingrid Hale** | Base Camp doctor; the radio call; in person at the end | voice; at the mess door at C6-18 | voice; figure at a distance |
 | **Icefall doctors** (2) | keep the route; news | carry a ladder, one line | climber model, helmets, faces covered |
 | **Other climbers** | traffic on the ropes; tents at night | route followers going up | climber model, suits, masks off but goggles on |
-| **The cook** | Base Camp welcome | idle, one line | existing Base Camp figure |
+| **Pasang** (head cook) | Base Camp welcome | idle, one line | from Chapter 4's design (`pasang_ai`) |
 | **The father** | present only as the compass, the journal, Nima's words | — | — |
 
 **Paul's body model.** Paul runs the same physiology model as the player (the virtual climber, block B1), started with a
@@ -925,14 +933,14 @@ journal page; frozen boots; the first rappel; holding the ladder; Base Camp arri
 | D4 | **How much Nima says in the dark** (the father talked to "someone outside the tent" on the last night, only at trust ≥ 60) | as written |
 | D5 | **The 03:00 bottle:** keep the temptation, or keep bottled oxygen for the death zone only? | keep, if the mask exists |
 | D6 | **The compass at 03:00:** a faint glint, or no light at all (only the needle)? | faint glint |
-| D7 | **Which realm is the "dark realm" on day 8?** Nima calls it "something hungry" (the Hungry Ghosts). Chapter 7 must agree | Hungry Ghosts |
+| D7 | **Which realm is the "dark realm" on day 8?** Chapter 4's design already uses the Hungry Ghost wind at Base Camp on day 4, so Nima names the **Cold Hells** here (the 12-chapter list brings them with the second rotation, which follows Chapter 7). Chapter 7 must agree | Cold Hells |
 | D8 | **Meshy credits:** ≈290 for the chapter's must-haves, ≈625 with the shared high-camp kit | wait for your OK |
 | D9 | **Descent length:** keep 25 min (needs v1's ×2 rope speed), or let it run about 34 min at today's speed? | measure first |
 
 ### 12.2 Cultural checks (a Khumbu Sherpa reader, before release)
 
-- How Nima would speak of a coming storm as a "realm", and whether "something hungry" (the preta, the hungry ghosts)
-  sounds right in his mouth.
+- How Nima would speak of a coming storm as a realm, and whether "the cold hells breathe out" (the cold hells of the
+  hell realm) sounds right in his mouth, or is a belief we would be inventing.
 - The red protection cord (sungdi) from the puja and touching it before a descent; murmuring *Om mani padme hum* at the
   top of the Icefall.
 - Address words: "bhai" (Nima to Sangye), "dai" ("Nima-dai"), "chiya" (tea) from a Sherpa cook.
@@ -983,6 +991,7 @@ journal page; frozen boots; the first rappel; holding the ladder; Base Camp arri
 | `Docs/Development/Chapter1_v2_Design.md` | format, pillars, cast as it stands, teaching ladder style |
 | `Docs/Development/Chapter1_Camera_Spec.md` §2, §4, §6, §7 | rules, postures, leases, story camera tools, data keys |
 | `Docs/Development/Chomolungma_Chapter1.md` Part 1 | the 12-chapter list (numbering note, §0) |
+| `Docs/Development/Chapter4_Design.md` (written in parallel, 2026-11-20) | continuity: the Hungry Ghost wind on day 4, the first night gasp, the sungdi cord, Pasang, Dr. Hale and the father's last call, the forecast "from the west" |
 | `Tools/RoutePlanning/route.json`, `place_camps.py`, `place_slice_content.py` | positions, slopes, Camp 1 contents, checkpoints |
 | `Tools/Story/chapter1_story.py` | the story-machine keys and the validator |
 | `Tools/Meshy/assets.py` | prompt house style |

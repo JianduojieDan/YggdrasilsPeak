@@ -59,8 +59,15 @@ this Chapter 2 is the **second half of the old v1 Chapter 2**, plus its Lobuche 
 | Parents / village stone | v1 story | replaced by the Chomolungma story (father Mingma, body still on the mountain) |
 
 **Conflict to settle (Q1, §12):** `Chomolungma_Chapter1.md` Part 1 lists 12 chapters where Chapter 2 is "The Puja"
-(Lobuche, Gorak Shep, Base Camp). This document follows the v1 numbering as instructed. The 12-chapter list needs one
-update by the director.
+(Lobuche, Gorak Shep, Base Camp). This document follows the v1 numbering as instructed.
+
+**Found at the end of this work:** the parallel `Chapter3_Design.md` (same day) chose the **12-chapter** numbering. It
+designs "The Icefall" and expects to receive Sangye **at Base Camp, Day 5, 02:30**, after the puja and ladder training.
+The two documents still fit one calendar (day 2 Lobuche, day 3 Lobuche → Gorak Shep → Base Camp, day 4 puja, day 5
+Icefall). If the director keeps the 12-chapter list, this document becomes **the first part of "The Puja" (Day 2)**,
+and a second part (Days 3-4: Lobuche → Gorak Shep → Base Camp, the puja at the lhapso, ladder training, Dr. Hale in
+person) is still to be designed to reach `Chapter3_Design.md` §0.2. Nothing here blocks that: the Lobuche night, its
+flags and the frozen-bottle setup carry into it unchanged.
 
 ### 0.2 Hand-off in and out
 
@@ -844,7 +851,7 @@ Sherpa-language lines need a native speaker or a Nepali fallback (Q6).
 | Cultural mistakes (sang, sur, names of the dead, greetings, Sherpa lines, filming the dead) | medium | disrespect to a living culture | every item in §12.3 checked by a Sherpa reader before release; unreadable script on mani stones |
 | Medical mistakes (HACE signs, dexamethasone dose, descent) | low-medium | wrong lessons | check against the Wilderness Medical Society guidelines [To verify] |
 | The video beat feels exploitative | medium | the director or players dislike it | offered as a choice, filming shown as shameful; alternative endings in Q3 |
-| Chapter 3 places Lobuche elsewhere | medium (designed in parallel) | a jump between chapters | both use the Lobuche anchor in §4.1 (orchestrator to confirm) |
+| The parallel Chapter 3 draft starts at Base Camp on Day 5 (12-chapter list), not at Lobuche on Day 3 (v1) | certain | Days 3-4 are designed by nobody yet | Q1; whoever designs Days 3-4 uses the Lobuche anchor in §4.1 and this chapter's flags |
 | No AMS system for the player yet | certain | Elena's sickness is scripted | fine for this chapter; v1 §4.1 later |
 | Real Lobuche coordinates are from memory | low | small offset | DEM height and the satellite overlay agree; check on a map |
 
@@ -852,7 +859,7 @@ Sherpa-language lines need a native speaker or a Nepali fallback (Q6).
 
 | # | Question | Default if no answer |
 |---|---|---|
-| Q1 | Numbering: Chapter 2 = Thukla → Lobuche (this, from v1), or "The Puja" from the 12-chapter list? | this document |
+| Q1 | Numbering: Chapter 2 = Thukla → Lobuche (this, from v1), or "The Puja" from the 12-chapter list (which `Chapter3_Design.md` follows)? If the 12-chapter list: this becomes part 1 of "The Puja" and Days 3-4 still need a design | the 12-chapter list, with this as part 1 |
 | Q2 | Title: "The Hidden Mountain"? Others: "Sur", "The Stranger", "Day Two" | The Hidden Mountain |
 | Q3 | The end: (A) Ji-woo's video (this document), (B) Nima: *"The report says he fell. I signed it."*, (C) something gentler | A |
 | Q4 | Lobuche at its real place with a terrain spur (recommended), or inside the existing corridor (on the glacier)? | real place |

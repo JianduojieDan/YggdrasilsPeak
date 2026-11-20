@@ -245,7 +245,7 @@ scene, so the sun line crosses the camp **during** it (staged with light, sectio
 | `c4_puja_chant` | after place | Sangye sits with the Sherpas on a mat facing the altar; the clients sit on camp chairs behind. The lama chants; his helper keeps the drum. Offerings on a low table: tsampa, rice, biscuits, fruit, beer cans, a bottle, butter lamps, torma (offering cakes). At intervals everyone tosses a pinch of rice (automatic, Sangye's hand too). Ji-woo films quietly. The light: the sun line creeps down the glacier toward the altar. | **Elena** (whisper, behind): *"What is he saying?"* **Nima** (low): *"He asks the mother goddess to let us walk on her. And to forgive our crampons."* (later, if the player looks at Nima): **Nima** murmurs *"Om mani padme hum"* | `pose sit face puja_altar`; `attention -3 t 4` (only while still) | F |
 | `c4_puja_pole` | after chant 90 s | The Sherpas raise the flag lines from the pole out to the tents; the sun reaches the altar at the same moment; everyone looks up; the flags snap against the deep blue sky with the Icefall behind. | (no words: the flags and a rising "ah" from the crowd) | staging + companion Nima looks up; **nudge 1 of 2** to `pole_top` only after 12 s of not looking (pitch max 8°) | F |
 | `c4_puja_sungdi` | after pole 20 s | The lama walks along the rows tying a red cord around each neck and laying a khata over it. He reaches Sangye. **If `blessed_compass`:** he lays his hand on the compass in Sangye's lap for a moment. | **The lama** (soft, in Sherpa language, subtitled): *"For Mingma's son. Go slowly, come back."* [Cultural check: wording, language] | `attention -3 t 4`; `wear khata on` (replaces the khata left at Thukla in Ch1) + `wear sungdi on` (P2; fallback caption) | F |
-| `c4_lha_gyalo` | after sungdi, all rows done | Everyone stands with a handful of tsampa. Three shouts, *"Lha gyalo!"* ("victory to the gods" [Cultural check]). On the third, the player throws (prompt "[F] Throw"); if he does not, Nima throws for him on the fourth second. The air turns white; laughter; Nima smears tsampa on Sangye's cheek; Elena laughs with a white face; even Marek. | **Crowd:** *"Lha gyalo! Lha gyalo! Lha gyalo!"* **Nima:** *"Until your hair is white like this."* | stand; reflex 10° at the first shout; `hands tsampa` → throw (a Niagara flour puff); no lease | F |
+| `c4_lha_gyalo` | after sungdi, all rows done | Everyone stands with a handful of tsampa. Three shouts, *"Lha gyalo!"* ("victory to the gods" [Cultural check]). On the third, the player throws (prompt "[E] Throw"); if he does not, his hand throws by itself after 4 s. The air turns white; laughter; Nima smears tsampa on Sangye's cheek; Elena laughs with a white face; even Marek. | **Crowd:** *"Lha gyalo! Lha gyalo! Lha gyalo!"* **Nima:** *"Until your hair is white like this."* | stand; reflex 10° toward Nima at the first shout (he shouts beside you); `hands tsampa` → throw (a Niagara flour puff); no lease | F |
 | `c4_compass_back` | only if `blessed_compass`; after `c4_lha_gyalo` 10 s, near `puja_altar` r 3 m, look + press "[E] Take the compass" | Sangye picks the compass off the altar. The needle points **up the glacier, toward the summit** (bearing ≈ 100°), not north. Over 4 s it swings slowly back to north. Only he is looking. Nima is beside him. | **Nima** (quietly): *"...Put it away. People will ask."* | `pose kneel1`; `inspect compass` with `compass {"toward": "summit", "t": 4}` then free; no fovbeat (the chapter has none) | C |
 
 ### Scene E · The plan board (21-27 min) · day 4, 11:00
@@ -313,7 +313,39 @@ this is still the credible half of the game. The meaning lives in Nima's one lin
 | **Written for Ch5 and later** | `med_honest` `med_lied` `load_light` · `blessed_compass` `blessed_mala` `blessed_drawing` `blessed_gear` · `loads_marek` `loads_nima` `loads_half` · `carry_rope` `carry_even` `carry_nima` · `knows_icefall` (visited the doctors) · `ladder_practice` · `water_given` `water_hale` `water_refused` · `alarm_0200` `alarm_0230` `alarm_0330` `alarm_0530` · `hale_log` `hale_light` | Ch5 decision 1 reads `alarm_*`; Ch5's carry reads `carry_*` and `load_light`; `ladder_practice` lets Nima shorten his first ladder lesson in Ch5 |
 | **Trust and goodwill** [To build; flags in Phase 1] | Nima, Dr. Hale (`Chapter_Design_v1.md` §4.10), plus Marek's respect and the neighbours' goodwill | D1 ±10 Hale · D2 ±5 Marek / Nima · D5 ±10 goodwill · D6 05:30 −5 Nima |
 
-### 3.3 The camera budget for the chapter
+### 3.3 Story data sketch (`Tools/Story/chapter4_story.py`, same helpers as Chapter 1)
+
+Two beats, to show that the chapter needs only the existing action set (Chapter 1 v2 and camera spec §7). New pieces
+are marked; everything else exists.
+
+```python
+beat("c4_lha_gyalo", {"after": "c4_puja_sungdi", "delay": 2},
+     {"pose": "stand", "t": 1.0}, {"hands": "tsampa"},                    # NEW hands item (fallback: caption)
+     {"say": "Lha gyalo!", "who": "Crowd", "t": 1.2}, {"reflex": "nima", "deg": 10},
+     {"say": "Lha gyalo!", "who": "Crowd", "t": 1.2},
+     {"say": "Lha gyalo!", "who": "Crowd", "t": 1.2})
+beat("c4_throw", {"after": "c4_lha_gyalo", "press": "Interact", "prompt": "[E]  Throw", "fire": 4},
+     {"cmd": "ygg.Fx.Tsampa"},                                           # NEW: the flour-cloud Niagara at the hand
+     {"hands": False}, {"say": "Until your hair is white like this.", "who": "Nima"})
+
+beat("c4_alarm", {"after": "c4_1900", "near": "sangye_tent", "r": 300, "press": "Interact", "prompt": "[E]  Sleep"},
+     {"blink": "blink", "t": 0.15, "hold": 0.6, "during": [
+         {"teleport": "tent_c4_sit"}, {"pose": "sit", "snap": True, "face": "nima_door", "prop": "sleeping_bag"},
+         {"npc": "nima", "look": "nima_ai", "at": "nima_door", "mode": "sit", "face": True},
+         {"light": "nima_headlamp", "on": True}]},
+     {"say": "We leave when the ice is coldest. What time do you want to wake?", "who": "Nima"},
+     {"choice": ["02:00", "02:30", "03:30", "05:30"],
+      "flags": ["alarm_0200", "alarm_0230", "alarm_0330", "alarm_0530"], "timeout": 20, "default": 1},
+     {"say": "Good. Your father liked the first ladder in the dark.", "who": "Nima", "if": "alarm_0200"},
+     {"say": "Good.", "who": "Nima", "if": "alarm_0230"},
+     {"say": "Late. We will be in the Popcorn when the sun comes.", "who": "Nima", "if": "alarm_0330"},
+     {"say": "Then the sun will be on the towers. I will not like it.", "who": "Nima", "if": "alarm_0530"})
+```
+
+New places for these beats (`nima_door`) come from the world builder like the others. The validator settings for this
+chapter: nudges ≤ 2, fovbeat 0, every `npc` inside a blink.
+
+### 3.4 The camera budget for the chapter
 
 | Item | Count | Where |
 |---|---|---|
