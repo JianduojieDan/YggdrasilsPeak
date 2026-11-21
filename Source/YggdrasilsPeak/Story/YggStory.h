@@ -67,6 +67,9 @@ public:
 	 *  for Seconds (< 0 = until the next mode change). */
 	void FaceTo(const FVector& At, AActor* Actor, float Seconds);
 	void ClearFace() { FaceLeft = 0.f; FaceActor = nullptr; }
+	/** The beat's "sink" (cm): the body this much lower on top of everything else (the father sitting in the snow). Set, not
+	 *  added: a person spawned again with the same "sink" no longer goes deeper each time. */
+	void SetStorySink(float Cm);
 
 private:
 	float StuckTime = 0.f;
@@ -135,6 +138,47 @@ private:
 	float SinceStamp = 0.f;
 	int32 Stamps = 0;
 	TWeakObjectPtr<class USnowTrailComponent> PlayerSnow;
+	/** Soles on the visible snow (#84, 2026-11-21). The followers floated: the mesh sat 6 cm over the capsule bottom (a
+	 *  fixed -82 for an 88 cm half height), they never sank like the player, and the snow under them is drawn lower than
+	 *  its collision - by the player's trench and by their own boot prints, up to 18 cm. FitSoles (at Dress / DressAs)
+	 *  measures the body: its lowest point and its ankle over it in the reference pose, so the soles of any body (Meshy,
+	 *  MetaHuman, the climber) start on the capsule bottom. TickSoles then lowers the mesh, smoothly, so the lower boot
+	 *  meets the drawn snow: the collision under each boot (the movement's floor plane, no extra trace), plus the trench
+	 *  read back from the player's trail map (USnowTrailComponent::TrailOffsetCm), into the snow by the player's own sink
+	 *  rule. Within 60 m only; a held pose ("anim" looks: the father sitting) keeps the old fixed offset. */
+	void FitSoles();
+	void TickSoles(float DeltaSeconds, APawn* P);
+	/** The mesh's relative Z from the base, the story's sink and the snow drop (only when it changed). */
+	void ApplyMeshZ();
+	bool bSoleFit = false;
+	FName SoleBones[2];
+	float SoleBottomCm = 0.f;      // the body's lowest point in its reference pose, mesh space (cm)
+	float AnkleOverSoleCm = 10.f;  // the foot bone over that point in the reference pose (cm)
+	float MeshBaseZ = -82.f;       // the mesh's relative Z with the soles on the capsule bottom (capsule space)
+	float StorySink = 0.f;         // the beat's "sink" (capsule space cm)
+	float SoleDrop = 0.f;          // eased lowering into the snow (world cm; < 0 = raised onto a bank)
+	float SoleNeedNow = 0.f, SoleNeedLast = 0.f;   // the deepest need in this and the last window (about a step each)
+	float SoleWindowAge = 0.f;
+	float SoleGroundCheck = 0.f;
+	float SoleSink = 0.f;          // the player's sink rule at this ground (cm)
+	bool bSoleSnow = false;
+	/** (2026-11-21) a MetaHuman face on a foreign (headless Meshy) body: placed on the body's neck every frame once its bones
+	 *  are final, upright and facing with the body (the retargeted walks put the Meshy head / chest bones in odd places). */
+	TWeakObjectPtr<USkeletalMeshComponent> FaceFollow;
+	FName FaceNeckBone;
+	FVector FaceNeckOffset = FVector::ZeroVector;
+	FQuat FaceRot = FQuat::Identity;
+	FDelegateHandle FaceFollowHandle;
+	void OnBodyBonesFinalized();
+	float MaxPaceCm() const;
+	/** the body runs the MetaHuman skeleton (the shared ABP_Unarmed_MH walk) */
+	bool bMetaHumanSkeleton = false;
+	float AppliedMeshZ = 1e9f;
+	// last measures, for the debug log (cm): the lower boot's sole over the visible snow, the trench there, known or not
+	float DbgSole = 0.f, DbgTrail = 0.f;
+	bool bDbgTrailKnown = false;
+	FVector DbgSoleAt = FVector::ZeroVector;
+	float DbgColZ = 0.f;
 	/** Stuck: hop round the obstacle onto drawn ground where the capsule fits (never a tent roof or a chorten). */
 	bool HopAside(const FVector& Me, const FVector& Dir, bool bAnySurface);
 	UPROPERTY(Transient)
@@ -160,6 +204,8 @@ public:
 	float LineA = 0.f;
 	FString Hint;
 	float HintA = 0.f;
+	/** 0..1: the hint drawn brighter (Snow instead of Mist) - the tent hint shown again after a long still moment (#77). */
+	float HintGlow = 0.f;
 	/** holdkey: 0..1 progress line under the hint (< 0 = none). */
 	float HoldProgress = -1.f;
 	FString Prompt;
@@ -356,6 +402,19 @@ private:
 	float IdleHintAfter = 0.f, IdleHintShow = 5.f;
 	double IdleHintSince = 0.0, LastInputAt = 0.0;
 	FRotator LastView = FRotator::ZeroRotator;
+	/** (#77) The postures' own help, whatever the chapter says: lying "Hold [W] to sit up", sitting with an exit (the
+	 *  tent) and stopped in the crawl "Hold [W] to crawl out", nothing standing; [W] = the key that walks forward. First
+	 *  shown ~2 s into the step once the eyes are open (the wake-up lands first), again every 30 s, and brighter after 25 s
+	 *  without any input; out of the way of the story's own hints, holds, choices, prompts and inspects. */
+	void TickPoseHint(float Dt);
+	uint8 PoseHintStep = 0;
+	double PoseHintSince = 0.0;
+	double PoseHintShownAt = -100.0;
+	double PoseEyesOpenSince = -1.0;
+	double CrawlStillSince = -1.0;
+	int32 PoseHintShows = 0;
+	bool bPoseHintOwned = false;
+	FString PoseHintText;
 	int32 PromptBeat = INDEX_NONE;
 	// material parameters tweened on tagged actors ("param" action): up to 8 at once
 	float ParamValue[8] = {};

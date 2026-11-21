@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "InputCoreTypes.h"
 #include "SettingsWidget.generated.h"
 
 class UButton;
@@ -23,7 +24,10 @@ class UYggUIProxy;
  *  line with a sunlit fill, key bindings a key cap (click, then press a key). The chosen row is lit like a chosen
  *  option (warm words, a soft glow behind). What it does stands in a fixed panel on the right (the line, every choice
  *  with the current one lit) - it never moves the rows (to-do #62).
- *  Every value lives in YggSettings (saved in GameUserSettings.ini) and applies at once.
+ *  Every value lives in YggSettings (saved in GameUserSettings.ini). 2026-11-21: a change edits a PENDING copy only (the row
+ *  shows a sun bead and warm words); Apply (button, F, gamepad Y) asks "Apply these changes?" and applies all at once on Yes;
+ *  leaving with pending changes asks "Discard changes?"; after Yes, changes that touch the screen (resolution, window,
+ *  quality, upscaling, frame generation, VSync, frame limit) ask "Keep these settings?" and revert after 15 s or on Esc.
  *  Keys: Up/Down rows, Left/Right change, Q/E or the bumpers change tab, Enter rebinds a key, Esc goes back.
  */
 UCLASS()
@@ -44,6 +48,8 @@ public:
 	/** ygg.Settings.Test: opens the menu and steps every row one notch and back through the menu's own change path,
 	 *  logging (SETTINGSTEST) what changed in the engine for each and the frame time; rows that change nothing are flagged. */
 	static void SelfTest(UWorld* World);
+	/** ygg.Settings.Test.Pending (2026-11-21): the pending / apply / discard / keep-or-revert flow (SETTINGSTEST2 PASS/FAIL lines). */
+	static void SelfTestPending(UWorld* World);
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -65,6 +71,17 @@ private:
 		TFunction<void(float)> SetF;
 		TFunction<FString(float)> Fmt;
 		FName Action;
+		// pending copy (2026-11-21): nothing is applied until Apply -> Yes
+		bool bDirty = false;
+		int32 PendI = 0;
+		float PendF = 0.f;
+		FKey PendKey;
+		bool bScreen = false;               // a change the player must be able to undo if the screen goes wrong
+		bool bHasDef = false;
+		int32 DefI = 0;
+		float DefF = 0.f;
+		float MarkA = 0.f;
+		UWidget* Mark = nullptr;
 		// built widgets
 		TArray<UImage*> Pips;
 		USlider* SliderW = nullptr;
@@ -85,6 +102,28 @@ private:
 	void Change(int32 Dir);
 	void Close();
 	void Refresh();
+	// ---- pending changes, apply / discard / keep-or-revert (2026-11-21)
+	enum class EModal : uint8 { None, Apply, Discard, Keep };
+	struct FRevert { int32 Tab = 0, Row = 0, I = 0; float F = 0.f; };
+	int32 EffInt(const FRow& R) const;
+	float EffFloat(const FRow& R) const;
+	FKey EffKey(const FRow& R) const;
+	void SetPendingInt(FRow& R, int32 V);
+	void SetPendingFloat(FRow& R, float V);
+	void SetPendingKey(FRow& R, const FKey& NewKey);
+	int32 PendingCount() const;
+	FString RowValueText(const FRow& R, int32 I, float F, const FKey& K) const;
+	void ResetPending(int32 Tab);
+	void DiscardPending();
+	void RequestClose();
+	void RequestApply();
+	void CommitPending(bool bAskKeep);
+	void RevertKept();
+	void BuildModal();
+	void ShowModal(EModal M);
+	void HideModal();
+	void ModalAnswer(int32 Index);
+	bool FindRowByLabel(const TCHAR* Label, int32& OutTab, int32& OutRow) const;
 	void ShowDescription();
 	UButton* TextButton(const FString& Label, int32 Size, UTextBlock*& OutText, TFunction<void()> OnClick);
 	UButton* Clickable(UWidget* Content, TFunction<void()> OnClick);
@@ -103,6 +142,14 @@ private:
 	TFunction<void()> OnClosedFn;
 	TArray<TWeakObjectPtr<class UYggMenuBase>> Hidden;   // menus whose words step aside while the settings are open
 	TArray<float> TabHot;
+	EModal Modal = EModal::None;
+	int32 ModalSel = 0;
+	float ModalAge = 0.f;
+	float ModalHot[2] = { 0.f, 0.f };
+	double KeepEnd = 0.0;
+	float KeepSeconds = 15.f;           // the self-test shortens it
+	TArray<FRevert> Kept;               // old values of the screen rows just applied (what Revert puts back)
+	int32 LastPendingCount = -1;
 
 	UPROPERTY(Transient) TObjectPtr<UFont> Serif;
 	UPROPERTY(Transient) TObjectPtr<UCanvasPanel> Canvas;
@@ -124,6 +171,14 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> BackText;
 	UPROPERTY(Transient) TObjectPtr<UButton> ResetBtn;
 	UPROPERTY(Transient) TObjectPtr<UButton> BackBtn;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> ApplyText;
+	UPROPERTY(Transient) TObjectPtr<UButton> ApplyBtn;
+	UPROPERTY(Transient) TObjectPtr<class UOverlay> ModalRoot;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> ModalTitle;
+	UPROPERTY(Transient) TObjectPtr<UVerticalBox> ModalBody;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> ModalCount;
+	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> ModalOptTexts;
+	UPROPERTY(Transient) TArray<TObjectPtr<UImage>> ModalOptGlows;
 };
 
 /**

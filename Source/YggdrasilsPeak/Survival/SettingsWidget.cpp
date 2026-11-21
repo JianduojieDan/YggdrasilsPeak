@@ -113,6 +113,10 @@ static FAutoConsoleCommandWithWorld CmdSettingsTest(TEXT("ygg.Settings.Test"),
 	TEXT("Steps every settings row one notch and back through the menu and logs what changed in the engine (SETTINGSTEST)."),
 	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World) { USettingsWidget::SelfTest(World); }));
 
+static FAutoConsoleCommandWithWorld CmdSettingsTestPending(TEXT("ygg.Settings.Test.Pending"),
+	TEXT("Tests the pending / apply / discard / keep-or-revert flow of the settings and logs SETTINGSTEST2 PASS/FAIL lines."),
+	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World) { USettingsWidget::SelfTestPending(World); }));
+
 void USettingsWidget::SelfTest(UWorld* World)
 {
 	struct FState
@@ -179,6 +183,7 @@ void USettingsWidget::SelfTest(UWorld* World)
 			// a slider already at its top is stepped down (and back up) instead
 			S->Dir = (R.Kind == EKind::Slider && R.GetF && R.GetF() >= R.Max - 0.001f) ? -1 : +1;
 			W->Change(S->Dir);
+			W->CommitPending(false);                            // changes are pending now: apply them as Apply -> Yes would
 			S->FrameSum = 0.f; S->Frames = 0;
 			S->Phase = 1; S->Wait = 1.5f;
 			return true;
@@ -200,6 +205,7 @@ void USettingsWidget::SelfTest(UWorld* World)
 			++S->Tested;
 			W->RowIndex = S->Row;
 			W->Change(-S->Dir);                                 // and back
+			W->CommitPending(false);
 			S->FrameSum = 0.f; S->Frames = 0;
 			S->Phase = 0; S->Wait = 1.0f; ++S->Row;
 			return true;
@@ -211,14 +217,14 @@ void USettingsWidget::SelfTest(UWorld* World)
 void USettingsWidget::Toggle(APlayerController* PC)
 {
 	if (!PC) { return; }
-	if (USettingsWidget* S = FindOpenSettings(PC)) { S->Close(); return; }
+	if (USettingsWidget* S = FindOpenSettings(PC)) { S->RequestClose(); return; }
 	Open(PC, nullptr, false);
 }
 
 void USettingsWidget::Open(APlayerController* PC, TFunction<void()> OnClosed, bool bInUIOnly)
 {
 	if (!PC) { return; }
-	if (USettingsWidget* Old = FindOpenSettings(PC)) { Old->RemoveFromParent(); }
+	if (USettingsWidget* Old = FindOpenSettings(PC)) { Old->Close(); }   // (review) Close reverts a running keep / revert box
 	if (!bInUIOnly) { UYggMenuWidget::CloseAll(PC); }
 	USettingsWidget* S = CreateWidget<USettingsWidget>(PC, USettingsWidget::StaticClass());
 	if (!S) { return; }
@@ -259,6 +265,9 @@ void USettingsWidget::CloseIfOpen(APlayerController* PC)
 
 void USettingsWidget::Close()
 {
+	// a screen change still waiting for "Keep" goes back (a forced close, the pause menu taking over...); pending edits are dropped
+	if (Kept.Num() > 0) { RevertKept(); }
+	DiscardPending();
 	APlayerController* PC = GetOwningPlayer();
 	TFunction<void()> After = OnClosedFn;
 	OnClosedFn = nullptr;
@@ -292,6 +301,7 @@ void USettingsWidget::DefineTabs()
 	{
 		FRow R;
 		R.Label = Label; R.Hint = Hint; R.Choices = Choices;
+		R.bHasDef = true; R.DefI = Def + Offset;
 		const FString K = Key;
 		R.Get = [K, Def, Offset]() { return GetInt(*K, Def) + Offset; };
 		R.Set = [K, Offset, Apply](int32 V) { SetInt(*K, V - Offset); if (Apply) { Apply(); } };
@@ -301,6 +311,7 @@ void USettingsWidget::DefineTabs()
 	{
 		FRow R;
 		R.Label = Label; R.Hint = Hint; R.Kind = EKind::Slider; R.Min = Min; R.Max = Max; R.Step = Step; R.Fmt = Fmt;
+		R.bHasDef = true; R.DefF = Def;
 		const FString K = Key;
 		R.GetF = [K, Def]() { return GetFloat(*K, Def); };
 		R.SetF = [K, Apply](float V) { SetFloat(*K, V); if (Apply) { Apply(); } };
@@ -317,6 +328,7 @@ void USettingsWidget::DefineTabs()
 		// to-do #65: where the player looks for it first. 80-110 since 2026-11-19 (camera spec §5.7; 90-110 before)
 		FRow R = FloatRow(TEXT("FIELD OF VIEW"), TEXT("How much of the mountain you see at once. 80° is close and calm; 90° is the climber's own eyes; 110° shows the slopes around you."), TEXT("FieldOfView"), 0.f, FovMin, FovMax, 1.f,
 			[](float V) { return FString::Printf(TEXT("%d°"), FMath::RoundToInt(V)); }, [W]() { ApplyView(W()); });
+		R.DefF = 90.f;   // the climber's own eyes (the saved 0 = unset follows the camera)
 		R.GetF = [Self]()
 		{
 			const float F = FieldOfView();
@@ -401,7 +413,8 @@ void USettingsWidget::DefineTabs()
 	{
 		FRow R;
 		R.Label = TEXT("VSYNC"); R.Hint = TEXT("No tearing, a little more delay."); R.Choices = { TEXT("Off"), TEXT("On") };
-		R.Get = []() { const UGameUserSettings* U = GUS(); return U && U->IsVSyncEnabled() ? 1 : 0; };
+		R.bHasDef = true; R.DefI = 0;
+			R.Get = []() { const UGameUserSettings* U = GUS(); return U && U->IsVSyncEnabled() ? 1 : 0; };
 		R.Set = [W](int32 V) { if (UGameUserSettings* U = GUS()) { U->SetVSyncEnabled(V == 1); U->SaveSettings(); } ApplyDisplay(W()); };
 		Disp.Rows.Add(R);
 	}
@@ -449,6 +462,16 @@ void USettingsWidget::DefineTabs()
 	Acc.Rows.Add(IntRow(TEXT("COLOUR VISION"), TEXT("Shifts the colours so red, green and blue warnings stay apart."),
 		{ TEXT("Off"), TEXT("Protan"), TEXT("Deutan"), TEXT("Tritan") }, TEXT("ColourVision"), 0, 0, [W]() { ApplyAccessibility(W()); }));
 	Tabs.Add(Acc);
+
+	// the changes that can leave the screen unusable ask "Keep these settings?" after Apply -> Yes (and revert after 15 s)
+	for (FTab& T : Tabs)
+	{
+		for (FRow& R : T.Rows)
+		{
+			static const TCHAR* const ScreenRows[] = { TEXT("QUALITY"), TEXT("UPSCALING"), TEXT("UPSCALER"), TEXT("FRAME GENERATION"), TEXT("WINDOW"), TEXT("RESOLUTION"), TEXT("VSYNC"), TEXT("FRAME LIMIT") };
+			for (const TCHAR* L : ScreenRows) { if (R.Label == L) { R.bScreen = true; } }
+		}
+	}
 }
 
 UButton* USettingsWidget::TextButton(const FString& Label, int32 Size, UTextBlock*& OutText, TFunction<void()> OnClick)
@@ -549,13 +572,18 @@ void USettingsWidget::Build()
 	}
 	Col->AddChildToVerticalBox(Pages);
 	UHorizontalBox* Foot = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+	UTextBlock* AT = nullptr;
+	ApplyBtn = TextButton(TEXT("Apply"), 19, AT, [this]() { RequestApply(); });
+	ApplyText = AT;
+	Foot->AddChildToHorizontalBox(ApplyBtn)->SetPadding(FMargin(24.f, 0.f, 18.f, 0.f));
+	Foot->AddChildToHorizontalBox(YggUI::Words(WidgetTree, TEXT("·"), 19, YggUI::Shade))->SetPadding(FMargin(0.f, 0.f, 18.f, 0.f));
 	UTextBlock* RT = nullptr;
-	ResetBtn = TextButton(TEXT("Reset this tab"), 19, RT, [this]() { YggSettings::ResetTab(GetWorld(), TabIndex); Refresh(); });
+	ResetBtn = TextButton(TEXT("Reset this tab"), 19, RT, [this]() { ResetPending(TabIndex); Refresh(); });
 	ResetText = RT;
-	Foot->AddChildToHorizontalBox(ResetBtn)->SetPadding(FMargin(24.f, 0.f, 18.f, 0.f));
+	Foot->AddChildToHorizontalBox(ResetBtn)->SetPadding(FMargin(0.f, 0.f, 18.f, 0.f));
 	Foot->AddChildToHorizontalBox(YggUI::Words(WidgetTree, TEXT("·"), 19, YggUI::Shade))->SetPadding(FMargin(0.f, 0.f, 18.f, 0.f));
 	UTextBlock* BT = nullptr;
-	BackBtn = TextButton(TEXT("Back"), 19, BT, [this]() { Close(); });
+	BackBtn = TextButton(TEXT("Back"), 19, BT, [this]() { RequestClose(); });
 	BackText = BT;
 	Foot->AddChildToHorizontalBox(BackBtn);
 	Col->AddChildToVerticalBox(Foot)->SetPadding(FMargin(0.f, 30.f, 0.f, 0.f));
@@ -587,8 +615,8 @@ void USettingsWidget::Build()
 	for (int32 k = 0; k < 2; ++k)
 	{
 		UHorizontalBox* Keys = k == 0
-			? YggUI::Prompts(WidgetTree, { { TEXT("↑ ↓"), TEXT("Choose") }, { TEXT("← →"), TEXT("Change") }, { TEXT("Q E"), TEXT("Tab") }, { TEXT("Esc"), TEXT("Back") } })
-			: YggUI::Prompts(WidgetTree, { { TEXT("D-pad"), TEXT("Choose") }, { TEXT("D-pad"), TEXT("Change") }, { TEXT("LB RB"), TEXT("Tab") }, { TEXT("B"), TEXT("Back") } });
+			? YggUI::Prompts(WidgetTree, { { TEXT("↑ ↓"), TEXT("Choose") }, { TEXT("← →"), TEXT("Change") }, { TEXT("Q E"), TEXT("Tab") }, { TEXT("F"), TEXT("Apply") }, { TEXT("Esc"), TEXT("Back") } })
+			: YggUI::Prompts(WidgetTree, { { TEXT("D-pad"), TEXT("Choose") }, { TEXT("D-pad"), TEXT("Change") }, { TEXT("LB RB"), TEXT("Tab") }, { TEXT("Y"), TEXT("Apply") }, { TEXT("B"), TEXT("Back") } });
 		Keys->SetVisibility(k == 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 		UCanvasPanelSlot* KS = Canvas->AddChildToCanvas(Keys);
 		KS->SetAnchors(FAnchors(0.95f, 1.f));
@@ -597,6 +625,7 @@ void USettingsWidget::Build()
 		KS->SetAutoSize(true);
 		(k == 0 ? KeysRow : PadKeysRow) = Keys;
 	}
+	BuildModal();
 	SetTab(PendingTab);
 	SetRenderOpacity(0.f);
 }
@@ -620,6 +649,22 @@ void USettingsWidget::BuildTabPage(int32 Tab, UVerticalBox* Box)
 		BandS->SetHorizontalAlignment(HAlign_Left);
 		BandS->SetVerticalAlignment(VAlign_Center);
 		R.Bar = nullptr;
+		{
+			// a sun bead at the row's left edge: this row has a change waiting for Apply
+			USizeBox* MB = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+			MB->SetWidthOverride(10.f);
+			MB->SetHeightOverride(10.f);
+			UImage* Bd = YggUI::Bead(WidgetTree, 6.f, YggUI::Sun);
+			if (USizeBoxSlot* BS2 = Cast<USizeBoxSlot>(MB->SetContent(Bd))) { BS2->SetHorizontalAlignment(HAlign_Center); BS2->SetVerticalAlignment(VAlign_Center); }
+			MB->SetRenderOpacity(0.f);
+			MB->SetVisibility(ESlateVisibility::HitTestInvisible);
+			UOverlaySlot* MS = O->AddChildToOverlay(MB);
+			MS->SetHorizontalAlignment(HAlign_Left);
+			MS->SetVerticalAlignment(VAlign_Center);
+			MS->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
+			R.Mark = MB;
+			Keep.Add(MB);
+		}
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		R.LabelW = YggUI::Words(WidgetTree, SettingsSentence(R.Label), 21, YggUI::Mist);
 		R.LabelW->SetMinDesiredWidth(330.f);
@@ -656,7 +701,7 @@ void USettingsWidget::BuildTabPage(int32 Tab, UVerticalBox* Box)
 			R.SliderW->SetStepSize(R.Step);
 			R.SliderW->SetValue(R.GetF ? R.GetF() : R.Min);
 			UYggUIProxy* P = NewObject<UYggUIProxy>(this);
-			P->OnValue = [this, Tab, r](float V) { FRow& X = Tabs[Tab].Rows[r]; RowIndex = r; if (X.SetF) { X.SetF(V); } };
+			P->OnValue = [this, Tab, r](float V) { FRow& X = Tabs[Tab].Rows[r]; RowIndex = r; if (X.SetF) { SetPendingFloat(X, V); } };
 			FScriptDelegate D; D.BindUFunction(P, TEXT("Value")); R.SliderW->OnValueChanged.Add(D);
 			Proxies.Add(P);
 			// a slider only asks for its thumb's size: give the line its length; a sunlit fill up to the bead
@@ -721,24 +766,25 @@ void USettingsWidget::SetTab(int32 Tab)
 
 void USettingsWidget::Change(int32 Dir)
 {
+	if (Modal != EModal::None) { return; }   // nothing changes behind a confirm page
 	if (!Tabs.IsValidIndex(TabIndex) || !Tabs[TabIndex].Rows.IsValidIndex(RowIndex)) { return; }
 	FRow& R = Tabs[TabIndex].Rows[RowIndex];
 	switch (R.Kind)
 	{
 	case EKind::Choice:
-		// a selector goes round
-		if (R.Get && R.Set && R.Choices.Num() > 0) { R.Set((R.Get() + Dir + R.Choices.Num()) % R.Choices.Num()); }
+		// a selector goes round (the pending copy only)
+		if (R.Get && R.Set && R.Choices.Num() > 0) { SetPendingInt(R, (EffInt(R) + Dir + R.Choices.Num()) % R.Choices.Num()); }
 		break;
 	case EKind::Slider:
 		if (R.SetF && R.SliderW)
 		{
 			const float V = FMath::Clamp(R.SliderW->GetValue() + Dir * R.Step, R.Min, R.Max);
 			R.SliderW->SetValue(V);
-			R.SetF(V);
+			SetPendingFloat(R, V);
 		}
 		break;
 	case EKind::Cycle:
-		if (R.Get && R.Set) { R.Set(FMath::Clamp(R.Get() + Dir, 0, int32(R.Max))); }
+		if (R.Get && R.Set) { SetPendingInt(R, FMath::Clamp(EffInt(R) + Dir, 0, int32(R.Max))); }
 		break;
 	default:
 		break;
@@ -755,24 +801,24 @@ void USettingsWidget::Refresh()
 			FRow& R = Tabs[t].Rows[r];
 			if (R.Kind == EKind::Choice && R.Get)
 			{
-				const int32 Cur = R.Get();
+				const int32 Cur = EffInt(R);
 				if (R.Value) { R.Value->SetText(FText::FromString(R.Choices.IsValidIndex(Cur) ? R.Choices[Cur] : FString())); }
 			}
 			else if (R.Kind == EKind::Slider && R.SliderW && R.GetF)
 			{
-				const float V = R.GetF();
+				const float V = EffFloat(R);
 				if (!FMath::IsNearlyEqual(R.SliderW->GetValue(), V, 0.001f)) { R.SliderW->SetValue(V); }
 				if (R.Value && R.Fmt) { R.Value->SetText(FText::FromString(R.Fmt(V))); }
 			}
 			else if (R.Kind == EKind::Cycle && R.Value && R.Get && R.Fmt)
 			{
-				R.Value->SetText(FText::FromString(R.Fmt(float(R.Get()))));
+				R.Value->SetText(FText::FromString(R.Fmt(float(EffInt(R)))));
 			}
 			else if (R.Kind == EKind::Key && R.Value)
 			{
 				const YggSettings::FBinding* B = YggSettings::Bindings().FindByPredicate([&R](const YggSettings::FBinding& X) { return X.Action == R.Action; });
 				const bool bWait = t == TabIndex && r == Waiting;
-				R.Value->SetText(FText::FromString(bWait ? FString(TEXT("PRESS A KEY")) : (B ? YggSettings::KeyName(B->Key).ToUpper() : FString(TEXT("-")))));
+				R.Value->SetText(FText::FromString(bWait ? FString(TEXT("PRESS A KEY")) : (B ? YggSettings::KeyName(EffKey(R)).ToUpper() : FString(TEXT("-")))));
 			}
 		}
 	}
@@ -795,7 +841,7 @@ void USettingsWidget::ShowDescription()
 	if (R.Kind == EKind::Choice && R.Get)
 	{
 		// every choice, the current one lit
-		const int32 Cur = R.Get();
+		const int32 Cur = EffInt(R);
 		for (int32 c = 0; c < R.Choices.Num(); ++c)
 		{
 			UHorizontalBox* L = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
@@ -854,21 +900,24 @@ void USettingsWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		if (R.Hit) { R.Hit->SetRenderOpacity(In); R.Hit->SetRenderTranslation(FVector2D(6.f * R.Hot - 10.f * (1.f - In), 0.f)); }
 		if (R.LabelW) { R.LabelW->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, R.Hot))); }
 		if (R.Band) { R.Band->SetRenderOpacity(R.Hot * Breathe); }
+		R.MarkA = FMath::FInterpTo(R.MarkA, R.bDirty ? 1.f : 0.f, InDeltaTime, 14.f);
+		if (R.Mark) { R.Mark->SetRenderOpacity(R.MarkA * (0.75f + 0.25f * Breathe)); }
+		const FLinearColor ValueCol = FMath::Lerp(FMath::Lerp(YggUI::Mist, YggUI::Snow, R.Hot), YggUI::Sun, 0.8f * R.MarkA);
 		if (R.Kind == EKind::Choice || R.Kind == EKind::Cycle)
 		{
-			if (R.Value) { R.Value->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, R.Hot))); }
+			if (R.Value) { R.Value->SetColorAndOpacity(FSlateColor(ValueCol)); }
 		}
 		if (R.Kind == EKind::Slider && R.SliderW)
 		{
 			const float V = R.SliderW->GetValue();
 			if (R.Value && R.Fmt) { R.Value->SetText(FText::FromString(R.Fmt(V))); }
-			if (R.Value) { R.Value->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, R.Hot))); }
+			if (R.Value) { R.Value->SetColorAndOpacity(FSlateColor(ValueCol)); }
 			if (R.Fill) { R.Fill->SetDesiredSizeOverride(FVector2D(FMath::Max(1.f, 300.f * (V - R.Min) / FMath::Max(R.Max - R.Min, 0.0001f)), 2.f)); }
 		}
 		if (R.Kind == EKind::Key && R.Value)
 		{
 			if (r == Waiting) { R.Value->SetRenderOpacity(0.55f + 0.45f * FMath::Abs(FMath::Sin(Age * 3.f))); R.Value->SetColorAndOpacity(FSlateColor(YggUI::Sun)); }
-			else { R.Value->SetRenderOpacity(1.f); R.Value->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, R.Hot))); }
+			else { R.Value->SetRenderOpacity(1.f); R.Value->SetColorAndOpacity(FSlateColor(ValueCol)); }
 		}
 	}
 	for (int32 t = 0; t < TabTexts.Num(); ++t)
@@ -881,6 +930,45 @@ void USettingsWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	for (UTextBlock* T : { ResetText.Get(), BackText.Get() })
 	{
 		if (T) { const UWidget* B = T->GetParent(); T->SetColorAndOpacity(FSlateColor(B && B->IsHovered() ? YggUI::Snow : YggUI::Mist)); }
+	}
+	{
+		const int32 Pend = PendingCount();
+		if (Pend != LastPendingCount && ApplyText)
+		{
+			LastPendingCount = Pend;
+			ApplyText->SetText(FText::FromString(Pend > 0 ? FString::Printf(TEXT("Apply (%d)"), Pend) : FString(TEXT("Apply"))));
+		}
+		if (ApplyText)
+		{
+			const UWidget* B = ApplyText->GetParent();
+			ApplyText->SetColorAndOpacity(FSlateColor(Pend > 0 ? (B && B->IsHovered() ? YggUI::Snow : YggUI::Sun) : YggUI::Shade));
+		}
+	}
+	// the question over everything (apply / discard / keep)
+	if (ModalRoot && Modal != EModal::None)
+	{
+		ModalAge += InDeltaTime;
+		ModalRoot->SetRenderOpacity(YggUI::Ease(ModalAge * 5.f));
+		if (bMouseMoved)
+		{
+			for (int32 i = 0; i < ModalOptTexts.Num(); ++i)
+			{
+				const UWidget* B = ModalOptTexts[i] ? ModalOptTexts[i]->GetParent() : nullptr;
+				if (B && B->IsHovered()) { ModalSel = i; }
+			}
+		}
+		for (int32 i = 0; i < 2; ++i)
+		{
+			ModalHot[i] = FMath::FInterpTo(ModalHot[i], i == ModalSel ? 1.f : 0.f, InDeltaTime, 14.f);
+			if (ModalOptTexts.IsValidIndex(i) && ModalOptTexts[i]) { ModalOptTexts[i]->SetColorAndOpacity(FSlateColor(FMath::Lerp(YggUI::Mist, YggUI::Snow, ModalHot[i]))); }
+			if (ModalOptGlows.IsValidIndex(i) && ModalOptGlows[i]) { ModalOptGlows[i]->SetRenderOpacity(ModalHot[i] * Breathe); }
+		}
+		if (Modal == EModal::Keep)
+		{
+			const double Left = KeepEnd - FPlatformTime::Seconds();
+			if (ModalCount) { ModalCount->SetText(FText::FromString(FString::Printf(TEXT("Reverting in %d s"), FMath::Max(0, FMath::CeilToInt(float(Left)))))); }
+			if (Left <= 0.0) { RevertKept(); }
+		}
 	}
 	ShowDescription();
 	if (Desc)
@@ -895,14 +983,24 @@ FReply USettingsWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyE
 {
 	const FKey K = InKeyEvent.GetKey();
 	bPad = K.IsGamepadKey();
+	if (Modal != EModal::None)
+	{
+		// the question takes every key: left / right choose, Enter answers, Esc is the safe answer (No / keep editing / revert)
+		if (K == EKeys::Left || K == EKeys::A || K == EKeys::Gamepad_DPad_Left || K == EKeys::Gamepad_LeftStick_Left) { ModalSel = 0; bMouseMoved = false; }
+		else if (K == EKeys::Right || K == EKeys::D || K == EKeys::Gamepad_DPad_Right || K == EKeys::Gamepad_LeftStick_Right) { ModalSel = 1; bMouseMoved = false; }
+		else if (K == EKeys::Enter || K == EKeys::SpaceBar || K == EKeys::Gamepad_FaceButton_Bottom) { ModalAnswer(ModalSel); }
+		else if (K == EKeys::Escape || K == EKeys::Gamepad_FaceButton_Right) { ModalAnswer(1); }
+		return FReply::Handled();
+	}
 	if (Waiting >= 0 && Tabs.IsValidIndex(TabIndex) && Tabs[TabIndex].Rows.IsValidIndex(Waiting))
 	{
-		if (K != EKeys::Escape) { YggSettings::Rebind(GetWorld(), Tabs[TabIndex].Rows[Waiting].Action, K); }
+		if (K != EKeys::Escape) { SetPendingKey(Tabs[TabIndex].Rows[Waiting], K); }
 		Waiting = -1;
 		Refresh();
 		return FReply::Handled();
 	}
-	if (K == EKeys::Escape || K == EKeys::F2 || K == EKeys::Gamepad_FaceButton_Right) { Close(); return FReply::Handled(); }
+	if (K == EKeys::Escape || K == EKeys::F2 || K == EKeys::Gamepad_FaceButton_Right) { RequestClose(); return FReply::Handled(); }
+	if (K == EKeys::F || K == EKeys::Gamepad_FaceButton_Top) { RequestApply(); return FReply::Handled(); }
 	if (!Tabs.IsValidIndex(TabIndex)) { return FReply::Handled(); }
 	if (K == EKeys::Up || K == EKeys::W || K == EKeys::Gamepad_DPad_Up || K == EKeys::Gamepad_LeftStick_Up) { RowIndex = FMath::Max(RowIndex - 1, 0); bMouseMoved = false; return FReply::Handled(); }
 	if (K == EKeys::Down || K == EKeys::S || K == EKeys::Gamepad_DPad_Down || K == EKeys::Gamepad_LeftStick_Down) { RowIndex = FMath::Min(RowIndex + 1, Tabs[TabIndex].Rows.Num() - 1); bMouseMoved = false; return FReply::Handled(); }
@@ -923,6 +1021,432 @@ FReply USettingsWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPo
 {
 	if (!InMouseEvent.GetCursorDelta().IsNearlyZero()) { bMouseMoved = true; bPad = false; }
 	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
+}
+
+// ---- pending changes (2026-11-21): a change edits a copy; Apply -> Yes applies and saves it all at once
+
+int32 USettingsWidget::EffInt(const FRow& R) const { return R.bDirty ? R.PendI : (R.Get ? R.Get() : 0); }
+float USettingsWidget::EffFloat(const FRow& R) const { return R.bDirty ? R.PendF : (R.GetF ? R.GetF() : R.Min); }
+FKey USettingsWidget::EffKey(const FRow& R) const
+{
+	if (R.bDirty) { return R.PendKey; }
+	const YggSettings::FBinding* B = YggSettings::Bindings().FindByPredicate([&R](const YggSettings::FBinding& X) { return X.Action == R.Action; });
+	return B ? B->Key : FKey();
+}
+
+void USettingsWidget::SetPendingInt(FRow& R, int32 V)
+{
+	R.PendI = V;
+	R.bDirty = !R.Get || R.Get() != V;
+}
+
+void USettingsWidget::SetPendingFloat(FRow& R, float V)
+{
+	R.PendF = V;
+	R.bDirty = !R.GetF || !FMath::IsNearlyEqual(R.GetF(), V, 0.0005f);
+}
+
+void USettingsWidget::SetPendingKey(FRow& R, const FKey& NewKey)
+{
+	// the same keys Rebind refuses
+	if (!NewKey.IsValid() || NewKey.IsMouseButton() || NewKey.IsGamepadKey() || NewKey == EKeys::Escape || NewKey == EKeys::F2) { return; }
+	const FKey Old = EffKey(R);
+	if (Old == NewKey) { return; }
+	auto AppliedKey = [](const FRow& X) { const YggSettings::FBinding* B = YggSettings::Bindings().FindByPredicate([&X](const YggSettings::FBinding& Y) { return Y.Action == X.Action; }); return B ? B->Key : FKey(); };
+	// a key another action already holds (applied or pending): the two swap
+	for (FTab& T : Tabs)
+	{
+		for (FRow& O : T.Rows)
+		{
+			if (O.Kind != EKind::Key || &O == &R || EffKey(O) != NewKey) { continue; }
+			O.PendKey = Old;
+			O.bDirty = Old != AppliedKey(O);
+		}
+	}
+	R.PendKey = NewKey;
+	R.bDirty = NewKey != AppliedKey(R);
+}
+
+int32 USettingsWidget::PendingCount() const
+{
+	int32 N = 0;
+	for (const FTab& T : Tabs) { for (const FRow& R : T.Rows) { if (R.bDirty) { ++N; } } }
+	return N;
+}
+
+FString USettingsWidget::RowValueText(const FRow& R, int32 I, float F, const FKey& K) const
+{
+	switch (R.Kind)
+	{
+	case EKind::Choice: return R.Choices.IsValidIndex(I) ? R.Choices[I] : FString::FromInt(I);
+	case EKind::Slider: return R.Fmt ? R.Fmt(F) : FString::Printf(TEXT("%.2f"), F);
+	case EKind::Cycle: return R.Fmt ? R.Fmt(float(I)) : FString::FromInt(I);
+	case EKind::Key: return YggSettings::KeyName(K).ToUpper();
+	}
+	return FString();
+}
+
+bool USettingsWidget::FindRowByLabel(const TCHAR* Label, int32& OutTab, int32& OutRow) const
+{
+	for (int32 t = 0; t < Tabs.Num(); ++t)
+	{
+		for (int32 r = 0; r < Tabs[t].Rows.Num(); ++r)
+		{
+			if (Tabs[t].Rows[r].Label == Label) { OutTab = t; OutRow = r; return true; }
+		}
+	}
+	return false;
+}
+
+void USettingsWidget::ResetPending(int32 Tab)
+{
+	if (!Tabs.IsValidIndex(Tab)) { return; }
+	for (FRow& R : Tabs[Tab].Rows)
+	{
+		switch (R.Kind)
+		{
+		case EKind::Choice:
+		case EKind::Cycle:
+			if (R.bHasDef) { SetPendingInt(R, R.DefI); }
+			break;
+		case EKind::Slider:
+			if (R.bHasDef) { SetPendingFloat(R, FMath::Clamp(R.DefF, R.Min, R.Max)); }
+			break;
+		case EKind::Key:
+		{
+			const YggSettings::FBinding* B = YggSettings::Bindings().FindByPredicate([&R](const YggSettings::FBinding& X) { return X.Action == R.Action; });
+			if (B) { R.PendKey = B->Default; R.bDirty = B->Default != B->Key; }
+			break;
+		}
+		}
+	}
+	Waiting = -1;
+}
+
+void USettingsWidget::DiscardPending()
+{
+	for (FTab& T : Tabs) { for (FRow& R : T.Rows) { R.bDirty = false; } }
+	Refresh();
+}
+
+void USettingsWidget::RequestClose()
+{
+	if (Modal == EModal::Keep) { RevertKept(); return; }
+	if (Modal != EModal::None) { HideModal(); return; }
+	Waiting = -1;
+	if (PendingCount() > 0) { ShowModal(EModal::Discard); return; }
+	Close();
+}
+
+void USettingsWidget::RequestApply()
+{
+	if (Modal != EModal::None) { return; }
+	Waiting = -1;
+	if (PendingCount() > 0) { ShowModal(EModal::Apply); }
+}
+
+void USettingsWidget::CommitPending(bool bAskKeep)
+{
+	Kept.Reset();
+	for (int32 t = 0; t < Tabs.Num(); ++t)
+	{
+		for (int32 r = 0; r < Tabs[t].Rows.Num(); ++r)
+		{
+			FRow& R = Tabs[t].Rows[r];
+			if (!R.bDirty) { continue; }
+			if (R.Kind == EKind::Key)
+			{
+				YggSettings::Rebind(GetWorld(), R.Action, R.PendKey);
+				R.bDirty = false;
+				continue;
+			}
+			if (R.bScreen)
+			{
+				FRevert V;
+				V.Tab = t; V.Row = r;
+				V.I = R.Get ? R.Get() : 0;
+				V.F = R.GetF ? R.GetF() : 0.f;
+				Kept.Add(V);
+			}
+			R.bDirty = false;   // cleared first: the Set functions may read the row
+			if (R.Kind == EKind::Slider) { if (R.SetF) { R.SetF(R.PendF); } }
+			else if (R.Set) { R.Set(R.PendI); }
+		}
+	}
+	Refresh();
+	if (bAskKeep && Kept.Num() > 0)
+	{
+		KeepEnd = FPlatformTime::Seconds() + KeepSeconds;
+		ShowModal(EModal::Keep);
+	}
+	else
+	{
+		Kept.Reset();
+	}
+}
+
+void USettingsWidget::RevertKept()
+{
+	for (const FRevert& V : Kept)
+	{
+		if (!Tabs.IsValidIndex(V.Tab) || !Tabs[V.Tab].Rows.IsValidIndex(V.Row)) { continue; }
+		FRow& R = Tabs[V.Tab].Rows[V.Row];
+		R.bDirty = false;
+		if (R.Kind == EKind::Slider) { if (R.SetF) { R.SetF(V.F); } }
+		else if (R.Set) { R.Set(V.I); }
+	}
+	Kept.Reset();
+	HideModal();
+	Refresh();
+}
+
+void USettingsWidget::BuildModal()
+{
+	ModalRoot = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+	// the world and the rows step back under the question (it also takes every click)
+	UImage* Dim = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+	FSlateBrush DB;
+	DB.DrawAs = ESlateBrushDrawType::Box;
+	DB.TintColor = FSlateColor(FLinearColor::White);
+	Dim->SetBrush(DB);
+	Dim->SetColorAndOpacity(YggUI::WithA(YggUI::InkC, 0.8f));
+	UOverlaySlot* DS = ModalRoot->AddChildToOverlay(Dim);
+	DS->SetHorizontalAlignment(HAlign_Fill);
+	DS->SetVerticalAlignment(VAlign_Fill);
+	UVerticalBox* Box = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	ModalTitle = YggUI::Words(WidgetTree, TEXT(""), 44, YggUI::Snow);
+	ModalTitle->SetJustification(ETextJustify::Center);
+	Box->AddChildToVerticalBox(ModalTitle)->SetHorizontalAlignment(HAlign_Center);
+	ModalBody = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	Box->AddChildToVerticalBox(ModalBody)->SetPadding(FMargin(0.f, 22.f, 0.f, 34.f));
+	UHorizontalBox* Opts = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+	for (int32 i = 0; i < 2; ++i)
+	{
+		UOverlay* O = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		UImage* G = YggUI::Glow(WidgetTree, YggUI::WithA(YggUI::Sun, 0.26f), FVector2D(240.f, 80.f));
+		G->SetRenderOpacity(0.f);
+		UOverlaySlot* GS = O->AddChildToOverlay(G);
+		GS->SetHorizontalAlignment(HAlign_Center);
+		GS->SetVerticalAlignment(VAlign_Center);
+		UTextBlock* T = nullptr;
+		UButton* B = TextButton(TEXT(""), 27, T, [this, i]() { ModalAnswer(i); });
+		UOverlaySlot* BS = O->AddChildToOverlay(B);
+		BS->SetHorizontalAlignment(HAlign_Center);
+		BS->SetVerticalAlignment(VAlign_Center);
+		ModalOptTexts.Add(T);
+		ModalOptGlows.Add(G);
+		UHorizontalBoxSlot* S = Opts->AddChildToHorizontalBox(O);
+		S->SetPadding(FMargin(i == 0 ? 0.f : 70.f, 0.f, 0.f, 0.f));
+	}
+	Box->AddChildToVerticalBox(Opts)->SetHorizontalAlignment(HAlign_Center);
+	UOverlaySlot* BoxS = ModalRoot->AddChildToOverlay(Box);
+	BoxS->SetHorizontalAlignment(HAlign_Center);
+	BoxS->SetVerticalAlignment(VAlign_Center);
+	ModalRoot->SetVisibility(ESlateVisibility::Collapsed);
+	UCanvasPanelSlot* MS = Canvas->AddChildToCanvas(ModalRoot);
+	MS->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+	MS->SetOffsets(FMargin(0.f));
+	MS->SetZOrder(100);
+}
+
+void USettingsWidget::ShowModal(EModal M)
+{
+	if (!ModalRoot || M == EModal::None) { return; }
+	Modal = M;
+	ModalAge = 0.f;
+	ModalCount = nullptr;
+	ModalBody->ClearChildren();
+	auto Line = [this](const FString& S, int32 Size, const FLinearColor& C) -> UTextBlock*
+	{
+		UTextBlock* T = YggUI::Words(WidgetTree, S, Size, C);
+		T->SetJustification(ETextJustify::Center);
+		ModalBody->AddChildToVerticalBox(T)->SetHorizontalAlignment(HAlign_Center);
+		return T;
+	};
+	FString A, B;
+	if (M == EModal::Apply)
+	{
+		ModalTitle->SetText(FText::FromString(TEXT("Apply these changes?")));
+		A = TEXT("Yes"); B = TEXT("No");
+		ModalSel = 0;
+		int32 Shown = 0, Total = 0;
+		for (const FTab& T : Tabs)
+		{
+			for (const FRow& R : T.Rows)
+			{
+				if (!R.bDirty) { continue; }
+				++Total;
+				if (Shown >= 12) { continue; }
+				++Shown;
+				const YggSettings::FBinding* KB = R.Kind == EKind::Key ? YggSettings::Bindings().FindByPredicate([&R](const YggSettings::FBinding& X) { return X.Action == R.Action; }) : nullptr;
+				const FString Old = RowValueText(R, R.Get ? R.Get() : 0, R.GetF ? R.GetF() : 0.f, KB ? KB->Key : FKey());
+				const FString New = RowValueText(R, R.PendI, R.PendF, R.PendKey);
+				Line(FString::Printf(TEXT("%s: %s  ›  %s"), *SettingsSentence(R.Label), *Old, *New), 22, YggUI::Mist);
+			}
+		}
+		if (Total > Shown) { Line(FString::Printf(TEXT("and %d more"), Total - Shown), 20, YggUI::Shade); }
+	}
+	else if (M == EModal::Discard)
+	{
+		ModalTitle->SetText(FText::FromString(TEXT("Discard changes?")));
+		A = TEXT("Discard"); B = TEXT("Keep editing");
+		ModalSel = 1;
+		const int32 N = PendingCount();
+		Line(FString::Printf(TEXT("%d change%s not applied yet."), N, N == 1 ? TEXT(" is") : TEXT("s are")), 22, YggUI::Mist);
+	}
+	else
+	{
+		ModalTitle->SetText(FText::FromString(TEXT("Keep these settings?")));
+		A = TEXT("Keep"); B = TEXT("Revert");
+		ModalSel = 1;
+		ModalCount = Line(TEXT(""), 22, YggUI::Sun);
+	}
+	if (ModalOptTexts.Num() == 2) { ModalOptTexts[0]->SetText(FText::FromString(A)); ModalOptTexts[1]->SetText(FText::FromString(B)); }
+	ModalHot[0] = ModalHot[1] = 0.f;
+	ModalRoot->SetRenderOpacity(0.f);
+	ModalRoot->SetVisibility(ESlateVisibility::Visible);
+	SetKeyboardFocus();      // (2026-11-21 review) a clicked row button kept the focus and ate Enter / Space / A behind the page
+}
+
+void USettingsWidget::HideModal()
+{
+	Modal = EModal::None;
+	if (ModalRoot) { ModalRoot->SetVisibility(ESlateVisibility::Collapsed); }
+	SetKeyboardFocus();
+}
+
+void USettingsWidget::ModalAnswer(int32 Index)
+{
+	const EModal M = Modal;
+	if (M == EModal::None) { return; }
+	if (M == EModal::Apply)
+	{
+		HideModal();
+		if (Index == 0) { CommitPending(true); }
+	}
+	else if (M == EModal::Discard)
+	{
+		HideModal();
+		if (Index == 0) { DiscardPending(); Close(); }
+	}
+	else
+	{
+		if (Index == 0) { Kept.Reset(); HideModal(); }
+		else { RevertKept(); }
+	}
+}
+
+void USettingsWidget::SelfTestPending(UWorld* World)
+{
+	struct FState
+	{
+		TWeakObjectPtr<UWorld> World;
+		TWeakObjectPtr<USettingsWidget> W;
+		int32 Phase = 0, Pass = 0, Fail = 0, HudBefore = 0, VsBefore = 0;
+		float Wait = 4.f;
+	};
+	TSharedRef<FState> S = MakeShared<FState>();
+	S->World = World;
+	UE_LOG(LogTemp, Display, TEXT("SETTINGSTEST2: starting in 4 s"));
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([S](float Dt) -> bool
+	{
+		UWorld* Wd = S->World.Get();
+		if (!Wd) { return false; }
+		if ((S->Wait -= Dt) > 0.f) { return true; }
+		auto Chk = [S](bool b, const ANSICHAR* What) { (b ? S->Pass : S->Fail)++; UE_LOG(LogTemp, Display, TEXT("SETTINGSTEST2 %s: %s"), b ? TEXT("PASS") : TEXT("FAIL"), UTF8_TO_TCHAR(What)); };
+		auto OpenIt = [S, Wd]() -> bool
+		{
+			APlayerController* PC = Wd->GetFirstPlayerController();
+			if (!PC) { return false; }
+			USettingsWidget::Open(PC, nullptr, false);
+			TArray<UUserWidget*> Found;
+			UWidgetBlueprintLibrary::GetAllWidgetsOfClass(PC, Found, USettingsWidget::StaticClass(), false);
+			S->W.Reset();
+			for (UUserWidget* U : Found) { if (U && U->IsInViewport()) { S->W = Cast<USettingsWidget>(U); } }
+			return S->W.IsValid();
+		};
+		if (S->Phase == 0 || S->Phase == 3)
+		{
+			if (!OpenIt()) { UE_LOG(LogTemp, Warning, TEXT("SETTINGSTEST2: the settings did not open")); return false; }
+			S->Wait = 1.f; ++S->Phase;
+			return true;
+		}
+		USettingsWidget* W = S->W.Get();
+		if (!W || W->Tabs.Num() == 0) { S->Wait = 0.5f; return true; }
+		int32 HT = 0, HR = 0, VT = 0, VR = 0;
+		if (!W->FindRowByLabel(TEXT("HUD SIZE"), HT, HR) || !W->FindRowByLabel(TEXT("VSYNC"), VT, VR))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SETTINGSTEST2: rows HUD SIZE / VSYNC not found"));
+			W->Close();
+			return false;
+		}
+		if (S->Phase == 1)
+		{
+			FRow& R = W->Tabs[HT].Rows[HR];
+			S->HudBefore = R.Get();
+			const TMap<FString, FString> Eng = YggSettings::EngineState(Wd);
+			W->SetTab(HT); W->RowIndex = HR;
+			W->Change(1);
+			Chk(R.Get() == S->HudBefore && YggSettings::GetInt(TEXT("HudSize"), 1) == S->HudBefore, "a change applies nothing (value and saved setting unchanged)");
+			Chk(R.bDirty && W->PendingCount() == 1, "the row is marked pending");
+			{
+				const TMap<FString, FString> Now = YggSettings::EngineState(Wd);
+				bool bSame = Now.Num() == Eng.Num();
+				for (const TPair<FString, FString>& P : Now) { const FString* O = Eng.Find(P.Key); if (!O || *O != P.Value) { bSame = false; } }
+				Chk(bSame, "engine state unchanged by a pending change");
+			}
+			W->RequestApply();
+			Chk(W->Modal == EModal::Apply, "Apply opens the confirm page");
+			W->ModalAnswer(1);
+			Chk(W->Modal == EModal::None && W->PendingCount() == 1 && R.Get() == S->HudBefore, "No keeps the pending choice and applies nothing");
+			W->RequestApply();
+			W->ModalAnswer(0);
+			Chk(R.Get() == (S->HudBefore + 1) % 3 && YggSettings::GetInt(TEXT("HudSize"), 1) == (S->HudBefore + 1) % 3, "Yes applies and saves");
+			Chk(W->PendingCount() == 0 && W->Modal == EModal::None, "nothing pending after Yes; no keep box for a non-screen setting");
+			W->Change(-1); W->CommitPending(false);
+			Chk(R.Get() == S->HudBefore, "restored");
+			// leaving with a pending change
+			W->Change(1);
+			W->RequestClose();
+			Chk(W->Modal == EModal::Discard, "leaving with a pending change asks to discard");
+			W->ModalAnswer(1);
+			Chk(W->Modal == EModal::None && W->PendingCount() == 1 && W->IsInViewport(), "Keep editing stays in the menu with the choice pending");
+			W->RequestClose();
+			W->ModalAnswer(0);
+			Chk(YggSettings::GetInt(TEXT("HudSize"), 1) == S->HudBefore && !W->IsInViewport(), "Discard reverts the choice and leaves");
+			S->Phase = 3; S->Wait = 1.f;
+			return true;
+		}
+		if (S->Phase == 4)
+		{
+			FRow& R = W->Tabs[VT].Rows[VR];
+			S->VsBefore = R.Get();
+			W->KeepSeconds = 3.f;
+			W->SetTab(VT); W->RowIndex = VR;
+			W->Change(1);
+			W->RequestApply();
+			W->ModalAnswer(0);
+			Chk(R.Get() != S->VsBefore, "a screen setting is applied by Yes");
+			Chk(W->Modal == EModal::Keep, "a screen change asks Keep / Revert");
+			S->Phase = 5; S->Wait = 4.5f;
+			return true;
+		}
+		if (S->Phase == 5)
+		{
+			FRow& R = W->Tabs[VT].Rows[VR];
+			Chk(W->Modal == EModal::None && R.Get() == S->VsBefore, "the screen change reverts by itself at 0");
+			W->Change(1);
+			W->RequestApply();
+			W->ModalAnswer(0);
+			Chk(W->Modal == EModal::Keep && R.Get() != S->VsBefore, "applied again");
+			W->RequestClose();                                  // Esc on the keep box = Revert
+			Chk(W->Modal == EModal::None && R.Get() == S->VsBefore, "Esc reverts");
+			W->Close();
+			UE_LOG(LogTemp, Display, TEXT("SETTINGSTEST2 done: %d passed, %d failed"), S->Pass, S->Fail);
+			return false;
+		}
+		return false;
+	}));
 }
 
 // ---- the comfort dot (camera spec §5.11)

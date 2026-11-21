@@ -244,6 +244,12 @@ public:
 	FName GetHandsItem() const { return HandsItem; }
 	/** A camera cut happened this frame or the last (teleport, fly-out start / end): for the monitor's `cut` column. */
 	bool WasCutRecently() const;
+	/** (#77) What a held move key does now, for the story's on-screen help: 0 nothing to say (standing, a Move lease holds
+	 *  the posture, a takeover, an inspect, a posture still moving), 1 lying (it sits you up), 2 sitting with an exit (it
+	 *  crawls you out), 3 crawling to the exit. */
+	uint8 GetMoveHintStep() const;
+	/** A move key is held right now in a posture (counting towards StandOnMoveHoldSec). */
+	bool IsMoveHeld() const { return MoveHeld > 0.f; }
 
 	// ---- tunables (DefaultGame.ini [/Script/YggdrasilsPeak.YggViewRigComponent], spec 9)
 
@@ -339,9 +345,15 @@ public:
 	UPROPERTY(Config) float CrawlDipCm = 0.8f;
 	UPROPERTY(Config) float CrawlDipEveryCm = 40.f;
 	UPROPERTY(Config) float CrawlExitRadiusCm = 60.f;
-	UPROPERTY(Config) float CrawlFallbackSec = 90.f;
+	/** (#77, was 90) Crawling this long without reaching the exit: a blink, and the climber stands at the exit. */
+	UPROPERTY(Config) float CrawlFallbackSec = 20.f;
 	UPROPERTY(Config) float CrawlStandSec = 1.4f;
 	UPROPERTY(Config) float CrawlExitEvTau = 2.f;
+	/** (#77) The crawl's own rhythm, one hand plant per CrawlDipEveryCm: the head surges forward and back this much (cm),
+	 *  nods down with the dip (deg) and sways side to side once per two plants (cm); faded in with the crawl's speed. */
+	UPROPERTY(Config) float CrawlSurgeCm = 1.5f;
+	UPROPERTY(Config) float CrawlNodDeg = 0.8f;
+	UPROPERTY(Config) float CrawlSwayCm = 0.6f;
 
 	// bob (tables by ground speed, cm/s -> peak-to-peak cm / roll deg)
 	UPROPERTY(Config) TArray<float> BobSpeedCmS;
@@ -630,6 +642,8 @@ private:
 	double RockDipAt = -100.0;
 	float BobZ = 0.f, BobY = 0.f, BobRoll = 0.f, BobPitch = 0.f;
 	float NodX = 0.f, NodV = 0.f;
+	/** (#77) the crawl's head surge (cm along the view), nod (deg) and how much of it shows (0..1, by crawl speed) */
+	float CrawlSurge = 0.f, CrawlNod = 0.f, CrawlAmp = 0.f;
 	bool bWasMoving = false;
 
 	// ---- landing

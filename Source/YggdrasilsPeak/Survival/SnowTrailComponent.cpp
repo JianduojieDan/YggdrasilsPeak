@@ -32,6 +32,44 @@
 #include "NiagaraSystem.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "UObject/ConstructorHelpers.h"
+#include "RHIGPUReadback.h"
+#include "RenderGraphBuilder.h"
+#include "RenderGraphUtils.h"
+#include "RenderingThread.h"
+#include "TextureResource.h"
+#include "Math/Float16.h"
+#include <atomic>
+
+/** A patch of TrailSoftMap read back to the CPU (#84). The game thread sends a copy and owns everything but the three
+ *  render-thread fields; the render thread copies, polls the fence, decodes into Pending and then sets bFresh, after which
+ *  the game thread takes Pending over (it never sends the next copy before that, so the two never touch Pending at once). */
+struct USnowTrailComponent::FTrailPatch
+{
+	TUniquePtr<FRHIGPUTextureReadback> Readback;
+	/** Texels per side. Fixed for the patch's life: the readback keeps the staging texture of its first copy. */
+	int32 Size = 0;
+	// the copy in flight (game thread)
+	FIntPoint Origin = FIntPoint::ZeroValue;
+	FVector2D Centre = FVector2D::ZeroVector;   // the trail map's centre and side when the copy was sent
+	float Area = 0.f;
+	int32 MapSize = 0;
+	int32 Epoch = 0;
+	double SentAt = -100.0;
+	bool bInFlight = false;
+	// render thread
+	std::atomic<bool> bPollQueued{ false };
+	std::atomic<bool> bFresh{ false };
+	EPixelFormat Format = PF_Unknown;
+	TArray<FVector2f> Pending;   // R, G per texel, row by row
+	// the last finished read (game thread)
+	TArray<FVector2f> Values;
+	FIntPoint ValuesOrigin = FIntPoint::ZeroValue;
+	FVector2D ValuesCentre = FVector2D::ZeroVector;
+	float ValuesArea = 0.f;
+	int32 ValuesMapSize = 0;
+	int32 ValuesEpoch = -1;
+	double ValuesAt = -100.0;
+};
 
 namespace
 {
@@ -82,6 +120,49 @@ namespace
 		TEXT("ygg.Snow.StepLog"),
 		0,
 		TEXT("1 = log every footstep: which foot, its height and how fast it still moved (share of the walking speed)."));
+
+	/** A finished trail patch readback (Lock()ed staging texture) -> R, G per texel. False for a format it does not know. */
+	bool SnowTrailDecodePatch(const uint8* Data, int32 PitchPixels, int32 Rows, int32 Size, EPixelFormat Format, TArray<FVector2f>& Out)
+	{
+		int32 Channels = 0;
+		bool bHalf = true;
+		switch (Format)
+		{
+		case PF_R16F: Channels = 1; break;
+		case PF_G16R16F: Channels = 2; break;
+		case PF_FloatRGBA: Channels = 4; break;
+		case PF_R32_FLOAT: Channels = 1; bHalf = false; break;
+		case PF_G32R32F: Channels = 2; bHalf = false; break;
+		case PF_A32B32G32R32F: Channels = 4; bHalf = false; break;
+		default: return false;
+		}
+		const int32 Bytes = GPixelFormats[Format].BlockBytes;
+		if (!Data || Size <= 0 || PitchPixels < Size || (Rows > 0 && Rows < Size) || Bytes <= 0) { return false; }
+		Out.SetNumUninitialized(Size * Size);
+		for (int32 y = 0; y < Size; ++y)
+		{
+			const uint8* Row = Data + SIZE_T(y) * SIZE_T(PitchPixels) * SIZE_T(Bytes);
+			for (int32 x = 0; x < Size; ++x)
+			{
+				const uint8* Px = Row + SIZE_T(x) * SIZE_T(Bytes);
+				float R, G;
+				if (bHalf)
+				{
+					const FFloat16* H = reinterpret_cast<const FFloat16*>(Px);
+					R = H[0].GetFloat();
+					G = Channels > 1 ? H[1].GetFloat() : R;
+				}
+				else
+				{
+					const float* F = reinterpret_cast<const float*>(Px);
+					R = F[0];
+					G = Channels > 1 ? F[1] : R;
+				}
+				Out[y * Size + x] = FVector2f(R, G);
+			}
+		}
+		return true;
+	}
 }
 
 // Testing the footsteps on rock: finds the biggest walkable patch of terrain rock near the player and puts them on it.
@@ -345,6 +426,8 @@ void USnowTrailComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		PublishTrailArea(false);
 	}
+	for (FTrailPatchSlot& S : TrailPatches) { ReleaseTrailPatch(S.Patch); }
+	TrailPatches.Reset();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -417,6 +500,7 @@ void USnowTrailComponent::UpdateTrailMap(float DeltaTime)
 			RecentreDistanceCm = BaseRecentreCm * (Area / BaseTrailAreaCm);
 			UKismetRenderingLibrary::ClearRenderTarget2D(this, TrailMap, FLinearColor::Black);   // old prints were drawn at the old scale
 			UKismetRenderingLibrary::ClearRenderTarget2D(this, TrailSoftMap, FLinearColor::Black);
+			++TrailMapEpoch;   // read-back patches of the old map no longer describe it
 		}
 		AppliedQuality = FootprintQuality;
 	}
@@ -545,6 +629,272 @@ void USnowTrailComponent::SoftenTrailMap()
 	UKismetRenderingLibrary::DrawMaterialToRenderTarget(this, TrailSoftMap, BlurInstance);
 }
 
+// ---- the drawn trench on the CPU (#84): small patches of TrailSoftMap read back from the GPU
+
+float USnowTrailComponent::SinkDepthFor(const FHitResult& Ground) const
+{
+	// the rule of UpdateSinking, for any ground (story people sink like the player)
+	if (!IsSnow(Ground))
+	{
+		return 0.f;
+	}
+	const AActor* Owner = GetOwner();
+	const USurvivalComponent* Survival = Owner ? Owner->FindComponentByClass<USurvivalComponent>() : nullptr;
+	const bool bInCamp = Survival && Survival->GetSnapshot().bSheltered;
+	return MaxSinkCm * SnowSoftness(Ground.ImpactPoint, Ground.ImpactNormal) * (bInCamp ? CampSinkMultiplier : 1.f);
+}
+
+void USnowTrailComponent::RequestTrailPatch(const UObject* Who, const FVector& Location)
+{
+	if (!Who || !bTrailReady || !GetWorld())
+	{
+		return;
+	}
+	const double Now = GetWorld()->GetRealTimeSeconds();
+	FTrailPatchSlot* Slot = TrailPatches.FindByPredicate([Who](const FTrailPatchSlot& S) { return S.Who.Get() == Who; });
+	if (!Slot)
+	{
+		if (TrailPatches.Num() >= MaxTrailPatches)
+		{
+			// full: the asker forgotten longest ago gives its place up (TickTrailPatches drops those after 2 s anyway)
+			int32 Old = INDEX_NONE;
+			for (int32 i = 0; i < TrailPatches.Num(); ++i)
+			{
+				if (Now - TrailPatches[i].AskedAt > 1.0 && (Old == INDEX_NONE || TrailPatches[i].AskedAt < TrailPatches[Old].AskedAt)) { Old = i; }
+			}
+			if (Old == INDEX_NONE) { return; }
+			ReleaseTrailPatch(TrailPatches[Old].Patch);
+			TrailPatches.RemoveAtSwap(Old);
+		}
+		Slot = &TrailPatches.AddDefaulted_GetRef();
+		Slot->Who = Who;
+	}
+	Slot->AskedFor = FVector2D(Location);
+	Slot->AskedAt = Now;
+}
+
+void USnowTrailComponent::ReleaseTrailPatch(TSharedPtr<FTrailPatch, ESPMode::ThreadSafe>& Patch)
+{
+	if (!Patch.IsValid())
+	{
+		return;
+	}
+	// the readback (an RHI staging texture and fence) goes on the render thread, after every copy and poll queued for it
+	TSharedPtr<FTrailPatch, ESPMode::ThreadSafe> Keep = MoveTemp(Patch);
+	Patch.Reset();
+	ENQUEUE_RENDER_COMMAND(YggTrailPatchRelease)([Keep](FRHICommandListImmediate& RHICmdList)
+	{
+		Keep->Readback.Reset();
+	});
+}
+
+void USnowTrailComponent::TickTrailPatches()
+{
+	UWorld* World = GetWorld();
+	if (TrailPatches.Num() == 0 || !World || !TrailSoftMap)
+	{
+		return;
+	}
+	const double Now = World->GetRealTimeSeconds();
+	const bool bOn = CVarSnowDeform.GetValueOnGameThread() != 0 && FootprintQuality > 0;
+	const int32 MapSize = TrailSoftMap->SizeX;
+	FTextureRenderTargetResource* Resource = TrailSoftMap->GameThread_GetRenderTargetResource();
+	if (MapSize < 32 || TrailSoftMap->SizeY != MapSize || !Resource)
+	{
+		return;
+	}
+	const float Texel = TrailAreaCm / float(MapSize);
+	// ~2.4 m square: both boots of a walking person, with room to walk on for a few reads (96 texels at 2.5 cm, 192 at 1.25)
+	const int32 Want = FMath::Clamp(FMath::DivideAndRoundUp(FMath::CeilToInt(240.f / Texel), 16) * 16, 32, FMath::Min(256, MapSize));
+	int32 Sends = 0;
+	for (int32 i = TrailPatches.Num() - 1; i >= 0; --i)
+	{
+		FTrailPatchSlot& S = TrailPatches[i];
+		if (!S.Who.IsValid() || Now - S.AskedAt > 2.0)
+		{
+			ReleaseTrailPatch(S.Patch);
+			TrailPatches.RemoveAtSwap(i);
+			continue;
+		}
+		if (!S.Patch.IsValid() || S.Patch->Size != Want)
+		{
+			ReleaseTrailPatch(S.Patch);
+			S.Patch = MakeShared<FTrailPatch, ESPMode::ThreadSafe>();
+			S.Patch->Readback = MakeUnique<FRHIGPUTextureReadback>(TEXT("YggTrailPatch"));
+			S.Patch->Size = Want;
+		}
+		TSharedPtr<FTrailPatch, ESPMode::ThreadSafe> Keep = S.Patch;
+		FTrailPatch& P = *Keep;
+		if (P.bInFlight)
+		{
+			if (P.bFresh.load())
+			{
+				// the render thread is done with Pending: take it over with the mapping the copy was sent with
+				P.Values = MoveTemp(P.Pending);
+				P.Pending.Reset();
+				P.ValuesOrigin = P.Origin;
+				P.ValuesCentre = P.Centre;
+				P.ValuesArea = P.Area;
+				P.ValuesMapSize = P.MapSize;
+				P.ValuesEpoch = P.Epoch;
+				P.ValuesAt = Now;
+				P.bFresh = false;
+				P.bInFlight = false;
+			}
+			else if (Now - P.SentAt > 1.0)
+			{
+				// never came back (no fence on this RHI, a format it cannot decode): a new readback next frame
+				static bool bWarned = false;
+				if (!bWarned) { bWarned = true; UE_LOG(LogTemp, Warning, TEXT("SnowTrail: a trail patch readback did not come back within 1 s - retrying (story people's trench height unknown meanwhile)")); }
+				ReleaseTrailPatch(S.Patch);
+				continue;
+			}
+			else if (!P.bPollQueued.load())
+			{
+				P.bPollQueued = true;
+				ENQUEUE_RENDER_COMMAND(YggTrailPatchPoll)([Keep](FRHICommandListImmediate& RHICmdList)
+				{
+					FRHIGPUTextureReadback* R = Keep->Readback.Get();
+					if (R && R->IsReady())
+					{
+						int32 Pitch = 0, Rows = 0;
+						const uint8* Data = static_cast<const uint8*>(R->Lock(Pitch, &Rows));
+						if (Data)
+						{
+							const bool bOk = SnowTrailDecodePatch(Data, Pitch, Rows, Keep->Size, Keep->Format, Keep->Pending);
+							R->Unlock();
+							if (bOk) { Keep->bFresh = true; }
+						}
+					}
+					Keep->bPollQueued = false;
+				});
+			}
+		}
+		if (P.bInFlight || !bOn || Sends >= 3)
+		{
+			continue;
+		}
+		// a place outside the drawn area (the material fades the trench out by 48% of the side) needs no patch
+		const FVector2D UV = (S.AskedFor - TrailCentre) / double(TrailAreaCm) + FVector2D(0.5, 0.5);
+		if (FMath::Max(FMath::Abs(UV.X - 0.5), FMath::Abs(UV.Y - 0.5)) > 0.48)
+		{
+			continue;
+		}
+		// due every TrailPatchEverySec, or at once when the asker nears the edge of the last read (70 cm margin)
+		bool bCovered = false;
+		if (P.Values.Num() == P.Size * P.Size && P.ValuesEpoch == TrailMapEpoch && P.ValuesMapSize > 0)
+		{
+			const double T = double(P.ValuesArea) / double(P.ValuesMapSize);
+			const double Px = (S.AskedFor.X - P.ValuesCentre.X) / T + P.ValuesMapSize * 0.5 - 0.5 - P.ValuesOrigin.X;
+			const double Py = (S.AskedFor.Y - P.ValuesCentre.Y) / T + P.ValuesMapSize * 0.5 - 0.5 - P.ValuesOrigin.Y;
+			const double M = 70.0 / T;
+			bCovered = Px >= M && Py >= M && Px <= P.Size - 1 - M && Py <= P.Size - 1 - M;
+		}
+		if (bCovered && Now - P.SentAt < TrailPatchEverySec)
+		{
+			continue;
+		}
+		// texel centres sit at i + 0.5 (the material's uv = (xy - centre) / side + 0.5)
+		const double Cx = (S.AskedFor.X - TrailCentre.X) / Texel + MapSize * 0.5;
+		const double Cy = (S.AskedFor.Y - TrailCentre.Y) / Texel + MapSize * 0.5;
+		P.Origin = FIntPoint(FMath::Clamp(FMath::RoundToInt32(Cx) - Want / 2, 0, MapSize - Want), FMath::Clamp(FMath::RoundToInt32(Cy) - Want / 2, 0, MapSize - Want));
+		P.Centre = TrailCentre;
+		P.Area = TrailAreaCm;
+		P.MapSize = MapSize;
+		P.Epoch = TrailMapEpoch;
+		P.SentAt = Now;
+		P.bInFlight = true;
+		P.bFresh = false;
+		const FIntPoint O = P.Origin;
+		const int32 N = P.Size;
+		ENQUEUE_RENDER_COMMAND(YggTrailPatchCopy)([Keep, Resource, O, N](FRHICommandListImmediate& RHICmdList)
+		{
+			FRHITexture* Tex = Resource->GetRenderTargetTexture().GetReference();
+			if (!Tex || !Keep->Readback.IsValid())
+			{
+				return;   // never ready: the game thread retries after 1 s
+			}
+			Keep->Format = Tex->GetFormat();
+			// RDG knows the map's current state (written by the canvas, read by the landscape) and moves it to a copy source
+			FRDGBuilder GraphBuilder(RHICmdList);
+			const FRDGTextureRef Source = RegisterExternalTexture(GraphBuilder, Tex, TEXT("YggTrailPatchSource"));
+			AddEnqueueCopyPass(GraphBuilder, Keep->Readback.Get(), Source, FResolveRect(O.X, O.Y, O.X + N, O.Y + N));
+			GraphBuilder.Execute();
+		});
+		++Sends;
+	}
+}
+
+float USnowTrailComponent::TrailOffsetCm(const UObject* Who, const FVector& Location, bool* bOutKnown) const
+{
+	if (bOutKnown) { *bOutKnown = false; }
+	const UWorld* World = GetWorld();
+	if (!bTrailReady || !World)
+	{
+		return 0.f;
+	}
+	// the trail off: the material draws no trench at all
+	if (CVarSnowDeform.GetValueOnGameThread() == 0 || FootprintQuality <= 0)
+	{
+		if (bOutKnown) { *bOutKnown = true; }
+		return 0.f;
+	}
+	// the material's fade towards the edge of the area it reads now (M_EverestLandscape_TrailDisp)
+	const FVector2D UV = (FVector2D(Location) - TrailCentre) / double(TrailAreaCm) + FVector2D(0.5, 0.5);
+	const float Edge = float(FMath::Max(FMath::Abs(UV.X - 0.5), FMath::Abs(UV.Y - 0.5)));
+	const float Fade = 1.f - FMath::SmoothStep(0.40f, 0.48f, Edge);
+	if (Fade <= 0.f)
+	{
+		if (bOutKnown) { *bOutKnown = true; }
+		return 0.f;
+	}
+	const double Now = World->GetRealTimeSeconds();
+	// bilinear like the material's sampler; the patch's own mapping (a recentre since moved the map's content with the world)
+	auto Sample = [&](const FTrailPatch& P, FVector2f& Out) -> bool
+	{
+		if (P.Values.Num() != P.Size * P.Size || P.Size < 2 || P.ValuesEpoch != TrailMapEpoch || Now - P.ValuesAt > 1.0 || P.ValuesMapSize <= 0)
+		{
+			return false;
+		}
+		const double T = double(P.ValuesArea) / double(P.ValuesMapSize);
+		const double Px = (Location.X - P.ValuesCentre.X) / T + P.ValuesMapSize * 0.5 - 0.5 - P.ValuesOrigin.X;
+		const double Py = (Location.Y - P.ValuesCentre.Y) / T + P.ValuesMapSize * 0.5 - 0.5 - P.ValuesOrigin.Y;
+		if (Px < 0.0 || Py < 0.0 || Px > P.Size - 1.0 || Py > P.Size - 1.0)
+		{
+			return false;
+		}
+		const int32 X0 = FMath::Min(FMath::FloorToInt32(Px), P.Size - 2);
+		const int32 Y0 = FMath::Min(FMath::FloorToInt32(Py), P.Size - 2);
+		const float Fx = float(Px - X0), Fy = float(Py - Y0);
+		const FVector2f A = FMath::Lerp(P.Values[Y0 * P.Size + X0], P.Values[Y0 * P.Size + X0 + 1], Fx);
+		const FVector2f B = FMath::Lerp(P.Values[(Y0 + 1) * P.Size + X0], P.Values[(Y0 + 1) * P.Size + X0 + 1], Fx);
+		Out = FMath::Lerp(A, B, Fy);
+		return true;
+	};
+	FVector2f RG;
+	bool bFound = false;
+	if (const FTrailPatchSlot* Own = TrailPatches.FindByPredicate([Who](const FTrailPatchSlot& S) { return Who && S.Who.Get() == Who; }))
+	{
+		bFound = Own->Patch.IsValid() && Sample(*Own->Patch, RG);
+	}
+	for (int32 i = 0; !bFound && i < TrailPatches.Num(); ++i)
+	{
+		bFound = TrailPatches[i].Patch.IsValid() && Sample(*TrailPatches[i].Patch, RG);
+	}
+	if (!bFound)
+	{
+		return 0.f;
+	}
+	if (bOutKnown) { *bOutKnown = true; }
+	// TrailHelpers::Height: a scooped hole up to 18 cm (x 0.93 + 0.07 noise) and soft banks up to 7 cm (x 0.75 + 0.5 noise);
+	// the value noise is taken at its mean (0.5): +-0.6 cm in the hole, +-1.8 cm on a bank
+	const float R = FMath::Clamp(RG.X, 0.f, 1.f);
+	const float D = R * R * (3.f - 2.f * R);
+	float Bank = FMath::Clamp(RG.Y * 1.5f - R * 1.3f, 0.f, 1.f);
+	Bank = Bank * Bank * (3.f - 2.f * Bank);
+	return (-18.f * D * 0.965f + Bank * 7.f) * Fade;
+}
+
 float USnowTrailComponent::SnowSoftness(const FVector& Location, const FVector& GroundNormal)
 {
 	const USurvivalConfig* C = GetDefault<USurvivalConfig>();
@@ -635,6 +985,8 @@ void USnowTrailComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	if (bTrailReady)
 	{
 		UpdateTrailMap(DeltaTime);
+		// after this frame's trail drawing is queued, so a copy sent now reads it
+		TickTrailPatches();
 	}
 
 	const UCharacterMovementComponent* Movement = Character->GetCharacterMovement();

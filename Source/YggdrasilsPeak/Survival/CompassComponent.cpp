@@ -18,6 +18,7 @@
 #include "InputMappingContext.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Components/PointLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "HAL/IConsoleManager.h"
 
 namespace
@@ -25,7 +26,9 @@ namespace
 	const FName CompassEvent(TEXT("CompassTwitch"));
 }
 
-static TAutoConsoleVariable<float> CVarCompassFill(TEXT("ygg.Compass.Fill"), 5.f, TEXT("Lumens of the soft light on the held compass (lights only the compass)."));
+static TAutoConsoleVariable<float> CVarCompassFill(TEXT("ygg.Compass.Fill"), 2.f, TEXT("Lumens of the soft light on the held compass (lights only the compass). 5 made it read as a lamp in the tent (2026-11-21)."));
+static TAutoConsoleVariable<float> CVarCompassLampSpill(TEXT("ygg.Compass.LampSpill"), 1.3f, TEXT("Under the player's headlamp the compass is lit by its fill only, this many times ygg.Compass.Fill, in the lamp's colour (2026-11-21)."));
+static TAutoConsoleVariable<float> CVarCompassWear(TEXT("ygg.Compass.Wear"), 1.f, TEXT("0 = the polished brass as made (rough 0.33, read as a shiny toy), 1 = worn, hand-rubbed satin brass and needles (2026-11-21). Read when the compass is built."));
 static TAutoConsoleVariable<int32> CVarCompassShow(TEXT("ygg.Compass.Show"), 0, TEXT("1 = hold the compass up (screenshots)."));
 
 UCompassComponent::UCompassComponent()
@@ -102,6 +105,34 @@ void UCompassComponent::Build()
 	Fill->SetLightingChannels(false, true, false);
 	Fill->SetVisibility(false);
 	Fill->RegisterComponent();
+	// worn metal (2026-11-21, "the compass is too shiny, make it look natural"): the brass was a polished mirror (roughness
+	// 0.33) that threw back every bright wall, the jewel and needles near-glass. A carried, hand-rubbed compass is satin:
+	// rougher and a touch darker, so it takes the light around it instead of shining like a lamp.
+	const float Wear = FMath::Clamp(CVarCompassWear.GetValueOnGameThread(), 0.f, 1.f);
+	if (Wear > 0.f)
+	{
+		struct FWorn { const TCHAR* Slot; float Rough; float Dark; };
+		static const FWorn WornParts[] = { { TEXT("brass"), 0.5f, 0.68f }, { TEXT("jewel"), 0.38f, 0.85f }, { TEXT("needle_n"), 0.55f, 0.9f }, { TEXT("needle_s"), 0.5f, 0.9f } };
+		for (UStaticMeshComponent* C : { Case.Get(), Needle.Get() })
+		{
+			const UStaticMesh* SM = C->GetStaticMesh();
+			for (const FWorn& W : WornParts)
+			{
+				const int32 Slot = SM ? SM->GetMaterialIndex(FName(W.Slot)) : INDEX_NONE;
+				if (Slot == INDEX_NONE) { continue; }
+				UMaterialInstanceDynamic* MID = C->CreateDynamicMaterialInstance(Slot);
+				if (!MID) { continue; }
+				float Rough = 0.3f;
+				MID->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Roughness")), Rough);
+				MID->SetScalarParameterValue(TEXT("Roughness"), FMath::Lerp(Rough, FMath::Max(Rough, W.Rough), Wear));
+				FLinearColor Col(0.5f, 0.5f, 0.5f);
+				if (MID->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("BaseColor")), Col))
+				{
+					MID->SetVectorParameterValue(TEXT("BaseColor"), Col * FMath::Lerp(1.f, W.Dark, Wear));
+				}
+			}
+		}
+	}
 	// the runes glow on the dial (M_CompassDial), the World Tree inside the lid with them (M_CompassLidIn)
 	const int32 RuneSlot = CaseMesh->GetMaterialIndex(TEXT("dial"));
 	if (RuneSlot != INDEX_NONE)
@@ -213,8 +244,25 @@ void UCompassComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	Needle->SetVisibility(bVisible);
 	if (Fill)
 	{
+		// (2026-11-21) under the player's story headlamp the compass, held 30 cm in front of it, took the full spot: a
+		// blown-out lid and dial, "like the compass is the flashlight itself". While the headlamp shines the compass leaves
+		// its light channel and the fill takes the lamp's warm colour at a few lumens with no shine - the soft spill a
+		// real headlamp throws on something held under it.
+		if (!HeadlampRef.IsValid())
+		{
+			TInlineComponentArray<USpotLightComponent*> Spots(Character);
+			for (USpotLightComponent* S : Spots) { if (S->GetFName() == TEXT("StoryHeadlamp")) { HeadlampRef = S; break; } }
+		}
+		const bool bLamp = HeadlampRef.IsValid() && HeadlampRef->IsVisible() && HeadlampRef->Intensity > 0.05f;
+		if (bLamp != bUnderLamp)
+		{
+			bUnderLamp = bLamp;
+			Case->SetLightingChannels(!bLamp, true, false);
+			Needle->SetLightingChannels(!bLamp, true, false);
+			Fill->SetLightColor(bLamp ? FLinearColor(1.f, 0.9f, 0.78f) : FLinearColor(0.72f, 0.82f, 1.f));
+		}
 		Fill->SetVisibility(bVisible);
-		Fill->SetIntensity(CVarCompassFill.GetValueOnGameThread() * RaiseAlpha);
+		Fill->SetIntensity(CVarCompassFill.GetValueOnGameThread() * RaiseAlpha * (bUnderLamp ? CVarCompassLampSpill.GetValueOnGameThread() : 1.f));
 	}
 	if (!bVisible)
 	{

@@ -94,6 +94,10 @@ private:
 	/** A soft light that lights only the held compass (lighting channel 1), so it reads in a dark storm (#66). */
 	UPROPERTY(Transient)
 	TObjectPtr<class UPointLightComponent> Fill;
+
+	// the player's story headlamp (YggStory's "StoryHeadlamp" spot), found lazily; the compass leaves its light under it
+	TWeakObjectPtr<class USpotLightComponent> HeadlampRef;
+	bool bUnderLamp = false;
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> ToggleAction;
 	UPROPERTY(Transient)

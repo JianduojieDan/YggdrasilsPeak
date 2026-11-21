@@ -85,7 +85,7 @@ namespace
 			if (UYggRouteBot* Bot = World ? World->GetSubsystem<UYggRouteBot>() : nullptr) { Bot->StopRun(TEXT("stopped (ygg.Bot.Route.Stop)")); }
 		}));
 
-	FString Clock(double S)
+	FString RouteBotClock(double S)
 	{
 		const int32 T = FMath::Max(0, FMath::RoundToInt(S));
 		return T >= 3600 ? FString::Printf(TEXT("%d:%02d:%02d"), T / 3600, (T / 60) % 60, T % 60) : FString::Printf(TEXT("%d:%02d"), T / 60, T % 60);
@@ -177,7 +177,7 @@ void UYggRouteBot::StopRun(const FString& Why)
 
 void UYggRouteBot::Note(const FString& Text)
 {
-	const FString L = FString::Printf(TEXT("%s  %s"), *Clock(GameT), *Text);
+	const FString L = FString::Printf(TEXT("%s  %s"), *RouteBotClock(GameT), *Text);
 	if (Events.Num() < 3000) { Events.Add(L); }
 	UE_LOG(LogYggRouteBot, Display, TEXT("RouteBot %s"), *L);
 }
@@ -403,7 +403,7 @@ void UYggRouteBot::Tick(float DeltaTime)
 			ArriveT = GameT;
 			MoveDir = FVector::ZeroVector;
 			if (Sv) { Sv->SetSprintRequested(false); }
-			Note(FString::Printf(TEXT("ROUTE END reached after %s game time (%s real)"), *Clock(ArriveT - WalkStartT), *Clock(FPlatformTime::Seconds() - WalkStartReal)));
+			Note(FString::Printf(TEXT("ROUTE END reached after %s game time (%s real)"), *RouteBotClock(ArriveT - WalkStartT), *RouteBotClock(FPlatformTime::Seconds() - WalkStartReal)));
 			Phase = EPhase::Arrive;
 			PhaseT = 0.0;
 		}
@@ -895,7 +895,7 @@ void UYggRouteBot::DrainLog()
 	{
 		int32 Nl;
 		const FString L = Full.FindChar(TEXT('\n'), Nl) ? Full.Left(Nl).TrimEnd() : Full.TrimEnd();
-		if (LogLines.Num() < 600) { LogLines.Add(FString::Printf(TEXT("%s  %s"), *Clock(GameT), *L.Left(260))); }
+		if (LogLines.Num() < 600) { LogLines.Add(FString::Printf(TEXT("%s  %s"), *RouteBotClock(GameT), *L.Left(260))); }
 		if (L.Contains(TEXT("MOVE!"))) { SprintUntil = GameT + 8.0; Note(TEXT("serac warning: sprinting for 8 s")); ++SeracWarnings; }
 	}
 }
@@ -929,7 +929,7 @@ FString UYggRouteBot::BuildReport(bool bFinal) const
 	TStringBuilder<65536> R;
 	R.Appendf(TEXT("# Route robot run %s\n\n"), *RunName);
 	R.Appendf(TEXT("- Result: %s\n"), bFinal ? *EndWhy : TEXT("(running)"));
-	R.Appendf(TEXT("- Now: game %s, %.0f m along of %.0f m (leg %d)\n"), *Clock(GameT), S / 100.f, RouteLen / 100.f, CurLeg);
+	R.Appendf(TEXT("- Now: game %s, %.0f m along of %.0f m (leg %d)\n"), *RouteBotClock(GameT), S / 100.f, RouteLen / 100.f, CurLeg);
 	R.Appendf(TEXT("- Legs %d..%d: %s -> %s; %s; game speed x%.2f (times below are game time = a player's time)%s\n"), FromLeg, ToLeg,
 		Camps.IsValidIndex(FromLeg) ? *Camps[FromLeg].Name : TEXT("?"), Camps.IsValidIndex(ToLeg + 1) ? *Camps[ToLeg + 1].Name : TEXT("?"),
 		bFast ? TEXT("sprinting whenever stamina allows") : TEXT("plain walk"), SpeedX, AtM > 0.f ? *FString::Printf(TEXT("; started %.0f m along by a teleport"), AtM) : TEXT(""));
@@ -944,11 +944,11 @@ FString UYggRouteBot::BuildReport(bool bFinal) const
 	{
 		if (LegStartT[k] < 0.0) { continue; }
 		const double To = k + 1 < LegStartT.Num() && LegStartT[k + 1] >= 0.0 ? LegStartT[k + 1] : EndT;
-		R.Appendf(TEXT("| %d | %s | %s | |\n"), FromLeg + k, Camps.IsValidIndex(FromLeg + k) ? *Camps[FromLeg + k].Name : TEXT("?"), *Clock(To - LegStartT[k]));
+		R.Appendf(TEXT("| %d | %s | %s | |\n"), FromLeg + k, Camps.IsValidIndex(FromLeg + k) ? *Camps[FromLeg + k].Name : TEXT("?"), *RouteBotClock(To - LegStartT[k]));
 	}
 	if (WalkStartT >= 0.0)
 	{
-		R.Appendf(TEXT("| **all** | | **%s** | %s |\n"), *Clock(EndT - WalkStartT), *Clock(FPlatformTime::Seconds() - WalkStartReal));
+		R.Appendf(TEXT("| **all** | | **%s** | %s |\n"), *RouteBotClock(EndT - WalkStartT), *RouteBotClock(FPlatformTime::Seconds() - WalkStartReal));
 		const double WalkSec = EndT - WalkStartT;
 		if (WalkSec > 1.0) { R.Appendf(TEXT("\nAverage %.2f m/s over %.0f m.\n"), (S - StartS) / 100.f / WalkSec, (S - StartS) / 100.f); }
 	}
@@ -964,7 +964,7 @@ FString UYggRouteBot::BuildReport(bool bFinal) const
 		R.Append(TEXT("\n| game | m along | leg | m a.s.l. | kind | what | where (BugItGo) |\n|---|---|---|---|---|---|---|\n"));
 		for (const FIssue& I : Issues)
 		{
-			R.Appendf(TEXT("| %s | %.0f | %d | %.0f | %s | %s | %s |\n"), *Clock(I.T), I.S, I.Leg, I.Elev, *I.Kind, *I.Text.Replace(TEXT("|"), TEXT("/")), *RouteBotCm(I.Pos));
+			R.Appendf(TEXT("| %s | %.0f | %d | %.0f | %s | %s | %s |\n"), *RouteBotClock(I.T), I.S, I.Leg, I.Elev, *I.Kind, *I.Text.Replace(TEXT("|"), TEXT("/")), *RouteBotCm(I.Pos));
 		}
 	}
 
@@ -987,7 +987,7 @@ FString UYggRouteBot::BuildReport(bool bFinal) const
 	R.Append(TEXT("\n## Checkpoints\n\n| m along | leg | game | m a.s.l. | off route m | boots-collision cm | boots-visible cm | ground | rope / flag / clue / checkpoint ahead m | clipped | HUD next | leg to | simple over | fps | picture |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"));
 	for (const FPoint& Pt : Points)
 	{
-		R.Appendf(TEXT("| %.0f | %d | %s | %.0f | %.1f | %.0f | %.0f | %s | %.0f / %.0f / %.0f / %.0f | %s | %s%s | %s | %d | %.0f | %s |\n"), Pt.S, Pt.Leg, *Clock(Pt.T), Pt.Elev, Pt.Lat,
+		R.Appendf(TEXT("| %.0f | %d | %s | %.0f | %.1f | %.0f | %.0f | %s | %.0f / %.0f / %.0f / %.0f | %s | %s%s | %s | %d | %.0f | %s |\n"), Pt.S, Pt.Leg, *RouteBotClock(Pt.T), Pt.Elev, Pt.Lat,
 			Pt.FeetToSimple, Pt.FeetToComplex, *Pt.GroundActor, Pt.RopeM, Pt.FlagM, Pt.ClueM, Pt.CheckM, Pt.bClipped ? TEXT("yes") : TEXT("no"),
 			*Pt.HudNext, Pt.bHudAgrees ? TEXT("") : TEXT(" (!)"), *Pt.LegTarget, Pt.SimpleOver, Pt.Fps, *Pt.Shot);
 	}

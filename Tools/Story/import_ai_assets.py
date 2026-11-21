@@ -11,12 +11,21 @@ at = unreal.AssetToolsHelpers.get_asset_tools()
 PROPS = ["tent_dome", "tent_mess", "tent_kitchen", "tent_toilet", "duffel", "barrel_blue", "bedding", "porter_load", "doko",
          "stove_set", "cook_set", "chorten_a", "chorten_b", "chorten_c", "father_stone", "khata_folded", "khata_tied",
          "copper_drum", "offering_bowl", "butter_lamp", "choktse", "meat_slats", "dung_heap", "tarchen", "glacier_glasses",
-         "headlamp", "water_bottle", "daypack", "stream_hole"]
-CHARS = ["dolma", "father", "sangye", "nima_ai", "elena_ai", "marek_ai"]
+         "headlamp", "water_bottle", "daypack", "stream_hole",
+         # round 2 (2026-11-21)
+         "lodge_main", "lhapso_altar", "sang_burner", "crampons", "ice_anchor", "carabiner_sling", "climbing_helmet",
+         "load_pack", "puja_offerings", "gamow_bag", "hanging_stove", "double_boots", "knit_beanie"]
+CHARS = ["dolma", "father", "sangye", "nima_ai", "elena_ai", "marek_ai",
+         "pema_body", "sangye_climb", "nima_climb", "climber_icefall", "hale", "lama", "pasang_cook",
+         "marek_hl", "nima_hl", "elena_hl", "pema_body_hl"]
 COLLIDE = {"tent_dome", "tent_mess", "tent_kitchen", "tent_toilet", "barrel_blue", "chorten_a", "chorten_b", "chorten_c",
-           "father_stone", "copper_drum", "choktse", "doko", "porter_load", "duffel", "tarchen", "dung_heap", "cook_set"}
+           "father_stone", "copper_drum", "choktse", "doko", "porter_load", "duffel", "tarchen", "dung_heap", "cook_set",
+           "lodge_main", "lhapso_altar", "sang_burner", "gamow_bag", "load_pack"}
 TWO_SIDED = {"tent_dome", "tent_mess", "tent_kitchen", "tent_toilet", "khata_folded", "khata_tied", "tarchen", "meat_slats"}
-ONLY = ["tent_mess", "nima_ai", "elena_ai", "marek_ai"]   # 2026-11-20 night: the windowless mess dome + the AI team (empty = all)
+ONLY = ["marek_hl", "nima_hl", "elena_hl", "pema_body_hl"]   # 2026-11-21 headless bodies for MetaHuman heads
+ONLY_R2 = ["lodge_main", "lhapso_altar", "sang_burner", "crampons", "ice_anchor", "carabiner_sling", "climbing_helmet", "load_pack",
+        "puja_offerings", "gamow_bag", "hanging_stove", "double_boots", "knit_beanie", "pema_body", "sangye_climb", "nima_climb",
+        "climber_icefall", "hale", "lama", "pasang_cook"]   # 2026-11-21 round 2 (empty = all)
 
 
 def import_file(src, dest):

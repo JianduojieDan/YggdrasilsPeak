@@ -18,15 +18,15 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
-from assets import ASSETS, BY_ID, concept_prompt  # noqa: E402
+from assets import ASSETS, BY_ID, ROUND2, concept_prompt  # noqa: E402
 
 API = "https://api.meshy.ai/openapi/v1"
 OUT = Path("F:/UE_project/YggdrasilsPeak/Downloads/ai_assets")
 JOBS = OUT / "jobs.json"
-FLOOR = 0              # 2026-11-20: last credits go to the main team (user OK: polish tonight; buys more tomorrow)
+FLOOR = 100            # 2026-11-21: new account (1,250); keep ~100 for retries
 MAX_ACTIVE = 10        # the plan's concurrent task limit
-COST = {"concept_prop": 3, "concept_char": 6, "model": 30, "rig": 5}
-IMG_MODEL = {"prop": "nano-banana", "char": "nano-banana-2"}
+COST = {"concept_prop": 3, "concept_char": 6, "concept_tex": 6, "model": 30, "rig": 5}
+IMG_MODEL = {"prop": "nano-banana", "char": "nano-banana-2", "tex": "nano-banana-2"}
 THREE_DAYS = 3 * 24 * 3600 - 3600
 
 
@@ -107,8 +107,8 @@ def ext_of(url, default):
 # ------------------------------------------------------------------ what each stage sends and keeps
 def job_concept(a):
     return ("/text-to-image", {"ai_model": IMG_MODEL[a["kind"]], "prompt": concept_prompt(a),
-                               "aspect_ratio": "3:4" if a["kind"] == "char" else "1:1"},
-            COST["concept_char" if a["kind"] == "char" else "concept_prop"])
+                               "aspect_ratio": "1:1" if a["kind"] == "prop" else "3:4"},
+            COST["concept_" + a["kind"]])
 
 
 def job_model(a, jobs):
@@ -166,6 +166,8 @@ def run(stage, ids, redo=False, dry=False):
     todo = []
     for i in ids:
         a = BY_ID[i]
+        if a["kind"] == "tex" and stage != "concept":
+            continue                                    # flat textures stop at the image
         prev = jobs.get(i, {}).get(stage)
         if prev and prev.get("status") not in ("FAILED", "CANCELED") and not redo:
             print(f"skip {i}: {stage} already {prev.get('status')}"); continue
@@ -230,10 +232,12 @@ def status():
     print("balance", balance())
 
 
-def sheet(stage="concept"):
+def sheet(stage="concept", only=None):
     from PIL import Image, ImageDraw, ImageFont
     jobs, tiles = load_jobs(), []
     for n, a in enumerate(ASSETS, 1):
+        if only and a["id"] not in only:
+            continue
         c = jobs.get(a["id"], {}).get(stage)
         if c and c.get("files"):
             p = OUT / a["id"] / (c["files"][0] if stage == "concept" else "model_thumb.png")
@@ -254,7 +258,7 @@ def sheet(stage="concept"):
         im.thumbnail((w - 8, h - 42))
         img.paste(im, (x + (w - im.width) // 2, y + 4))
         dr.text((x + 8, y + h - 32), f"{n}. {a['id']}", fill=(235, 235, 235), font=font)
-    dest = OUT / f"review_{stage}s.jpg"
+    dest = OUT / f"review_{stage}s{'_round2' if only else ''}.jpg"
     img.save(dest, quality=88)
     print(dest)
 
@@ -265,7 +269,7 @@ if __name__ == "__main__":
         sys.exit(__doc__)
     cmd, rest = args[0], [x for x in args[1:] if not x.startswith("--")]
     flags = {x for x in args[1:] if x.startswith("--")}
-    ids = [a["id"] for a in ASSETS] if rest == ["all"] else rest
+    ids = [a["id"] for a in ASSETS] if rest == ["all"] else ROUND2 if rest == ["round2"] else rest
     if cmd == "models" and rest == ["all"]:
         ids = [a["id"] for a in ASSETS]
     unknown = [] if cmd in ("sheet", "balance", "status") else [i for i in ids if i not in BY_ID]
@@ -276,7 +280,7 @@ if __name__ == "__main__":
     elif cmd == "status":
         status()
     elif cmd == "sheet":
-        sheet("model" if rest == ["models"] else "concept")
+        sheet("model" if "models" in rest else "concept", ROUND2 if "round2" in rest else None)
     elif cmd in ("concepts", "models", "rig"):
         run({"concepts": "concept", "models": "model", "rig": "rig"}[cmd], ids, "--redo" in flags, "--dry" in flags)
     else:

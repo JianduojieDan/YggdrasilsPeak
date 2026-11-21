@@ -13,6 +13,9 @@ CHAR_STYLE = ("Photoreal full-body character reference photo of {what}. Standing
               "whole body visible from head to boots, plain light grey studio background, soft even light. Realistic "
               "skin and fabric, used and weathered clothes. No props, no text, no logos.")
 
+TEX_STYLE = ("A flat, straight-on, evenly lit photograph of {what}. The cloth fills the whole frame edge to edge, no "
+             "background, no shadows, no perspective, no folds, high detail of the cotton weave and the ink.")
+
 ASSETS = [
     # ---------------------------------------------------------------- camp
     dict(id="tent_dome", kind="prop", size=2.2, tris=25000,
@@ -138,10 +141,121 @@ ASSETS = [
               "dark brown hair tied back in a low ponytail showing under a teal knit beanie, wearing a faded red rented down "
               "jacket one size too big with sleeves slightly too long, a teal fleece collar at the neck, mid-grey trekking "
               "trousers and clean new grey-and-teal hiking boots; real fabric texture, no logos"),
+
+    # ================================================================ round 2 (2026-11-21, new account, 1,250 credits)
+    # Only items with NO free Fab / Megascans / Poly Haven replacement (user rule). Characters get MetaHuman heads later
+    # (head swap), so every person is bare-headed with hair tied up off the shoulders and the collar open round the neck;
+    # hats and helmets are separate props.
+    dict(id="pema_body", kind="char", size=1.58, tris=50000,
+         what="a Sherpa woman of about 45 from the Khumbu in Nepal, black hair pulled back tightly into a small low bun, nothing "
+              "on her head, wearing a traditional dark maroon wool chuba wrap dress to the ankles, a pink silk blouse with the "
+              "collar open at the neck, a striped rainbow pangden apron with thin horizontal stripes of red, green, yellow, blue "
+              "and white tied at the waist, an old grey zip fleece open over it, a woven belt and black flat cloth shoes; worn "
+              "everyday clothes, dust at the hem, real wool and silk texture, no logos"),
+    dict(id="sangye_climb", kind="char", size=1.70, tris=50000,
+         what="a Sherpa man of about 22 from Nepal, short black hair, bare head, wearing a red down jacket with a darker patch "
+              "on the left elbow, collar open at the neck, a black climbing harness with slings and carabiners, dark grey "
+              "softshell trousers, thin black liner gloves and black-and-orange insulated double mountaineering boots with "
+              "steel crampons; used and dusty, no logos"),
+    dict(id="nima_climb", kind="char", size=1.68, tris=50000,
+         what="a Sherpa mountain guide of about 45 from Nepal, short black hair with some grey, bare head, a faded mustard-yellow "
+              "down jacket a few seasons old with charcoal shoulder panels, collar open at the neck, a climbing harness with "
+              "carabiners and a mechanical ascender, worn grey softshell trousers, black double mountaineering boots with "
+              "steel crampons, black mittens hanging on wrist cords; dirty and worn, plain unbranded fabric with no logo, no text and no badge anywhere on the jacket"),
+    dict(id="climber_icefall", kind="char", size=1.78, tris=50000,
+         what="a mountaineer in a faded orange down jacket and black insulated trousers, a climbing harness, a white climbing "
+              "helmet with a headlamp, a black neck gaiter pulled over the nose and dark goggles hiding the whole face, black "
+              "double mountaineering boots with crampons, big black mittens; dirty and worn, no logos"),
+    dict(id="hale", kind="char", size=1.68, tris=50000,
+         what="a Norwegian woman doctor of about 52, fair weather-reddened skin, ash-blond and grey hair tied back in a short low "
+              "bun, bare head, reading glasses on a cord tucked into the jacket, a slate-blue down jacket open over a grey "
+              "fleece with the collar open at the neck, dark softshell trousers, insulated brown boots, a stethoscope in a "
+              "jacket pocket; used and dusty, no logos"),
+    dict(id="lama", kind="char", size=1.66, tris=50000,
+         what="an elderly Sherpa Buddhist lama of about 60 from Nepal, calm weathered face, close-cropped grey hair, bare head, "
+              "maroon monastic robes with a saffron sleeveless shirt, a maroon shawl over the left shoulder, a thick maroon "
+              "down jacket open over the robes, old brown trekking boots; real wool texture, dust at the hem"),
+    dict(id="pasang_cook", kind="char", size=1.65, tris=50000,
+         what="a Sherpa expedition cook of about 50 from Nepal, round sun-darkened face, short black-grey hair, bare head, an old "
+              "red down vest over a faded navy fleece with the collar open, a stained white cotton apron, dark track "
+              "trousers, worn trekking shoes; dirty and used, no logos"),
+    dict(id="diki", kind="char", size=1.56, tris=50000,
+         what="a Sherpa woman of about 40 who runs a trekking lodge in the Khumbu, red wind-chapped cheeks, black hair pinned up "
+              "in a bun, nothing on her head, a dark maroon wrap dress over a pink blouse with the collar open, a striped "
+              "rainbow pangden apron, an open grey fleece, black shoes; everyday worn clothes, no logos"),
+    dict(id="lodge_main", kind="prop", size=14.0, tris=60000,
+         what="a two-storey Khumbu trekking lodge in the Nepal Himalaya, walls of rough grey dry-laid stone, small blue-painted "
+              "wooden windows with many small panes, a low-pitched faded blue corrugated tin roof weighted down with rocks, "
+              "two solar panels and a black plastic water tank on the roof, a wooden door, a stone terrace in front, no "
+              "signboard; the whole building visible"),
+    dict(id="lhapso_altar", kind="prop", size=1.6, tris=20000,
+         what="a square Sherpa puja altar (lhapso) about 1.6 metres tall built of stacked flat grey granite stones without "
+              "mortar, a soot-blackened fire niche in the front, a flat stone offering shelf on top, a short wooden pole "
+              "socket in the middle of the top, standing on grey glacier rubble"),
+    dict(id="sang_burner", kind="prop", size=1.2, tris=15000,
+         what="a Sherpa juniper incense burner: a whitewashed stone-and-clay altar about 1.2 metres tall, square, slightly "
+              "tapering, with a smoke-blackened fire bowl on top full of grey ash and a few green juniper sprigs, the "
+              "whitewash stained and flaking"),
+    dict(id="crampons", kind="prop", size=0.35, tris=12000,
+         what="a pair of steel 12-point mountaineering crampons with long front points, orange anti-balling plates under the "
+              "soles, black nylon straps with metal buckles, lying side by side, scratched and dull metal"),
+    dict(id="ice_anchor", kind="prop", size=0.3, tris=8000,
+         what="a steel tubular ice screw drilled into a small block of blue glacier ice, a bent metal hanger, a short faded "
+              "red sewn sling clipped to it with a steel carabiner, frost on the metal"),
+    dict(id="carabiner_sling", kind="prop", size=0.6, tris=8000,
+         what="a climber's safety leash: a short grey sewn nylon sling with two steel locking carabiners and a mechanical "
+              "rope ascender with a dark grey rubber handle, worn and scratched, lying flat"),
+    dict(id="climbing_helmet", kind="prop", size=0.3, tris=8000,
+         what="a scuffed white mountaineering helmet with a black headlamp strapped round it, the chin strap hanging open"),
+    dict(id="load_pack", kind="prop", size=0.85, tris=15000,
+         what="a 70-litre expedition rucksack in faded red, packed full, two orange oxygen cylinders strapped upright on the "
+              "back, a coiled rope under the lid strap, a yellow foam mat strapped on the side, dusty, standing upright"),
+    dict(id="puja_offerings", kind="prop", size=0.8, tris=15000,
+         what="a Sherpa puja offering spread on a low wooden tray covered with a white cloth: a brass bowl of roasted barley "
+              "flour, a bowl of rice, plain unlabelled beer cans, an unlabelled bottle, a packet of biscuits, apples and "
+              "oranges"),
+    dict(id="gamow_bag", kind="prop", size=2.1, tris=12000,
+         what="a portable hyperbaric chamber for altitude sickness: a 2.1 metre long red-and-grey coated nylon tube with a "
+              "clear round window at the head end, half inflated, lying on a foam mat, a foot pump with a hose beside it"),
+    dict(id="hanging_stove", kind="prop", size=0.5, tris=10000,
+         what="a compact high-altitude canister stove hanging from three thin steel cables: a tall insulated aluminium pot "
+              "with a lid on a small burner, a squat grey gas canister under it, soot and frost, no logos"),
+    dict(id="double_boots", kind="prop", size=0.4, tris=12000,
+         what="a pair of high-altitude mountaineering double boots: stiff yellow-and-black insulated shells with a gaiter "
+              "zip, grey foam inner boots half pulled out, frost on the shells, standing side by side"),
+    dict(id="flag_blue", kind="tex", size=0.3, tris=0,
+         what="a single rectangular Tibetan lungta prayer flag of thin blue cotton cloth, block-printed in black ink: a wind "
+              "horse carrying a flaming jewel in the centre, a tiger, a snow lion, a garuda and a dragon in the four corners, "
+              "and rows of worn, faded block-printed lines around them so smudged that no letter can be read; sun-faded, "
+              "frayed edges, a narrow folded hem along the top"),
+    dict(id="flag_white", kind="tex", size=0.3, tris=0,
+         what="a single rectangular Tibetan lungta prayer flag of thin white cotton cloth, block-printed in black ink: a wind "
+              "horse carrying a flaming jewel in the centre, a tiger, a snow lion, a garuda and a dragon in the four corners, "
+              "and rows of worn, faded block-printed lines around them so smudged that no letter can be read; sun-faded, "
+              "frayed edges, a narrow folded hem along the top"),
+    dict(id="flag_red", kind="tex", size=0.3, tris=0,
+         what="a single rectangular Tibetan lungta prayer flag of thin red cotton cloth, block-printed in black ink: a wind "
+              "horse carrying a flaming jewel in the centre, a tiger, a snow lion, a garuda and a dragon in the four corners, "
+              "and rows of worn, faded block-printed lines around them so smudged that no letter can be read; sun-faded, "
+              "frayed edges, a narrow folded hem along the top"),
+    dict(id="flag_green", kind="tex", size=0.3, tris=0,
+         what="a single rectangular Tibetan lungta prayer flag of thin green cotton cloth, block-printed in black ink: a wind "
+              "horse carrying a flaming jewel in the centre, a tiger, a snow lion, a garuda and a dragon in the four corners, "
+              "and rows of worn, faded block-printed lines around them so smudged that no letter can be read; sun-faded, "
+              "frayed edges, a narrow folded hem along the top"),
+    dict(id="flag_yellow", kind="tex", size=0.3, tris=0,
+         what="a single rectangular Tibetan lungta prayer flag of thin yellow cotton cloth, block-printed in black ink: a wind "
+              "horse carrying a flaming jewel in the centre, a tiger, a snow lion, a garuda and a dragon in the four corners, "
+              "and rows of worn, faded block-printed lines around them so smudged that no letter can be read; sun-faded, "
+              "frayed edges, a narrow folded hem along the top"),
+    dict(id="knit_beanie", kind="prop", size=0.25, tris=6000,
+         what="a plain cuffed knit wool beanie hat in neutral grey, ribbed knit with a folded-up cuff, no pompom, no logo, "
+              "slightly worn and pilled, shaped as if worn on a head"),
 ]
+ROUND2 = [a["id"] for a in ASSETS[ASSETS.index(next(x for x in ASSETS if x["id"] == "pema_body")):]]
 
 BY_ID = {a["id"]: a for a in ASSETS}
 
 
 def concept_prompt(a):
-    return (CHAR_STYLE if a["kind"] == "char" else PROP_STYLE).format(what=a["what"])
+    return {"char": CHAR_STYLE, "tex": TEX_STYLE}.get(a["kind"], PROP_STYLE).format(what=a["what"])

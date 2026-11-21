@@ -23,6 +23,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/SpotLightComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SceneCaptureComponent2D.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Engine/AssetManager.h"
@@ -31,8 +32,18 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/Texture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "EnhancedActionKeyMapping.h"
+#include "EnhancedInputSubsystems.h"
+#include "InputMappingContext.h"
+#include "EnhancedPlayerInput.h"
+#include "InputAction.h"
+#include "InputModifiers.h"
+#include "TextureResource.h"
+#include <limits>
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -178,7 +189,7 @@ namespace
 		case EYggView::Sit: return 78.f;
 		case EYggView::Kneel1: return 108.f;
 		case EYggView::Kneel2: return 110.f;
-		case EYggView::Crawl: return 68.f;
+		case EYggView::Crawl: return 60.f;   // (#77, was 68: closer to the sit's 78)
 		default: return 156.f;
 		}
 	}
@@ -264,6 +275,36 @@ namespace
 		if (Name.IsEmpty() || Name.Equals(TEXT("Interact"), ESearchCase::IgnoreCase)) { return YggSettings::KeyFor(TEXT("Interact"), EKeys::E); }
 		const FKey K{ FName(*Name) };
 		return K.IsValid() ? K : EKeys::E;
+	}
+
+	/** (#77) The keyboard key that walks forward: the move action's mapping that swizzles the axis onto Y without negating
+	 *  it (W in the template's IA_Move), read from the player's live Enhanced Input mappings, so a remapped key shows in the
+	 *  hints; a letter wins over the arrow keys. W when none is found. */
+	FKey StoryForwardKey(const APlayerController* PC)
+	{
+		const ULocalPlayer* LP = PC ? PC->GetLocalPlayer() : nullptr;
+		const UEnhancedInputLocalPlayerSubsystem* Sub = LP ? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LP) : nullptr;
+		const UEnhancedPlayerInput* In = Sub ? Sub->GetPlayerInput() : nullptr;
+		if (!In) { return EKeys::W; }
+		FKey Found;
+		for (const FEnhancedActionKeyMapping& M : In->GetEnhancedActionMappingsView())
+		{
+			if (!M.Action || !M.Key.IsValid() || M.Key.IsGamepadKey() || M.Key.IsMouseButton() || M.Key.IsTouch()
+				|| M.Action->ValueType != EInputActionValueType::Axis2D || !M.Action->GetName().Contains(TEXT("Move")))
+			{
+				continue;
+			}
+			bool bSwizzle = false, bNegate = false;
+			for (const UInputModifier* Mod : M.Modifiers)
+			{
+				if (const UInputModifierSwizzleAxis* S = Cast<UInputModifierSwizzleAxis>(Mod)) { bSwizzle |= S->Order == EInputAxisSwizzle::YXZ || S->Order == EInputAxisSwizzle::ZXY; }
+				else if (const UInputModifierNegate* N = Cast<UInputModifierNegate>(Mod)) { bNegate |= N->bX || N->bY; }
+			}
+			if (!bSwizzle || bNegate) { continue; }
+			const bool bArrow = M.Key == EKeys::Up;
+			if (!Found.IsValid() || (Found == EKeys::Up && !bArrow)) { Found = M.Key; }
+		}
+		return Found.IsValid() ? Found : EKeys::W;
 	}
 
 	/** Content/Story/Cast.ygs, written by Tools/Story/mh_cast (editor): person -> body, face, grooms, garment. */
@@ -356,15 +397,63 @@ namespace
 	TAutoConsoleVariable<int32> CVarStoryAuto(TEXT("ygg.Story.Auto"), 0,
 		TEXT("Testing: 1 = choices answer themselves (first option), inspects and the page close after 2 s, press prompts press themselves, so a run can play the chapter unattended."));
 	TAutoConsoleVariable<int32> CVarStoryNPCDebug(TEXT("ygg.Story.NPCDebug"), 0,
-		TEXT("Testing: 1 = every story person logs twice a second: mode, movement, speed, acceleration, the walk blueprint's GroundSpeed / ShouldMove / IsFalling, foot heights."));
+		TEXT("Testing: 1 = every story person logs twice a second: mode, movement, speed, acceleration, the walk blueprint's GroundSpeed / ShouldMove / IsFalling, foot heights, and (#84) the lower boot's sole over the drawn snow (sole=, cm, - = in it), sink= drop= trail= snow= base= fit=; 2 = also a depth capture of the real drawn surface under that boot within 30 m (solev= visgap=; a render flush each, hitches)."));
 	TAutoConsoleVariable<int32> CVarStoryNPCWalkBS(TEXT("ygg.Story.NPCWalkBS"), 1,
 		TEXT("1 = MetaHuman story people walk with BS_Idle_Walk_Run_MH played directly (feet move); 0 = the old ABP_Unarmed_MH (its foot IK pins the feet: they glide). Read when a person is dressed."));
 	TAutoConsoleVariable<int32> CVarStoryNPCPrints(TEXT("ygg.Story.NPCPrints"), 1,
 		TEXT("1 = story people's planted feet press prints into the player's snow trail map (within 60 m)."));
-	TAutoConsoleVariable<float> CVarStoryHeadlampLm(TEXT("ygg.Story.HeadlampLm"), 35.f,   // 600 burned a hard white disc into the night snow (2026-11-20)
-		TEXT("The player's story headlamp (light headlamp): lumens. Spot 25 degrees, 25 m, no shadows (spec 6.15)."));
+	TAutoConsoleVariable<float> CVarStoryHeadlampLm(TEXT("ygg.Story.HeadlampLm"), 6.f,   // 600 burned a hard white disc into the night snow (2026-11-20); 35 and 15 still clipped to a white disc ("very powerful"), 6 keeps the snow readable in the pool (2026-11-21)
+		TEXT("The player's story headlamp (light headlamp): lumens. Spot 38 degrees with a soft 16-degree centre, 25 m, low specular, no shadows (spec 6.15)."));
+	TAutoConsoleVariable<float> CVarStoryHeadlampSpec(TEXT("ygg.Story.HeadlampSpec"), 0.3f,
+		TEXT("Specular scale of the player's headlamp: 1 = full glare on wet fabric, brass and glass, 0.3 = the soft matte look (2026-11-21)."));
 	TAutoConsoleVariable<int32> CVarStoryPinPosed(TEXT("ygg.Story.PinPosed"), 1,
 		TEXT("1 = a story posture right after a cut (lie / sit / kneel) holds the climber on the cut spot (movement off until he walks or crawls), so the physics cannot push him off it; 0 = old behaviour."));
+	TAutoConsoleVariable<int32> CVarStoryNPCSoles(TEXT("ygg.Story.NPCSoles"), 1,
+		TEXT("(#84) 1 = story people's boots on the drawn snow: soles measured per body, lowered into the player's trench and their own prints (read back from the trail map) and into fresh snow by the player's sink rule; 0 = the old fixed mesh offset (6 cm over the capsule bottom), to compare."));
+	TAutoConsoleVariable<float> CVarStoryNPCSoleLift(TEXT("ygg.Story.NPCSoleLift"), 0.f,
+		TEXT("(#84) Tuning: cm the story people's soles sit above where the fit puts them (+ = higher)."));
+	TAutoConsoleVariable<float> CVarStoryNPCSoleContact(TEXT("ygg.Story.NPCSoleContact"), 1.5f,
+		TEXT("(#84) cm a story person's boot goes into snow so it clearly touches it (the player's SnowContactCm); rock and props: 0."));
+
+	/** ygg.Story.NPCDebug 2 (#84): the drawn surface's height straight under P, from a scene depth capture 4 m above it (it sees
+	 *  the Nanite displacement and the trench, which no trace does), the people and the player hidden. NaN when nothing. A
+	 *  render flush per call: testing only. */
+	double StoryNPCVisibleZ(AActor* Owner, APawn* Player, const FVector& P, double FromZ)
+	{
+		static TWeakObjectPtr<USceneCaptureComponent2D> Shared;
+		USceneCaptureComponent2D* Cap = Shared.Get();
+		if (!Cap && Owner)
+		{
+			UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(Owner);
+			RT->RenderTargetFormat = RTF_RGBA32f;
+			RT->ClearColor = FLinearColor(1e7f, 0.f, 0.f, 0.f);
+			RT->InitAutoFormat(8, 8);
+			RT->UpdateResourceImmediate(true);
+			Cap = NewObject<USceneCaptureComponent2D>(Owner, TEXT("StoryNPCSoleCapture"));
+			Cap->SetUsingAbsoluteLocation(true);
+			Cap->SetUsingAbsoluteRotation(true);
+			Cap->bCaptureEveryFrame = false;
+			Cap->bCaptureOnMovement = false;
+			Cap->CaptureSource = SCS_SceneDepth;
+			Cap->FOVAngle = 1.f;
+			Cap->TextureTarget = RT;
+			Cap->RegisterComponent();
+			Shared = Cap;
+		}
+		if (!Cap || !Cap->GetWorld()) { return std::numeric_limits<double>::quiet_NaN(); }
+		Cap->HiddenActors.Reset();
+		for (TActorIterator<AYggStoryNPC> It(Cap->GetWorld()); It; ++It) { Cap->HiddenActors.Add(*It); }
+		if (Player) { Cap->HiddenActors.Add(Player); }
+		Cap->SetWorldLocationAndRotation(FVector(P.X, P.Y, FromZ), FRotator(-90.f, 0.f, 0.f));
+		Cap->CaptureScene();
+		FTextureRenderTargetResource* Res = Cap->TextureTarget ? Cap->TextureTarget->GameThread_GetRenderTargetResource() : nullptr;
+		TArray<FLinearColor> Px;
+		if (!Res || !Res->ReadLinearColorPixels(Px) || Px.Num() < 64) { return std::numeric_limits<double>::quiet_NaN(); }
+		double D = 0.0;
+		for (int32 i : { 27, 28, 35, 36 }) { D += Px[i].R; }   // the middle 2 x 2 pixels (7 cm across at 4 m)
+		D *= 0.25;
+		return D > 1e6 ? std::numeric_limits<double>::quiet_NaN() : FromZ - D;
+	}
 }
 
 // ------------------------------------------------------------------------------------------------ NPC
@@ -390,7 +479,8 @@ AYggStoryNPC::AYggStoryNPC()
 	M->MaxStepHeight = 60.f;
 	M->SetWalkableFloorAngle(55.f);
 	M->bUseRVOAvoidance = false;
-	// stands on the drawn snow, which lies above its collision at the camps (2026-11-14 test shots)
+	// stands on the drawn snow, which lay above its collision at the camps (2026-11-14 test shots). Since 2026-11-21 (#84)
+	// only until the body is dressed: FitSoles measures each body and TickSoles puts its boots on the drawn snow
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -82.f), FRotator(0.f, -90.f, 0.f));
 	GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 	GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -419,6 +509,236 @@ void AYggStoryNPC::Dress(const FLinearColor& Tint, float Scale, bool bHood)
 	}
 	SetActorScale3D(FVector(Scale));
 	GetCharacterMovement()->MaxWalkSpeed = 190.f * FMath::Lerp(0.85f, 1.f, Scale);
+	FitSoles();
+}
+
+void AYggStoryNPC::SetStorySink(float Cm)
+{
+	StorySink = Cm;
+	AppliedMeshZ = 1e9f;
+	ApplyMeshZ();
+}
+
+void AYggStoryNPC::FitSoles()
+{
+	bSoleFit = false;
+	SoleBones[0] = SoleBones[1] = NAME_None;
+	SoleDrop = SoleNeedNow = SoleNeedLast = SoleWindowAge = 0.f;
+	SoleGroundCheck = 0.f;
+	MeshBaseZ = -82.f;
+	AppliedMeshZ = 1e9f;
+	USkeletalMeshComponent* M = GetMesh();
+	USkeletalMesh* BodyMesh = M ? M->GetSkeletalMeshAsset() : nullptr;
+	if (!BodyMesh)
+	{
+		ApplyMeshZ();
+		return;
+	}
+	// the lowest point of the body in its reference pose, or of a garment's boots under it (a stray garment vertex far
+	// below never counts: at most 8 cm under the body). Meshy and MetaHuman bodies have their soles at ~0 (glb min 0).
+	const FBoxSphereBounds B = BodyMesh->GetImportedBounds();
+	const float BodyBottom = float(B.Origin.Z - B.BoxExtent.Z);
+	float Bottom = BodyBottom;
+	for (USceneComponent* C : LookParts)
+	{
+		const USkeletalMeshComponent* G = Cast<USkeletalMeshComponent>(C);
+		if (G && G->GetName().StartsWith(TEXT("Garment")) && G->GetSkeletalMeshAsset())
+		{
+			const FBoxSphereBounds GB = G->GetSkeletalMeshAsset()->GetImportedBounds();
+			// (2026-11-21) an outfit build deletes the feet under the boots (the body's bottom is the ankle): the boots count
+			Bottom = FMath::Min(Bottom, FMath::Max(float(GB.Origin.Z - GB.BoxExtent.Z), BodyBottom > 5.f ? -5.f : BodyBottom - 8.f));
+		}
+	}
+	Bottom = FMath::Clamp(Bottom, -20.f, 20.f);
+	// the foot bones (UE mannequin / MetaHuman, the Mixamo-named climber) and the ankle over that bottom in the reference
+	// pose (FirstPersonBodyComponent::MeasureSoleHeight does the same for the player)
+	const FReferenceSkeleton& Ref = BodyMesh->GetRefSkeleton();
+	static const TCHAR* const Left[] = { TEXT("foot_l"), TEXT("LeftFoot"), TEXT("mixamorig:LeftFoot") };
+	static const TCHAR* const Right[] = { TEXT("foot_r"), TEXT("RightFoot"), TEXT("mixamorig:RightFoot") };
+	for (int32 k = 0; k < 3; ++k)
+	{
+		if (SoleBones[0].IsNone() && Ref.FindBoneIndex(FName(Left[k])) != INDEX_NONE) { SoleBones[0] = FName(Left[k]); }
+		if (SoleBones[1].IsNone() && Ref.FindBoneIndex(FName(Right[k])) != INDEX_NONE) { SoleBones[1] = FName(Right[k]); }
+	}
+	AnkleOverSoleCm = 10.f;
+	if (!SoleBones[0].IsNone())
+	{
+		const int32 Bone = Ref.FindBoneIndex(SoleBones[0]);
+		FTransform Xf = Ref.GetRefBonePose()[Bone];
+		for (int32 Parent = Ref.GetParentIndex(Bone); Parent != INDEX_NONE; Parent = Ref.GetParentIndex(Parent)) { Xf = Xf * Ref.GetRefBonePose()[Parent]; }
+		AnkleOverSoleCm = FMath::Clamp(float(Xf.GetLocation().Z) - Bottom, 3.f, 25.f);
+	}
+	SoleBottomCm = Bottom;
+	// soles on the capsule bottom (the capsule's own half height: the mesh is in capsule space, scaled with it)
+	MeshBaseZ = -GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight() - Bottom;
+	bSoleFit = true;
+	ApplyMeshZ();
+	UE_LOG(LogTemp, Display, TEXT("Story NPC %s: %s soles at %.1f cm (mesh space), ankle %s %.1f cm over them -> mesh at %.1f (was -82)"),
+		*Id.ToString(), *GetNameSafe(BodyMesh), Bottom, *SoleBones[0].ToString(), AnkleOverSoleCm, MeshBaseZ);
+}
+
+void AYggStoryNPC::ApplyMeshZ()
+{
+	USkeletalMeshComponent* M = GetMesh();
+	if (!M) { return; }
+	const float Scale = FMath::Max(float(GetActorScale3D().Z), 0.1f);
+	const bool bFit = bSoleFit && CVarStoryNPCSoles.GetValueOnGameThread() != 0;
+	// the drop is world cm; the mesh sits in the (scaled) capsule's space
+	const float Z = (bFit ? MeshBaseZ - SoleDrop / Scale : -82.f) - StorySink;
+	if (FMath::Abs(Z - AppliedMeshZ) < 0.05f) { return; }
+	FVector L = M->GetRelativeLocation();
+	L.Z = Z;
+	M->SetRelativeLocation(L);
+	AppliedMeshZ = Z;
+}
+
+void AYggStoryNPC::TickSoles(float DeltaSeconds, APawn* P)
+{
+	if (!bSoleFit || CVarStoryNPCSoles.GetValueOnGameThread() == 0 || DeltaSeconds <= 0.f)
+	{
+		ApplyMeshZ();   // a switched cvar takes the old offset back at once
+		return;
+	}
+	const FVector Me = GetActorLocation();
+	// far away no one sees the boots: the drop stays as it is (no trace, no read-back)
+	if (FVector::DistSquared2D(Me, P->GetActorLocation()) > FMath::Square(6000.f))
+	{
+		return;
+	}
+	UCharacterMovementComponent* CM = GetCharacterMovement();
+	USkeletalMeshComponent* M = GetMesh();
+	const float Scale = FMath::Max(float(GetActorScale3D().Z), 0.1f);
+	const float Half = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	USnowTrailComponent* Snow = PlayerSnow.Get();
+	if (!Snow) { Snow = P->FindComponentByClass<USnowTrailComponent>(); PlayerSnow = Snow; }
+	// what the ground is, 4x a second: one trace down the axis with the faces and materials IsSnow reads (snow, how soft)
+	SoleGroundCheck -= DeltaSeconds;
+	if (SoleGroundCheck <= 0.f)
+	{
+		SoleGroundCheck = 0.25f;
+		FHitResult H;
+		FCollisionQueryParams Q(SCENE_QUERY_STAT(StoryNPCSoles), false, this);
+		Q.bReturnPhysicalMaterial = true;
+		Q.bReturnFaceIndex = true;
+		Q.AddIgnoredActor(P);
+		bSoleSnow = GetWorld()->LineTraceSingleByChannel(H, Me, Me - FVector(0.f, 0.f, Half + 60.f), ECC_Visibility, Q) && USnowTrailComponent::IsSnow(H);
+		SoleSink = bSoleSnow && Snow ? Snow->SinkDepthFor(H) : 0.f;
+	}
+	const bool bGround = CM && CM->IsMovingOnGround() && CM->CurrentFloor.bBlockingHit && !bHover;
+	float Need = 0.f;
+	if (bGround)
+	{
+		// the collision under any point near the feet: the plane of the floor the movement stands on (no extra traces)
+		const FHitResult& F = CM->CurrentFloor.HitResult;
+		const FVector N = F.ImpactNormal.Z > 0.5f ? FVector(F.ImpactNormal) : FVector::UpVector;
+		const FVector At = F.ImpactPoint;
+		auto ColZ = [&N, &At](const FVector& X) { return float(At.Z - (N.X * (X.X - At.X) + N.Y * (X.Y - At.Y)) / N.Z); };
+		if (Snow && bSoleSnow) { Snow->RequestTrailPatch(this, Me); }
+		const float Contact = bSoleSnow ? CVarStoryNPCSoleContact.GetValueOnGameThread() : 0.f;
+		const float Lift = CVarStoryNPCSoleLift.GetValueOnGameThread();
+		// where a sole belongs: on the drawn snow (the collision plus the trench or bank drawn there), into it by the
+		// player's sink rule as far as the print or the trench under it is not that deep already
+		auto Target = [&](const FVector& Sole, float& OutTrail, bool& bOutKnown)
+		{
+			OutTrail = 0.f;
+			bOutKnown = false;
+			if (bSoleSnow && Snow) { OutTrail = Snow->TrailOffsetCm(this, Sole, &bOutKnown); }
+			const float Pit = FMath::Max(0.f, -OutTrail);
+			return ColZ(Sole) + OutTrail - Contact - FMath::Max(0.f, SoleSink - Pit) + Lift;
+		};
+		// the soles' rest height with no drop is the capsule bottom (FitSoles); now (drop applied) it is the mesh's bottom
+		const float RestNoDrop = float(Me.Z) - Half;
+		const float RestNow = float(M->GetComponentLocation().Z) + SoleBottomCm * Scale;
+		const FVector Fwd = GetActorForwardVector().GetSafeNormal2D();
+		float Best = 0.f, LowestH = 1e9f, MinAnimH = 1e9f;
+		int32 Count = 0;
+		for (int32 i = 0; i < 2; ++i)
+		{
+			if (SoleBones[i].IsNone()) { continue; }
+			const FVector Foot = M->GetSocketLocation(SoleBones[i]);
+			// the animated sole over the rest height: ~0 planted, up in the swing; a swinging boot counts with the ground under
+			// it (as the player's: the lower ground under either boot decides), a planted one at its own height
+			const float AnimH = float(Foot.Z - RestNow) - AnkleOverSoleCm * Scale;
+			MinAnimH = FMath::Min(MinAnimH, AnimH);
+			const float Resting = AnimH * (1.f - FMath::SmoothStep(2.f, 8.f, AnimH));
+			const FVector Sole = Foot + Fwd * (6.f * Scale);     // the sole's middle, in front of the ankle (SoleForwardCm)
+			float Trail;
+			bool bKnown;
+			const float TZ = Target(Sole, Trail, bKnown);
+			const float FootNeed = RestNoDrop + Resting - TZ;
+			if (Count == 0 || FootNeed > Best) { Best = FootNeed; }
+			++Count;
+			if (AnimH < LowestH)
+			{
+				// the debug log's boot: the lower one, its sole over the drawn snow under it (cm, - = in it)
+				LowestH = AnimH;
+				DbgSoleAt = Sole;
+				DbgColZ = ColZ(Sole);
+				DbgTrail = Trail;
+				bDbgTrailKnown = bKnown;
+				DbgSole = float(Foot.Z) - AnkleOverSoleCm * Scale - (DbgColZ + Trail);
+			}
+		}
+		if (Count == 0)
+		{
+			// no foot bones: the body's middle
+			float Trail;
+			bool bKnown;
+			Best = RestNoDrop - Target(Me, Trail, bKnown);
+			DbgSoleAt = Me;
+			DbgColZ = ColZ(Me);
+			DbgTrail = Trail;
+			bDbgTrailKnown = bKnown;
+			DbgSole = RestNoDrop - SoleDrop - (DbgColZ + Trail);
+		}
+		// (2026-11-21) the retargeted walks lift the Meshy bodies with speed (~0.2 cm per cm/s, 40 cm at a brisk walk): a real
+		// walk always has one boot near the ground, so the LOWER boot hanging over its rest height is the whole pose lifted -
+		// take it down by that much (the floating the user saw while the team followed)
+		if (Count >= 2 && MinAnimH > 1.f && MinAnimH < 200.f) { Best += MinAnimH - 1.f; }
+		Need = FMath::Clamp(Best, -10.f, 90.f);
+	}
+	// the deepest need over the last step (two windows of ~0.6 s): a new print appears a moment after its boot lands and is
+	// read back a moment later still, so the plain need dipped at every step and the body bobbed
+	SoleWindowAge += DeltaSeconds;
+	// (2026-11-21 review) off the snow the boots must not stay buried for the window's 1.2 s: forget it at once
+	if (!bSoleSnow && FMath::Max(SoleNeedNow, SoleNeedLast) > Need + 2.f) { SoleNeedNow = SoleNeedLast = Need; SoleWindowAge = 0.f; }
+	SoleNeedNow = FMath::Max(SoleNeedNow, Need);
+	if (SoleWindowAge > 0.6f)
+	{
+		SoleNeedLast = SoleNeedNow;
+		SoleNeedNow = Need;
+		SoleWindowAge = 0.f;
+	}
+	const float Want = bGround ? FMath::Max(SoleNeedNow, SoleNeedLast) : 0.f;
+	// down quickly (a boot never hangs over a pit for long), up gently (no pumping)
+	SoleDrop = FMath::FInterpTo(SoleDrop, Want, DeltaSeconds, Want > SoleDrop ? 8.f : (bSoleSnow ? 2.f : 9.f));
+	ApplyMeshZ();
+	OnBodyBonesFinalized();      // the face onto the neck where the body is drawn now
+}
+
+static TAutoConsoleVariable<float> CVarStoryFaceYaw(TEXT("ygg.Story.FaceYaw"), -90.f,
+	TEXT("Extra yaw (deg) for a MetaHuman face on a foreign (Meshy) body. -90 measured 2026-11-21 (0 looked sideways, +90 backwards)."));
+static TAutoConsoleVariable<float> CVarStoryFaceBack(TEXT("ygg.Story.FaceBack"), 3.f,
+	TEXT("cm the MetaHuman face sits further back on a Meshy body (its neck piece inside the collar, not in front of it)."));
+static TAutoConsoleVariable<float> CVarStoryFaceDrop(TEXT("ygg.Story.FaceDrop"), 3.f,
+	TEXT("cm the MetaHuman face sits lower on a Meshy body (its neck piece tucks into the collar)."));
+
+float AYggStoryNPC::MaxPaceCm() const
+{
+	// a Meshy body (its own retargeted walk) breaks its pose above ~150 cm/s (the chest swings over the neck, the body
+	// lifts): a brisk trekking pace is the top; MetaHumans (the mannequin's own walk) may go to the walk's end
+	return FaceFollow.IsValid() || !bMetaHumanSkeleton ? 150.f : 195.f;
+}
+
+void AYggStoryNPC::OnBodyBonesFinalized()
+{
+	USkeletalMeshComponent* F = FaceFollow.Get();
+	USkeletalMeshComponent* M = GetMesh();
+	if (!F || !M || M->GetBoneIndex(FaceNeckBone) == INDEX_NONE) { return; }
+	// the neck's world point as drawn this frame (bones x the mesh component, sole drop included), upright with the body
+	const FQuat Q = M->GetComponentQuat();
+	F->SetWorldLocationAndRotation(M->GetSocketLocation(FaceNeckBone) + Q.RotateVector(FaceNeckOffset * M->GetComponentScale()) - FVector(0.f, 0.f, CVarStoryFaceDrop.GetValueOnGameThread())
+		- GetActorForwardVector() * CVarStoryFaceBack.GetValueOnGameThread(), Q * FaceRot * FQuat(FVector::UpVector, FMath::DegreesToRadians(CVarStoryFaceYaw.GetValueOnGameThread())), false, nullptr, ETeleportType::TeleportPhysics);
 }
 
 bool AYggStoryNPC::DressAs(const FString& Look, float Scale)
@@ -435,6 +755,7 @@ bool AYggStoryNPC::DressAs(const FString& Look, float Scale)
 	(*Person)->TryGetStringField(TEXT("abp"), AbpPath);
 	if (!AbpPath.EndsWith(TEXT("_C"))) { AbpPath = StoryObjectPath(AbpPath) + TEXT("_C"); }
 	UClass* Walk = LoadClass<UAnimInstance>(nullptr, *AbpPath);
+	bMetaHumanSkeleton = AbpPath.Contains(TEXT("ABP_Unarmed_MH"));
 	// or a single held animation (the father sitting cross-legged in the snow): "anim" in the look
 	FString PosePath;
 	UAnimationAsset* Pose = ((*Person)->TryGetStringField(TEXT("anim"), PosePath) && !PosePath.IsEmpty())
@@ -464,6 +785,10 @@ bool AYggStoryNPC::DressAs(const FString& Look, float Scale)
 	// with the leader pose gets the real MetaHuman bones - garments share the body's skeleton exactly
 	USkeletalMeshComponent* M = GetMesh();
 	M->EmptyOverrideMaterials();
+	FaceFollow.Reset();
+	if (FaceFollowHandle.IsValid()) { M->UnregisterOnBoneTransformsFinalizedDelegate(FaceFollowHandle); FaceFollowHandle.Reset(); }
+	M->bComponentUseFixedSkelBounds = false;   // a foreign-body look sets these below
+	M->SetBoundsScale(1.f);
 	M->SetSkeletalMesh(Body);
 	if (Pose)
 	{
@@ -531,6 +856,160 @@ bool AYggStoryNPC::DressAs(const FString& Look, float Scale)
 			LookParts.Add(C);
 		}
 	}
+	// (2026-11-21) a MetaHuman face on another body (a headless Meshy body on the UE5-mannequin skeleton): ABP_Face copies
+	// the body's pose by bone NAME, so the face follows only the bones both skeletons have - "head" above all
+	if (Face && Face->GetSkeletalMeshAsset())
+	{
+		const FReferenceSkeleton& BodyRef = Body->GetRefSkeleton();
+		if (BodyRef.FindBoneIndex(FName(TEXT("head"))) == INDEX_NONE)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Story: look '%s' - the body %s has no 'head' bone: its MetaHuman face (ABP_Face copies the pose by bone name) cannot follow it"), *Look, *GetNameSafe(Body));
+		}
+		else
+		{
+			FString Missing;
+			for (const TCHAR* Bone : { TEXT("neck_01"), TEXT("neck_02"), TEXT("spine_05"), TEXT("spine_04") })
+			{
+				if (Face->GetSkeletalMeshAsset()->GetRefSkeleton().FindBoneIndex(FName(Bone)) != INDEX_NONE && BodyRef.FindBoneIndex(FName(Bone)) == INDEX_NONE) { Missing += FString(TEXT(" ")) + Bone; }
+			}
+			if (!Missing.IsEmpty())
+			{
+				UE_LOG(LogTemp, Display, TEXT("Story: look '%s' - the face follows the body's head; the body lacks%s, so those face bones keep their reference pose under the head's parent"), *Look, *Missing);
+			}
+			// the copy takes the head's component-space rotation as it is: a skeleton with other bone axes turns the face
+			// with it (a pose difference is a few degrees, other axes are 90 or 180)
+			auto RefCS = [](const FReferenceSkeleton& Ref, int32 Bone)
+			{
+				FTransform Xf = Ref.GetRefBonePose()[Bone];
+				for (int32 Parent = Ref.GetParentIndex(Bone); Parent != INDEX_NONE; Parent = Ref.GetParentIndex(Parent)) { Xf = Xf * Ref.GetRefBonePose()[Parent]; }
+				return Xf;
+			};
+			const FReferenceSkeleton& FaceRef = Face->GetSkeletalMeshAsset()->GetRefSkeleton();
+			const int32 FaceHead = FaceRef.FindBoneIndex(FName(TEXT("head")));
+			// (2026-11-21) a face on a foreign body (headless Meshy, UE5-mannequin skeleton: other head-bone axes, 90 deg) rides
+			// RIGIDLY on the body's head bone - copying the rotation turned the face mesh about the head and it hovered over the
+			// shoulders. Placed so its head bone sits on the body's, upright and facing the same way as in both reference
+			// poses; no ABP_Face (the face keeps its neutral reference pose).
+			if (FaceHead != INDEX_NONE && BodyRef.FindBoneIndex(FName(TEXT("neck_02"))) == INDEX_NONE)
+			{
+				const FTransform BodyHeadCS = RefCS(BodyRef, BodyRef.FindBoneIndex(FName(TEXT("head"))));
+				const FTransform FaceHeadCS = RefCS(FaceRef, FaceHead);
+				// which way each points, in its own component space: the face by its nose (in front of the head bone), the body
+				// by its "headfront" socket bone (Meshy rigs) - the MetaHuman face mesh faces another axis than the Meshy body
+				// (the faces looked 90 deg sideways)
+				FVector FaceFwd = FVector::ZeroVector, BodyFwd(0.f, 1.f, 0.f);
+				for (const TCHAR* Nose : { TEXT("FACIAL_C_NoseTip"), TEXT("FACIAL_C_Nose"), TEXT("FACIAL_C_LipUpper"), TEXT("FACIAL_C_Jaw") })
+				{
+					const int32 NI = FaceRef.FindBoneIndex(FName(Nose));
+					if (NI != INDEX_NONE) { FaceFwd = (RefCS(FaceRef, NI).GetLocation() - FaceHeadCS.GetLocation()).GetSafeNormal2D(); if (!FaceFwd.IsNearlyZero()) { break; } }
+				}
+				const int32 HF = BodyRef.FindBoneIndex(FName(TEXT("headfront")));
+				if (HF != INDEX_NONE)
+				{
+					const FVector D = (RefCS(BodyRef, HF).GetLocation() - BodyHeadCS.GetLocation()).GetSafeNormal2D();
+					if (!D.IsNearlyZero()) { BodyFwd = D; }
+				}
+				FaceRot = FaceFwd.IsNearlyZero() ? FQuat::Identity : FQuat::FindBetweenNormals(FaceFwd, BodyFwd);
+				const FTransform FaceInBody(FaceRot, BodyHeadCS.GetLocation() - FaceRot.RotateVector(FaceHeadCS.GetLocation()));
+				UE_LOG(LogTemp, Display, TEXT("Story: look '%s' - face forward %s, body forward %s -> face turned %.0f deg"), *Look, *FaceFwd.ToCompactString(), *BodyFwd.ToCompactString(),
+					FMath::RadiansToDegrees(float(FaceRot.GetAngle())));
+				// carried by the NECK (the retargeted walks move the Meshy "head" bone oddly at times: the face flew off), the
+				// neck bone named by "face_bone" in the look, default neck_01
+				// the face follows the body's NECK POSITION every frame (OnBodyBonesFinalized), upright with the body: carried by a
+				// bone (head, neck, chest) it took that bone's retargeted rotation, and the Meshy walks swing those wildly
+				const FName Carrier(*JStr(*Person, TEXT("face_bone"), TEXT("neck_01")));   // the neck: the Meshy head bone jumps ~1 m in the retargeted walks
+				const int32 CarrierIdx = BodyRef.FindBoneIndex(Carrier) != INDEX_NONE ? BodyRef.FindBoneIndex(Carrier) : BodyRef.FindBoneIndex(FName(TEXT("head")));
+				Face->SetAnimInstanceClass(nullptr);
+				Face->AttachToComponent(M, FAttachmentTransformRules::KeepRelativeTransform);
+				Face->SetRelativeTransform(FaceInBody);
+				FaceFollow = Face;
+				FaceNeckBone = BodyRef.GetBoneName(CarrierIdx);
+				FaceNeckOffset = FaceInBody.GetLocation() - RefCS(BodyRef, CarrierIdx).GetLocation();
+				FaceFollowHandle = M->RegisterOnBoneTransformsFinalizedDelegate(FOnBoneTransformsFinalizedMultiCast::FDelegate::CreateUObject(this, &AYggStoryNPC::OnBodyBonesFinalized));
+				// a headless Meshy body's auto physics asset can give it bounds away from the mesh: it got culled while its face
+				// (good bounds) still drew, floating. Fixed bounds from the mesh itself, a little larger for the stride.
+				M->bComponentUseFixedSkelBounds = true;
+				M->SetBoundsScale(3.f);
+				// face, grooms and hat cull WITH the body (a face still drew floating over a culled body)
+				Face->bUseAttachParentBound = true;
+				for (USceneComponent* C : LookParts) { if (C && C->GetAttachParent() == Face) { C->bUseAttachParentBound = true; } }
+				UE_LOG(LogTemp, Display, TEXT("Story: look '%s' - the MetaHuman face rides on the body's %s (rigid, reference pose)"), *Look, *BodyRef.GetBoneName(CarrierIdx).ToString());
+			}
+			else if (FaceHead != INDEX_NONE)
+			{
+				const FQuat A = RefCS(BodyRef, BodyRef.FindBoneIndex(FName(TEXT("head")))).GetRotation();
+				const FQuat B = RefCS(FaceRef, FaceHead).GetRotation();
+				const float Deg = FMath::RadiansToDegrees(float(A.AngularDistance(B)));
+				if (Deg > 30.f)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("Story: look '%s' - the body's head bone is turned %.0f deg from the face's in the reference pose (other bone axes?): the face will sit crooked on it"), *Look, Deg);
+				}
+			}
+		}
+	}
+	// "hat" (2026-11-21): a static mesh on the face's head bone ("hat_socket"), placed by hat_loc / hat_rot / hat_scale,
+	// coloured by hat_tint where its material has a Tint / BaseColorTint. Older looks carry "hat": true / false (the
+	// garment's own hat): no mesh then.
+	{
+		const TSharedPtr<FJsonValue> HatField = (*Person)->TryGetField(TEXT("hat"));
+		const FString HatPath = HatField.IsValid() && HatField->Type == EJson::String ? HatField->AsString() : FString();
+		if (!HatPath.IsEmpty())
+		{
+			UStaticMesh* HatMesh = LoadObject<UStaticMesh>(nullptr, *StoryObjectPath(HatPath));
+			USkinnedMeshComponent* HatParent = Face ? static_cast<USkinnedMeshComponent*>(Face) : static_cast<USkinnedMeshComponent*>(M);
+			const FName Socket(*JStr(*Person, TEXT("hat_socket"), TEXT("head")));
+			if (!HatMesh)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Story: look '%s' - hat %s not found"), *Look, *HatPath);
+			}
+			else if (!HatParent->DoesSocketExist(Socket))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Story: look '%s' - no bone or socket '%s' on %s for the hat"), *Look, *Socket.ToString(), *GetNameSafe(HatParent->GetSkinnedAsset()));
+			}
+			else
+			{
+				auto Vec3 = [&](const TCHAR* Key, const FVector& Def)
+				{
+					const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+					if ((*Person)->TryGetArrayField(Key, Arr) && Arr->Num() >= 3) { return FVector((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber()); }
+					return Def;
+				};
+				const FVector Loc = Vec3(TEXT("hat_loc"), FVector::ZeroVector);
+				const FVector Rot = Vec3(TEXT("hat_rot"), FVector::ZeroVector);
+				double Uniform = 1.0;
+				const FVector HatScale = (*Person)->TryGetNumberField(TEXT("hat_scale"), Uniform) ? FVector(Uniform) : Vec3(TEXT("hat_scale"), FVector::OneVector);
+				UStaticMeshComponent* Hat = NewObject<UStaticMeshComponent>(this, MakeUniqueObjectName(this, UStaticMeshComponent::StaticClass(), TEXT("Hat")));
+				Hat->SetStaticMesh(HatMesh);
+				Hat->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				Hat->SetGenerateOverlapEvents(false);
+				Hat->SetCanEverAffectNavigation(false);
+				Hat->SetCastShadow(true);
+				Hat->SetupAttachment(HatParent, Socket);
+				Hat->SetRelativeLocationAndRotation(Loc, FRotator(Rot.X, Rot.Y, Rot.Z));
+				Hat->SetRelativeScale3D(HatScale);
+				Hat->bUseAttachParentBound = true;     // culls with the head it sits on
+				Hat->RegisterComponent();
+				LookParts.Add(Hat);
+				const FVector Tint = Vec3(TEXT("hat_tint"), FVector(-1.f));
+				if (Tint.X >= 0.f)
+				{
+					for (int32 i = 0; i < Hat->GetNumMaterials(); ++i)
+					{
+						UMaterialInterface* Mat = Hat->GetMaterial(i);
+						if (!Mat) { continue; }
+						FName Param;
+						FLinearColor Old;
+						for (const TCHAR* Name : { TEXT("Tint"), TEXT("BaseColorTint") })
+						{
+							if (Param.IsNone() && Mat->GetVectorParameterValue(FName(Name), Old)) { Param = FName(Name); }
+						}
+						if (Param.IsNone()) { continue; }   // no tint parameter: the hat keeps its own colour
+						if (UMaterialInstanceDynamic* D = Hat->CreateAndSetMaterialInstanceDynamic(i)) { D->SetVectorParameterValue(Param, FLinearColor(Tint.X, Tint.Y, Tint.Z)); }
+					}
+				}
+			}
+		}
+	}
 	SetActorScale3D(FVector(Scale));
 	GetCharacterMovement()->MaxWalkSpeed = 190.f * FMath::Lerp(0.85f, 1.f, Scale);
 	bMetaHuman = true;
@@ -538,6 +1017,19 @@ bool AYggStoryNPC::DressAs(const FString& Look, float Scale)
 	bFeetInit = false;
 	bTickFar = false;
 	LodCheck = 0.f;
+	// (#84) soles on the drawn snow; a held pose (sitting cross-legged) keeps the old offset its "sink" was tuned against
+	if (Pose)
+	{
+		bSoleFit = false;
+		MeshBaseZ = -82.f;
+		SoleDrop = 0.f;
+		AppliedMeshZ = 1e9f;
+		ApplyMeshZ();
+	}
+	else
+	{
+		FitSoles();
+	}
 	return true;
 }
 
@@ -789,12 +1281,14 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 		{
 			// follow: the pace is chosen by TickFollow (matched to the player's, see there; 40 = its floor behind a trudge)
 			AddMovementInput(Dir, 1.f);
-			GetCharacterMovement()->MaxWalkSpeed = FMath::Max(WantSpeed, 40.f);
+			// (2026-11-21) never into the run: the retargeted jog lifts the Meshy bodies ~55 cm off the snow (the floating the
+			// user saw while they caught up), and nobody runs at 4,400 m
+			GetCharacterMovement()->MaxWalkSpeed = FMath::Clamp(WantSpeed, 40.f, MaxPaceCm());
 		}
 		else
 		{
 			AddMovementInput(Dir, FMath::Clamp(Scale, 0.2f, 1.f));
-			GetCharacterMovement()->MaxWalkSpeed = 190.f * FMath::Max(1.f, Scale) * GetActorScale3D().X;
+			GetCharacterMovement()->MaxWalkSpeed = FMath::Min(190.f * FMath::Max(1.f, Scale) * GetActorScale3D().X, MaxPaceCm());   // no run (see above)
 		}
 		GetCharacterMovement()->MaxFlySpeed = GetCharacterMovement()->MaxWalkSpeed;     // hovering (no ground) walks at the same pace
 		// stuck against a rock: hop round it (stuck = under a third of the pace asked for; a slow follower is not stuck)
@@ -858,6 +1352,7 @@ void AYggStoryNPC::Tick(float DeltaSeconds)
 	LastPos = Me;
 	TickWalkBlend(DeltaSeconds);
 	TickFeet(DeltaSeconds, P);
+	TickSoles(DeltaSeconds, P);
 	DebugLog(DeltaSeconds);
 }
 
@@ -1148,13 +1643,43 @@ void AYggStoryNPC::DebugLog(float DeltaSeconds)
 	const float FL = M && M->DoesSocketExist(TEXT("foot_l")) ? float(M->GetSocketLocation(TEXT("foot_l")).Z - Base.Z) : -999.f;
 	const float FR = M && M->DoesSocketExist(TEXT("foot_r")) ? float(M->GetSocketLocation(TEXT("foot_r")).Z - Base.Z) : -999.f;
 	const float Stride = M && M->DoesSocketExist(TEXT("foot_l")) ? float(FVector::Dist2D(M->GetSocketLocation(TEXT("foot_l")), M->GetSocketLocation(TEXT("foot_r")))) : -1.f;
-	UE_LOG(LogTemp, Display, TEXT("NPCDbg %s mode=%d move=%d hover=%d vel=%.0f acc=%.0f maxwalk=%.0f anim=%s mode=%d GroundSpeed=%s ShouldMove=%s IsFalling=%s footL=%.1f footR=%.1f stride=%.0f tickopt=%d rendered=%d blend=%d stamps=%d stopped=%d cursor=%d dist=%.0f want=%.0f err=%.0f yield=%d steer=%.0f yaw=%.0f pace=%.0f"),
+	// (#84) the lower boot: sole = its sole over the drawn snow under it (collision + the read-back trench, cm, - = in it),
+	// sink = the player's sink rule there, drop = how far the body is lowered for it, trail = the trench (- ) or bank (+)
+	// drawn there (? = not read back yet), snow = the ground is snow, base = the mesh's fitted offset. NPCDebug 2 adds a
+	// depth capture of the real drawn surface (render flush, testing only): solev = the sole over it, visgap = it minus
+	// (collision + trail), the part of the drawn snow the fit does not know about (the tiles' own displacement).
+	FString Soles = FString::Printf(TEXT(" sole=%.1f sink=%.1f drop=%.1f trail=%.1f%s snow=%d base=%.1f fit=%d"), DbgSole, SoleSink, SoleDrop, DbgTrail,
+		bDbgTrailKnown ? TEXT("") : TEXT("?"), int32(bSoleSnow), MeshBaseZ, int32(bSoleFit && CVarStoryNPCSoles.GetValueOnGameThread() != 0));
+	// (2026-11-21) a MetaHuman face on a foreign body: how far its head bone is from where the body's neck puts it, and the
+	// face's own rendering (a face drew floating over a body that did not)
+	for (USceneComponent* C : LookParts)
+	{
+		USkeletalMeshComponent* F = Cast<USkeletalMeshComponent>(C);
+		if (!F || !F->GetName().StartsWith(TEXT("Face")) || !M) { continue; }
+		const FVector FHead = F->GetSocketLocation(TEXT("head"));
+		const FVector BNeck = M->DoesSocketExist(TEXT("neck_01")) ? M->GetSocketLocation(TEXT("neck_01")) : M->GetComponentLocation();
+		const FVector Off = FHead - GetActorLocation();
+		Soles += FString::Printf(TEXT(" faceoff=%.0f,%.0f,%.0f facegap=%.0f facez=%.0f neckz=%.0f actz=%.0f facerend=%d attach=%s"), float(Off.X), float(Off.Y), float(Off.Z), float(FVector::Dist(FHead, BNeck)), float(FHead.Z - GetActorLocation().Z),
+			float(BNeck.Z - GetActorLocation().Z), float(GetActorLocation().Z), int32(F->WasRecentlyRendered(0.5f)), *F->GetAttachSocketName().ToString());
+		break;
+	}
+	APawn* DbgPlayer = UGameplayStatics::GetPlayerPawn(this, 0);
+	if (CVarStoryNPCDebug.GetValueOnGameThread() >= 2 && bSoleFit && DbgPlayer && FVector::Dist2D(GetActorLocation(), DbgPlayer->GetActorLocation()) < 3000.f)
+	{
+		const double Vis = StoryNPCVisibleZ(this, DbgPlayer, DbgSoleAt, DbgColZ + 400.0);
+		if (!FMath::IsNaN(Vis))
+		{
+			const double SoleZ = DbgColZ + DbgTrail + DbgSole;
+			Soles += FString::Printf(TEXT(" solev=%.1f visgap=%.1f"), float(SoleZ - Vis), float(Vis - (DbgColZ + DbgTrail)));
+		}
+	}
+	UE_LOG(LogTemp, Display, TEXT("NPCDbg %s mode=%d move=%d hover=%d vel=%.0f acc=%.0f maxwalk=%.0f anim=%s mode=%d GroundSpeed=%s ShouldMove=%s IsFalling=%s footL=%.1f footR=%.1f stride=%.0f tickopt=%d rendered=%d blend=%d stamps=%d stopped=%d cursor=%d dist=%.0f want=%.0f err=%.0f yield=%d steer=%.0f yaw=%.0f pace=%.0f%s"),
 		*Id.ToString(), int32(Mode), CM ? int32(CM->MovementMode) : -1, int32(bHover), GetVelocity().Size2D(), CM ? CM->GetCurrentAcceleration().Size2D() : -1.f,
 		CM ? CM->MaxWalkSpeed : -1.f, A ? *A->GetClass()->GetName() : TEXT("none"), M ? int32(M->GetAnimationMode()) : -1,
 		*Num(TEXT("GroundSpeed")), *Num(TEXT("ShouldMove")), *Num(TEXT("IsFalling")), FL, FR, Stride,
 		M ? int32(M->VisibilityBasedAnimTickOption) : -1, M ? int32(M->WasRecentlyRendered(0.5f)) : -1, int32(bBlendWalk), Stamps, int32(bFollowStopped), TrailCursor,
 		UGameplayStatics::GetPlayerPawn(this, 0) ? float(FVector::Dist2D(GetActorLocation(), UGameplayStatics::GetPlayerPawn(this, 0)->GetActorLocation())) : -1.f, FollowSpeed,
-		FollowErr, int32(bFollowYield), SteerYaw, float(GetActorRotation().Yaw), LeaderPace);
+		FollowErr, int32(bFollowYield), SteerYaw, float(GetActorRotation().Yaw), LeaderPace, *Soles);
 }
 
 // ------------------------------------------------------------------------------------------------ overlay
@@ -1356,7 +1881,8 @@ int32 UYggStoryOverlay::NativePaint(const FPaintArgs& Args, const FGeometry& G, 
 	}
 	if (HintA > 0.01f && !Hint.IsEmpty())
 	{
-		Text(L + 2, Hint, YggUI::SerifInfo(int32(15 * U)), YggUI::WithA(YggUI::Mist, HintA), FVector2f(S.X * 0.5f, S.Y * 0.93f));
+		const FLinearColor HintColour = FMath::Lerp(YggUI::Mist, YggUI::Snow, FMath::Clamp(HintGlow, 0.f, 1.f));
+		Text(L + 2, Hint, YggUI::SerifInfo(int32(15 * U)), YggUI::WithA(HintColour, HintA), FVector2f(S.X * 0.5f, S.Y * 0.93f));
 		if (HoldProgress >= 0.f)
 		{
 			const float W = 160.f * U;
@@ -1989,7 +2515,14 @@ void UYggStorySubsystem::UpdatePendingTeleport(float Dt)
 
 FString UYggStorySubsystem::Expand(const FString& Text) const
 {
-	return Text.Replace(TEXT("{day}"), *FString::FromInt(Day));
+	FString Out = Text.Replace(TEXT("{day}"), *FString::FromInt(Day));
+	// (#77) the keys a chapter writes as the defaults show the player's own: [W] the key that walks forward (Enhanced
+	// Input), [E] read / use, [Q] the compass (the rebindable ones in the settings)
+	const ESearchCase::Type Cs = ESearchCase::CaseSensitive;
+	if (Out.Contains(TEXT("[W]"), Cs)) { Out.ReplaceInline(TEXT("[W]"), *FString::Printf(TEXT("[%s]"), *YggSettings::KeyName(StoryForwardKey(PC()))), Cs); }
+	if (Out.Contains(TEXT("[E]"), Cs)) { Out.ReplaceInline(TEXT("[E]"), *YggSettings::KeyLabel(TEXT("Interact"), EKeys::E), Cs); }
+	if (Out.Contains(TEXT("[Q]"), Cs)) { Out.ReplaceInline(TEXT("[Q]"), *YggSettings::KeyLabel(TEXT("Compass"), EKeys::Q), Cs); }
+	return Out;
 }
 
 float UYggStorySubsystem::StoryDt(float DeltaTime) const
@@ -2065,6 +2598,7 @@ void UYggStorySubsystem::Tick(float DeltaTime)
 	TickTweens(Dt);
 	TickHand(Dt);
 	TickHints(Dt);
+	TickPoseHint(Dt);
 	TickLights(Dt);
 	TickInspect(Dt);
 	UpdatePendingTeleport(Dt);
@@ -2736,8 +3270,8 @@ float UYggStorySubsystem::DoAction(FRun& Run, const TSharedPtr<FJsonObject>& A)
 				{
 					N->Dress(Col, JNum(A, TEXT("scale"), 1.f), JBool(A, TEXT("hood"), false));
 				}
-				const float Sink = JNum(A, TEXT("sink"), 0.f);
-				if (Sink > 0.f) { N->GetMesh()->AddRelativeLocation(FVector(0.f, 0.f, -Sink)); }
+				// set, not added (a second spawn of the same person went deeper each time); the soles fit (#84) keeps it
+				N->SetStorySink(FMath::Max(JNum(A, TEXT("sink"), 0.f), 0.f));
 			}
 		}
 		else if (N && Where(JStr(A, TEXT("at")), At, &Rot))
@@ -3663,6 +4197,79 @@ void UYggStorySubsystem::TickHints(float Dt)
 	}
 }
 
+void UYggStorySubsystem::TickPoseHint(float Dt)
+{
+	if (!Overlay) { return; }
+	UYggViewRigComponent* R = RigCache.Get();
+	APawn* P = Player();
+	// the line is someone else's now (a story hint, a hold), or ours has faded out: not ours any more
+	if (bPoseHintOwned && (Overlay->Hint != PoseHintText || (!IsTweening(Overlay->HintA) && Overlay->HintA <= 0.01f))) { bPoseHintOwned = false; }
+	if (Overlay->HintGlow > 0.f && (Overlay->Hint != PoseHintText || (!IsTweening(Overlay->HintA) && Overlay->HintA <= 0.01f))) { Overlay->HintGlow = 0.f; }
+	// what a held move key does now; nothing to say behind closed eyelids or the black
+	const bool bEyesOpen = CurrentLid() < 0.05f && Overlay->Black < 0.05f;
+	if (!bEyesOpen) { PoseEyesOpenSince = -1.0; }
+	else if (PoseEyesOpenSince < 0.0) { PoseEyesOpenSince = Clock; }
+	const uint8 Step = R && P && bEyesOpen ? R->GetMoveHintStep() : 0;
+	if (Step != PoseHintStep)
+	{
+		// sat up, crawling, standing: the old step's words go at once
+		if (bPoseHintOwned) { Tween(Overlay->HintA, 0.f, 0.4f); bPoseHintOwned = false; }
+		PoseHintStep = Step;
+		PoseHintSince = Clock;
+		PoseHintShows = 0;
+		PoseHintShownAt = -100.0;
+		CrawlStillSince = -1.0;
+	}
+	if (Step == 0) { return; }
+	// the key is held: it works, so the words step aside
+	if (R->IsMoveHeld())
+	{
+		if (bPoseHintOwned) { Tween(Overlay->HintA, 0.f, 0.4f); bPoseHintOwned = false; }
+		CrawlStillSince = -1.0;
+		return;
+	}
+	// crawling: only once the crawl has stopped (the key let go) for 3 s
+	if (Step == 3)
+	{
+		if (P->GetVelocity().SizeSquared2D() > FMath::Square(5.f)) { CrawlStillSince = -1.0; return; }
+		if (CrawlStillSince < 0.0) { CrawlStillSince = Clock; }
+	}
+	// out of the way of everything else on screen: the story's own hint, a hand to hold, a choice, a prompt, a card, a title
+	if (bPoseHintOwned || Overlay->HintA > 0.05f || IsTweening(Overlay->HintA) || bHandActive || bChoiceOpen || Overlay->PressA > 0.05f
+		|| Overlay->InspectA > 0.05f || Overlay->PageA > 0.05f || Overlay->TitleA > 0.05f || R->IsInspecting())
+	{
+		return;
+	}
+	const double Settled = FMath::Max(PoseHintSince, PoseEyesOpenSince);
+	bool bShow = false, bStrong = false;
+	if (PoseHintShows == 0)
+	{
+		// the first time: lying 2 s with the eyes open (the wake-up lands first), sitting 2.5 s after the sit-up holds,
+		// crawling 3 s after it stopped
+		bShow = Step == 3 ? Clock - CrawlStillSince >= 3.0 : Clock - Settled >= (Step == 1 ? 2.0 : 2.5);
+	}
+	else if (PoseHintShows < 6)
+	{
+		// again: brighter after 25 s without any input (asleep at the keys), plain every 30 s for one who looks round
+		// and does not find the way out
+		bStrong = Clock - FMath::Max(LastInputAt, PoseHintShownAt) >= 25.0;
+		bShow = bStrong || Clock - PoseHintShownAt >= 30.0;
+	}
+	if (!bShow) { return; }
+	const FString Key = YggSettings::KeyName(StoryForwardKey(PC()));
+	PoseHintText = Step == 1 ? FString::Printf(TEXT("Hold  [%s]  to sit up"), *Key) : FString::Printf(TEXT("Hold  [%s]  to crawl out"), *Key);
+	CancelTween(Overlay->HintA);
+	Overlay->Hint = PoseHintText;
+	Overlay->HoldProgress = -1.f;
+	Overlay->HintGlow = bStrong ? 1.f : 0.f;
+	// a pulse like the story's hints: in over a fifth, held, out over the last fifth
+	Tween(Overlay->HintA, 1.f, bStrong ? 9.f : 6.f, true);
+	bPoseHintOwned = true;
+	++PoseHintShows;
+	PoseHintShownAt = Clock;
+	UE_LOG(LogTemp, Display, TEXT("Story: posture hint '%s' (%s, show %d)"), *PoseHintText, Step == 1 ? TEXT("lying") : Step == 2 ? TEXT("sitting, exit") : TEXT("crawl stopped"), PoseHintShows);
+}
+
 void UYggStorySubsystem::SetLight(const FString& Name, bool bOn, float Seconds)
 {
 	const FName Key(*Name);
@@ -3686,8 +4293,9 @@ void UYggStorySubsystem::SetLight(const FString& Name, bool bOn, float Seconds)
 				Headlamp->SetRelativeLocation(FVector(4.f, 0.f, 6.f));
 				Headlamp->SetIntensityUnits(ELightUnits::Lumens);
 				Headlamp->SetIntensity(CVarStoryHeadlampLm.GetValueOnGameThread());
-				Headlamp->SetOuterConeAngle(34.f);     // a soft hot spot fading out wide, like a real LED headlamp on snow
-				Headlamp->SetInnerConeAngle(4.f);
+				Headlamp->SetOuterConeAngle(38.f);     // a soft centre fading out wide, like a real LED headlamp on snow;
+				Headlamp->SetInnerConeAngle(16.f);     // 4 deg made a hot spot that lit whatever was held up (the compass) like a lamp
+				Headlamp->SetSpecularScale(CVarStoryHeadlampSpec.GetValueOnGameThread());
 				Headlamp->SetSourceRadius(3.f);
 				Headlamp->SetAttenuationRadius(2500.f);
 				Headlamp->SetCastShadows(false);

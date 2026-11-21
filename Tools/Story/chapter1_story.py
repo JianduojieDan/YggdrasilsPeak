@@ -204,7 +204,7 @@ beat("dolma_calls", {"after": "dawn", "any": [{"after": "duffel", "delay": 3}, {
      {"say": "Sangye-dai! Sangye-dai, they are waiting for you!", "who": "Dolma", "at": "dolma_spot", "t": 4, "wait": False},
      {"wait": 0.25}, {"reflex": "tent_door", "deg": 10},
      {"wait": 3.75},
-     {"hint": "[W]  crawl out", "idle": 15, "t": 6})
+     {"hint": "Hold  [W]  to crawl out", "idle": 15, "t": 6})
 
 # ------------------------------------------------------------------ the farewell: Dolma's hand, the aunt's khata (card 7)
 # Standing up outside is the reveal of the camp; Dolma runs into your view. Dolma and the aunt each get their own spot

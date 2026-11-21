@@ -131,7 +131,7 @@ namespace
 		if (N == TEXT("crawl")) { return uint8(EYggView::Crawl); }
 		return 255;
 	}
-	FString Clock(double S)
+	FString PlayBotClock(double S)
 	{
 		const int32 T = FMath::Max(0, FMath::RoundToInt(S));
 		return T >= 3600 ? FString::Printf(TEXT("%d:%02d:%02d"), T / 3600, (T / 60) % 60, T % 60) : FString::Printf(TEXT("%d:%02d"), T / 60, T % 60);
@@ -223,7 +223,7 @@ FString UYggPlayBot::Status() const
 	for (const FBotBeat& B : Beats) { Fired += B.bFired ? 1 : 0; }
 	static const TCHAR* PhaseNames[] = { TEXT("idle"), TEXT("waiting for the player"), TEXT("playing"), TEXT("quitting") };
 	return FString::Printf(TEXT("%s, %s, game %s, beats %d/%d, target %s%s, aim %s, teleports %d, stuck events %d"),
-		PhaseNames[uint8(Phase)], *Chapter, *Clock(GameT), Fired, Beats.Num(), *BeatName(NavBeat), bRouteMode ? TEXT(" (route)") : TEXT(""),
+		PhaseNames[uint8(Phase)], *Chapter, *PlayBotClock(GameT), Fired, Beats.Num(), *BeatName(NavBeat), bRouteMode ? TEXT(" (route)") : TEXT(""),
 		*BeatName(AimBeat), Teleports, Stucks.Num());
 }
 
@@ -238,7 +238,7 @@ bool UYggPlayBot::GetLookFeed(double HoldS, float& OutYawRate, float& OutPitchRa
 void UYggPlayBot::Note(const FString& Text)
 {
 	if (Events.Num() < 3000) { Events.Add({ GameT, Text }); }
-	UE_LOG(LogYggBot, Display, TEXT("Bot %s: %s"), *Clock(GameT), *Text);
+	UE_LOG(LogYggBot, Display, TEXT("Bot %s: %s"), *PlayBotClock(GameT), *Text);
 }
 
 // ------------------------------------------------------------------------------------------------ the chapter
@@ -481,7 +481,7 @@ void UYggPlayBot::OnStoryLine(const FString& Full, bool bWarning)
 	if (Line.StartsWith(TEXT("CamRec: INCIDENT")))
 	{
 		++CamRecLogIncidents;
-		if (CamRecLines.Num() < 30) { CamRecLines.Add(FString::Printf(TEXT("%s  %s"), *Clock(GameT), *Line.Mid(8).Left(220))); }
+		if (CamRecLines.Num() < 30) { CamRecLines.Add(FString::Printf(TEXT("%s  %s"), *PlayBotClock(GameT), *Line.Mid(8).Left(220))); }
 		return;
 	}
 	if (bWarning)
@@ -1173,7 +1173,7 @@ FString UYggPlayBot::BuildReport(bool bFinal) const
 	S.Appendf(TEXT("- **Result:** %s\n"), bFinal ? *EndWhy : TEXT("still running (progress report, rewritten every 60 s)"));
 	S.Appendf(TEXT("- Beats fired: %d / %d\n"), Fired, Beats.Num());
 	S.Appendf(TEXT("- Game time %s, real time %s; started %s (local), seed %d (ygg.Bot.Seed %d repeats the camera stress)\n"),
-		*Clock(GameT), *Clock(Real), *(StartUtc + (FDateTime::Now() - FDateTime::UtcNow())).ToString(TEXT("%Y-%m-%d %H:%M:%S")), Seed, Seed);
+		*PlayBotClock(GameT), *PlayBotClock(Real), *(StartUtc + (FDateTime::Now() - FDateTime::UtcNow())).ToString(TEXT("%Y-%m-%d %H:%M:%S")), Seed, Seed);
 	S.Appendf(TEXT("- Teleports by the bot: %d (stuck) + %d (beat cap); story put-backs: %d; other jumps of the climber (story cuts, respawns): %d\n"),
 		Teleports - CapTeleports, CapTeleports, PutBacks, Jumps);
 	if (!bFinal) { S.Appendf(TEXT("- Now: %s\n"), *Status()); }
@@ -1184,7 +1184,7 @@ FString UYggPlayBot::BuildReport(bool bFinal) const
 		FString Info;
 		if (B.bForcedLook) { Info += TEXT("fired without the look; "); }
 		if (B.bCapTeleported) { Info += TEXT("cap teleport; "); }
-		if (B.bDone && B.bFired) { Info += FString::Printf(TEXT("done %s; "), *Clock(B.DoneGame)); }
+		if (B.bDone && B.bFired) { Info += FString::Printf(TEXT("done %s; "), *PlayBotClock(B.DoneGame)); }
 		if (B.bSkipped) { Info += TEXT("**skipped**: ") + B.SkipWhy; }
 		else if (!B.bFired)
 		{
@@ -1193,7 +1193,7 @@ FString UYggPlayBot::BuildReport(bool bFinal) const
 		}
 		if (B.bFired)
 		{
-			S.Appendf(TEXT("| %d | %s | %s | %s | %s | %s | %.1f | %.0f | %s |\n"), i + 1, *B.Id, *Clock(B.FiredGame), *Clock(B.FiredReal), *B.FiredPlace,
+			S.Appendf(TEXT("| %d | %s | %s | %s | %s | %s | %.1f | %.0f | %s |\n"), i + 1, *B.Id, *PlayBotClock(B.FiredGame), *PlayBotClock(B.FiredReal), *B.FiredPlace,
 				*PlayBotCm(B.FiredPos), B.FiredDist >= 0.f ? B.FiredDist / 100.f : -1.f, B.SegFps, *Info);
 		}
 		else
@@ -1206,7 +1206,7 @@ FString UYggPlayBot::BuildReport(bool bFinal) const
 	else
 	{
 		S.Append(TEXT("| Game | Target beat | Player at (cm) | Target (m) | What the bot did |\n|---|---|---|---|---|\n"));
-		for (const FBotStuck& St : Stucks) { S.Appendf(TEXT("| %s | %s | %s | %.0f | %s |\n"), *Clock(St.Game), *St.Beat, *PlayBotCm(St.Pos), St.Dist / 100.f, *St.Action); }
+		for (const FBotStuck& St : Stucks) { S.Appendf(TEXT("| %s | %s | %s | %.0f | %s |\n"), *PlayBotClock(St.Game), *St.Beat, *PlayBotCm(St.Pos), St.Dist / 100.f, *St.Action); }
 	}
 	S.Append(TEXT("\n## FPS\n\n"));
 	if (Frames > 0 && FrameSum > 0.0)
@@ -1220,7 +1220,7 @@ FString UYggPlayBot::BuildReport(bool bFinal) const
 			TArray<FBotHitch> H = Hitches;
 			H.Sort([](const FBotHitch& A, const FBotHitch& B) { return A.Ms > B.Ms; });
 			S.Append(TEXT("\nWorst hitches (after the first 15 s):\n\n| Game | ms | Player at (cm) | Target beat |\n|---|---|---|---|\n"));
-			for (const FBotHitch& X : H) { S.Appendf(TEXT("| %s | %.0f | %s | %s |\n"), *Clock(X.Game), X.Ms, *PlayBotCm(X.Pos), *X.Beat); }
+			for (const FBotHitch& X : H) { S.Appendf(TEXT("| %s | %.0f | %s | %s |\n"), *PlayBotClock(X.Game), X.Ms, *PlayBotCm(X.Pos), *X.Beat); }
 		}
 	}
 	else { S.Append(TEXT("No frames recorded.\n")); }
@@ -1252,7 +1252,7 @@ FString UYggPlayBot::BuildReport(bool bFinal) const
 	S.Appendf(TEXT("\n## Event log (%d)\n\n```\n"), Events.Num());
 	const int32 First = FMath::Max(0, Events.Num() - 400);
 	if (First > 0) { S.Appendf(TEXT("... %d earlier events left out\n"), First); }
-	for (int32 i = First; i < Events.Num(); ++i) { S.Appendf(TEXT("%8s  %s\n"), *Clock(Events[i].Game), *Events[i].Text); }
+	for (int32 i = First; i < Events.Num(); ++i) { S.Appendf(TEXT("%8s  %s\n"), *PlayBotClock(Events[i].Game), *Events[i].Text); }
 	S.Append(TEXT("```\n\nThe engine log of this run: Saved/Logs/Bot.log (or %LOCALAPPDATA%/UnrealEngine/5.8/Saved/Logs/Bot.log). Bot lines start with \"Bot \".\n"));
 	return FString(S.ToView());
 }

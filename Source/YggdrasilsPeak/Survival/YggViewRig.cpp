@@ -1530,11 +1530,13 @@ void UYggViewRigComponent::TickPosture(float Dt)
 			}
 			else if (!bCrawlFallback && Clock - CrawlSince > CrawlFallbackSec)
 			{
-				// 90 s without reaching the exit: a blink, and the climber stands at the exit behind the lids
+				// CrawlFallbackSec (20 s since #77, was 90) without reaching the exit: a blink, and the climber stands at the
+				// exit behind the lids
 				bCrawlFallback = true;
 				const FVector Dest = ExitPos;
 				const float Yaw = Norm(CrawlDir.Rotation().Yaw);
-				SetLids(-2, EYggLidMode::Blink, BlinkCloseSec, 0.f, [this, Dest, Yaw]()
+				const float After = CrawlFallbackSec;
+				SetLids(-2, EYggLidMode::Blink, BlinkCloseSec, 0.f, [this, Dest, Yaw, After]()
 				{
 					ACharacter* Ch = Char.Get();
 					if (!Ch) { return; }
@@ -1542,13 +1544,29 @@ void UYggViewRigComponent::TickPosture(float Dt)
 					Ch->TeleportTo(Dest + FVector(0.f, 0.f, Half + 5.f), FRotator(0.f, Yaw, 0.f), false, false);
 					Cut();
 					HardReset(FRotator(0.f, Yaw, 0.f), EYggView::Walk);
-					Repair(TEXT("crawl: the exit was not reached in 90 s, teleported there behind a blink"), EYggLease::Move);
+					Repair(FString::Printf(TEXT("crawl: the exit was not reached in %.0f s, teleported there behind a blink"), After), EYggLease::Move);
 				});
 			}
 		}
 		break;
 	default:
 		break;
+	}
+}
+
+uint8 UYggViewRigComponent::GetMoveHintStep() const
+{
+	// the cases where a held move key does nothing (TickPosture's bMoveIn) have nothing to say either
+	if (HasLease(EYggLease::Move) || bInspect || HasLease(EYggLease::Inspect) || Scripted != EYggScripted::None || bFlyActive || bFlyWaiting)
+	{
+		return 0;
+	}
+	switch (View)
+	{
+	case EYggView::Lie: return Phase == EPhase::Holding ? 1 : 0;
+	case EYggView::Sit: return bHasExit && Phase == EPhase::Holding && !bPending ? 2 : 0;
+	case EYggView::Crawl: return bHasExit && Phase != EPhase::Leaving ? 3 : 0;
+	default: return 0;
 	}
 }
 
@@ -1636,11 +1654,17 @@ void UYggViewRigComponent::TickBob(float Dt)
 	const bool bClimbing = Climb && Climb->IsClimbing();
 	if (View == EYggView::Crawl && Phase != EPhase::Leaving)
 	{
-		// a small hand-plant dip every 40 cm
-		const float Z = -CrawlDipCm * 0.5f * (1.f - FMath::Cos(2.f * PI * CrawlTravel / FMath::Max(CrawlDipEveryCm, 1.f)));
+		// a small hand-plant dip every 40 cm; (#77) with it the head surges forward and back and nods down with each plant,
+		// and sways once per two plants (left hand, right hand), all faded in with the crawl's speed (still = still)
+		const float Phi = 2.f * PI * CrawlTravel / FMath::Max(CrawlDipEveryCm, 1.f);
+		const float Z = -CrawlDipCm * 0.5f * (1.f - FMath::Cos(Phi));
+		CrawlAmp = FMath::FInterpTo(CrawlAmp, FMath::Clamp(Speed2D / FMath::Max(CrawlSpeedCmS, 1.f), 0.f, 1.f), Dt, 4.f);
+		const float K = CrawlAmp * Scale;
 		BobZ = FMath::FInterpTo(BobZ, Z * Scale, Dt, 40.f);
-		BobY = FMath::FInterpTo(BobY, 0.f, Dt, 10.f);
+		BobY = FMath::FInterpTo(BobY, CrawlSwayCm * FMath::Sin(0.5f * Phi) * K, Dt, 20.f);
 		BobRoll = FMath::FInterpTo(BobRoll, 0.f, Dt, 10.f);
+		CrawlSurge = FMath::FInterpTo(CrawlSurge, CrawlSurgeCm * FMath::Sin(Phi) * K, Dt, 20.f);
+		CrawlNod = FMath::FInterpTo(CrawlNod, -CrawlNodDeg * 0.5f * (1.f - FMath::Cos(Phi)) * K, Dt, 20.f);
 	}
 	else if (View == EYggView::Walk && bOnGround && !bClimbing)
 	{
@@ -1686,6 +1710,13 @@ void UYggViewRigComponent::TickBob(float Dt)
 		BobZ = FMath::FInterpTo(BobZ, 0.f, Dt, 6.f);
 		BobY = FMath::FInterpTo(BobY, 0.f, Dt, 6.f);
 		BobRoll = FMath::FInterpTo(BobRoll, 0.f, Dt, 6.f);
+	}
+	if (View != EYggView::Crawl || Phase == EPhase::Leaving)
+	{
+		// (#77) out of the crawl (standing up at the door): its rhythm settles
+		CrawlAmp = FMath::FInterpTo(CrawlAmp, 0.f, Dt, 6.f);
+		CrawlSurge = FMath::FInterpTo(CrawlSurge, 0.f, Dt, 6.f);
+		CrawlNod = FMath::FInterpTo(CrawlNod, 0.f, Dt, 6.f);
 	}
 	// the eyes hold a point 10 m ahead steady
 	BobPitch = -FMath::RadiansToDegrees(FMath::Atan(BobZ / FMath::Max(FixationCm, 100.f)));
@@ -1846,7 +1877,7 @@ void UYggViewRigComponent::ComposeEye(float Dt)
 	E += Fwd * (WaistLeanFwdCm * Wl) - FVector::UpVector * (WaistLeanDownCm * Wl);
 	// (bug #72) the clearance below is tested against the eye without the step bob, breathing and landing dip (tested with
 	// them, every step pumped the push)
-	const FVector BobMove = FVector::UpVector * (BobZ + BreathZ + LandZ) + Right * BobY;
+	const FVector BobMove = FVector::UpVector * (BobZ + BreathZ + LandZ) + Right * BobY + Fwd * CrawlSurge;
 	E += BobMove;
 	E += Fwd * TakeLoc.X + Right * TakeLoc.Y + FVector::UpVector * TakeLoc.Z;
 
@@ -2064,7 +2095,7 @@ void UYggViewRigComponent::ComposeViewOffsets(float Dt)
 	const float LeanWant = TurnLeanK > 0.f && View == EYggView::Walk
 		? FMath::Clamp(TurnLeanK * TurnRate * FMath::Clamp(Speed2D / 230.f, 0.f, 1.f), -TurnLeanMaxDeg, TurnLeanMaxDeg) : 0.f;
 	TurnLean = ExpTo(TurnLean, LeanWant, TurnLeanTau, Dt);
-	ViewPitchOff = BobPitch + BreathPitch + LandNod + NodX + HangP + SwayP + ShivP + ShakeP + GazeBend + float(TakeRot.Pitch);
+	ViewPitchOff = BobPitch + BreathPitch + LandNod + NodX + HangP + SwayP + ShivP + ShakeP + GazeBend + CrawlNod + float(TakeRot.Pitch);
 	ViewYawOff = SwayY + ShivY + ShakeY + float(TakeRot.Yaw);
 	ViewRollOff = BobRoll + TurnLean + float(TakeRot.Roll);
 }
@@ -3192,6 +3223,7 @@ void UYggViewRigComponent::HardReset(const FRotator& Facing, EYggView Pose)
 	NodX = NodV = 0.f;
 	BobAmp = 0.f;
 	BobZ = BobY = BobRoll = BobPitch = 0.f;
+	CrawlSurge = CrawlNod = CrawlAmp = 0.f;
 	LastStepTime = LastRealStepTime = Clock;
 	SlopeFwdSm = SlopeDownSm = 0.f;
 	PackStoop = View == EYggView::Walk ? FMath::Clamp((FeedPackKg - PackFromKg) * PackCmPerKg, 0.f, PackMaxCm) : 0.f;

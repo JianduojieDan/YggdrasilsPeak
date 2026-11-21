@@ -24,7 +24,7 @@ while todo:
 
 cast_file = f"{ROOT}/Content/Story/Cast.ygs"
 cast = json.load(open(cast_file, encoding="utf-8"))
-for who in [w for w in ("nima_ai", "elena_ai", "marek_ai") if w in info]:   # dolma/father/sangye done 2026-11-19 (father_ai keeps its sitting "anim")
+for who in [w for w in ("marek_hl", "nima_hl", "elena_hl", "pema_body_hl") if w in info]:   # 2026-11-21 headless bodies (round 2 chars done earlier)   # round 2 (2026-11-21); nima_ai/elena_ai/marek_ai done 2026-11-20   # dolma/father/sangye done 2026-11-19 (father_ai keeps its sitting "anim")
     mesh = unreal.load_asset(info[who]["mesh"])
     D = f"/Game/Story/AI/{who}/Anims"
     rig_path = f"{D}/IK_{who}"

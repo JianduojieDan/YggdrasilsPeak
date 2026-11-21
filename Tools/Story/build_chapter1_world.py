@@ -158,7 +158,7 @@ def far_z(x, y):
             o = 20 + jlen + 8 + bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
             pos = array.array("f"); pos.frombytes(data[o:o + acc["count"] * 12])
             n = int(round(math.sqrt(acc["count"])))
-            C = 1196616.96                                       # Tools/Terrain/place_far_terrain.py
+            C = 1196616.96                                       # Tools/Terrain/place_far_terrain (the dot-p-y file)
             x0, y0 = C + acc["min"][0] * 100.0, C + acc["min"][2] * 100.0
             step = (acc["max"][0] - acc["min"][0]) * 100.0 / (n - 1)
             _FAR = (n, pos[1::3], x0, y0, step)                  # glTF (x, Z, y) in metres
@@ -235,6 +235,11 @@ HMI = lambda k: unreal.load_asset(f"{HD}/Materials/MI_H_{k}")
 def cyl(o, yaw, x, y, z, d, h, mi, folder="Story/Ch1/Room", pitch=0.0, tags=(), shadow=True):
     return spawn(CYL, local(o, yaw, x, y, z), R(0, pitch, yaw), (d / 100.0, d / 100.0, h / 100.0), MI(mi), tags, folder, shadow=shadow)
 
+FLAGCLOTH = unreal.load_asset("/Game/Environment/Flags/SM_PrayerFlagCloth")          # 2026-11-21 (Tools/Story/prayer_flags_setup)
+FLAGCLOTH_MI = [unreal.load_asset(f"/Game/Environment/Flags/MI_PrayerFlagCloth_{c}") for c in ("blue", "white", "red", "green", "yellow")]
+if not FLAGCLOTH or not all(FLAGCLOTH_MI): FLAGCLOTH = None
+FLAG_T = [[] for _ in range(5)]
+FLAG_RNG = random.Random(611)   # own stream: the flag jitter must not shift the random layouts after it
 FLAG_SAG_MAX = 45.0   # cm. (audit 2026-11-19) 12 % of the span hung the camp flags at eye level and sank the memorial ones
 CORD_SEGMENTS = 8     # the cord follows the same curve as the flags (one straight rod floated 1.2 m off the poles)
 def flag_line(p0, p1, n, size=(23.0, 38.0), folder="Story/Ch1/Flags", sag=0.12):   # printed lungta texture is ~0.6 wide:tall (2026-11-20)
@@ -250,7 +255,16 @@ def flag_line(p0, p1, n, size=(23.0, 38.0), folder="Story/Ch1/Flags", sag=0.12):
     for i in range(n):
         t = (i + 0.5) / n
         p = on_cord(t)
-        spawn(FLAG, p - V(0, 0, size[1] * 0.5), R(90, 0, yaw + 90), (size[0] / 100.0, size[1] / 100.0, 1), FLAGMI[i % 5], (), folder, collide=False)
+        if FLAGCLOTH:
+            # 2026-11-21 (#6): cloth cards hung by their top centre ON the cord (pivot = sewn edge), following the cord's
+            # slope, each a little twisted and of its own size; HISM instances (one actor for every line), the wind
+            # flutter is in the material (stronger toward the free edge, its own phase per instance)
+            slope = math.degrees(math.atan2(-4 * drop * (1 - 2 * t), max(1.0, L)))
+            s_ = FLAG_RNG.uniform(0.92, 1.06)
+            FLAG_T[i % 5].append(unreal.Transform(p - V(0, 0, 0.6), R(FLAG_RNG.uniform(-5, 5), slope * 0.85, yaw + FLAG_RNG.uniform(-14, 14)),
+                                                  V(size[0] / 100.0 * s_, 1.0, size[1] / 100.0 * s_ * FLAG_RNG.uniform(0.95, 1.05))))
+        else:
+            spawn(FLAG, p - V(0, 0, size[1] * 0.5), R(90, 0, yaw + 90), (size[0] / 100.0, size[1] / 100.0, 1), FLAGMI[i % 5], (), folder, collide=False)
 
 def route(leg):
     data = json.load(open(f"{ROOT}/Tools/RoutePlanning/route.json"))
@@ -556,6 +570,29 @@ try:
     bag_back = min(bag_a["x"] - BAG[0] * 0.5 * bag_a["s"], bag_b["x"] - BAG[0] * 0.5 * bag_b["s"])
     lamp = fit(tent_item("headlamp", bag_back - 10, 0, 1, 30, 1.0, AIINFO["headlamp"]["size_cm"]))
     bottle = fit(tent_item("water_bottle", bag_a["x"] - 25, bag_a["y"] - BAG[1] * 0.5 * bag_a["s"] - 16, 1, 0, 1.0, AIINFO["water_bottle"]["size_cm"]))
+    # 2026-11-21 (#85, user: "there's nothing inside that tent"): the night before his first carry - the red load pack
+    # packed and standing against the father's side wall, his double boots and crampons by the door on his own side (off
+    # the crawl line, which runs from his pillow to the middle of the door), the helmet on the pack, his beanie on his bag,
+    # the father's glacier glasses on the duffel. Everything fitted to the fabric like the rest.
+    HL_ = AIINFO["tent_dome"]["size_cm"][0] * 0.5 * SS
+    keep_side = lambda v: (lambda it: v)
+    EXTRA = []
+    if "load_pack" in AIINFO:
+        pack = fit(tent_item("load_pack", HL_ * 0.12, BAG[1] * 0.9 * BAG_S + 34, 0.5, 80, 1.0, AIINFO["load_pack"]["size_cm"]), keep_y=keep_side(70.0))
+        EXTRA.append(("load_pack", pack, None))
+        if "climbing_helmet" in AIINFO:
+            hel = tent_item("climbing_helmet", pack["x"] + 4, pack["y"] - 2, pack["z"] + AIINFO["load_pack"]["size_cm"][2] * pack["s"] - 3, 20, 1.0,
+                            AIINFO["climbing_helmet"]["size_cm"])
+            EXTRA.append(("climbing_helmet", fit(hel, move=False, min_frac=0.85), None))
+    if "double_boots" in AIINFO:
+        boots = fit(tent_item("double_boots", HL_ * 0.52, -78, 0.3, 10, 1.0, AIINFO["double_boots"]["size_cm"]), keep_y=keep_side(62.0))
+        EXTRA.append(("double_boots", boots, None))
+    if "crampons" in AIINFO:
+        cr = fit(tent_item("crampons", HL_ * 0.30, -92, 0.3, -25, 1.0, AIINFO["crampons"]["size_cm"]), keep_y=keep_side(70.0))
+        EXTRA.append(("crampons", cr, None))
+    if "knit_beanie" in AIINFO:
+        bn = fit(tent_item("knit_beanie", bag_a["x"] - 55 * bag_a["s"] / BAG_S, bag_a["y"] + 18, 13, 30, 0.95, AIINFO["knit_beanie"]["size_cm"]), move=False)
+        EXTRA.append(("knit_beanie", bn, tint("knit_beanie", "maroon", (0.55, 0.14, 0.12)) if "knit_beanie" in AIINFO else None))
     # the tent's floor (the snow showed through the dome's own): the hexagon as a middle slab and two diamonds to the ends
     D = 48 * SS * math.sqrt(2.0)
     floors = [fit(tent_item("floor_mid", 0, 0, 0.2, 0, 1.0, (84 * SS, 128 * SS, 0.8)), move=False, min_frac=0.5),
@@ -588,9 +625,46 @@ spawn(PLANE, tl(duf["x"] - 5 * ps, duf["y"] - 6 * ps, FL + duf_top + 1), R(0, 0,
 spawn(AI("headlamp"), tl(lamp["x"], lamp["y"], FL + lamp["z"]), R(0, 0, SYAW + lamp["yaw"]), (lamp["s"],) * 3, None, (), "Story/Ch1/Tent", collide=False)
 spawn(AI("water_bottle"), tl(bottle["x"], bottle["y"], FL + bottle["z"]), R(0, 0, SYAW + bottle["yaw"]), (bottle["s"],) * 3, None, (), "Story/Ch1/Tent",
       collide=False)
-# dawn through orange fabric: a soft warm fill inside (shadowed, so nothing leaks onto the snow outside)
-light(unreal.PointLight, tl(0, 0, 63 * SS), R(0, 0, 0), 7.0, (255, 196, 150, 255), 220 * SS / 1.5, ("tentlight",), shadows=True,
-      folder="Story/Ch1/Tent")
+for _n, _it, _mat in EXTRA:
+    spawn(AI(_n), tl(_it["x"], _it["y"], FL + _it["z"]), R(0, 0, SYAW + _it["yaw"]), (_it["s"],) * 3, _mat, (), "Story/Ch1/Tent", collide=False)
+if "glacier_glasses" in AIINFO:   # the father's glasses on his duffel, beside the photo
+    spawn(AI("glacier_glasses"), tl(duf["x"] + 9 * duf["s"] / 0.8, duf["y"] + 7 * duf["s"] / 0.8, FL + duf["z"] + AIINFO["duffel"]["size_cm"][2] * duf["s"] - 1),
+          R(0, 0, SYAW + 70), (1, 1, 1), None, (), "Story/Ch1/Tent", collide=False)
+# (#77) the way out reads at a glance: cool daylight leaks through the closed door's zip line - a small rect light just
+# inside the door panel, aimed into the tent. (2026-11-21) Reach 85 cm, not 260: the tent fabric does not block it (even
+# shadowed), so at 260 it lit the snow round the tent and cut a hard straight edge along its plane outside the door (#73/#74)
+# and made the whole tent glow; 85 cm stays inside the tent's width (snow beside the door is ~85 cm off).
+# At 85 cm it still showed through the fabric as a round hot spot on the outside -> OFF. The way out is told by the posture
+# hints ("Hold ... to crawl out", YggStory TickPoseHint) instead. Kept here, hidden, in case a fabric that blocks light comes.
+_door_in = tl(AIINFO["tent_dome"]["size_cm"][0] * 0.5 * SS - 18, 0, FL + 55)
+_dl = light(unreal.RectLight, _door_in, R(0, 0, SYAW + 180), 8.0, (205, 222, 255, 255), 85, ("tentdoorlight",), shadows=True, folder="Story/Ch1/Tent")
+if _dl: _dl.light_component.set_editor_property("visible", False)
+# the tent's own light (2026-11-21, user: "the interior is very shiny - make a light inside the tent and leave some
+# shadows"): was a 7.0 point light in the middle of the dome, every wall the same distance from it -> evenly bright like
+# daylight, one hard shadow. Now a small lamp hung from the apex loop, aimed down: a wide soft cone onto the bags and the
+# gear, the upper walls left to the bounce (darker), soft shadows, little shine on the nylon. Same tag, so the story's
+# show/hide tentlight still drives it. Tools/Story/tent_lamp.py does the same to the built level.
+# Hung in the door half (a third of the way to the door, under the fabric), aimed down and back across the bags: straight
+# over the bags it lit the held compass from above and the dial glowed (Tools/Story/tent_lamp_move does this to the level).
+_tl = light(unreal.SpotLight, tl(AIINFO["tent_dome"]["size_cm"][0] * 0.5 * SS * 0.33, 0, AIINFO["tent_dome"]["size_cm"][2] * SS * 0.944 - 20),
+            R(0, -62, SYAW + 180), 4.0, (255, 200, 158, 255), 260,
+            ("tentlight",), shadows=True, folder="Story/Ch1/Tent")
+if _tl:
+    _c = _tl.light_component
+    _c.set_editor_property("outer_cone_angle", 68.0); _c.set_editor_property("inner_cone_angle", 22.0)
+    _c.set_editor_property("source_radius", 2.5); _c.set_editor_property("specular_scale", 0.35)
+    # lighting channels (2026-11-21): the lamp on channel 2 only, the tent and its contents on 0 + 2, so the held compass
+    # (channels 0 + 1) is not lit by it - its dial facing the lamp glowed like a light (Tools/Story/tent_lamp_channels)
+    def _chn(a_, b_, c_):
+        lc_ = unreal.LightingChannels()
+        lc_.set_editor_property("channel0", a_); lc_.set_editor_property("channel1", b_); lc_.set_editor_property("channel2", c_)
+        return lc_
+    _c.set_editor_property("lighting_channels", _chn(False, False, True))
+    _tent_owner = TC.get_owner() if TC else None
+    for _a in EAS.get_all_level_actors():
+        if str(_a.get_folder_path()) == "Story/Ch1/Tent" or _a == _tent_owner:
+            for _pc in _a.get_components_by_class(unreal.PrimitiveComponent):
+                _pc.set_editor_property("lighting_channels", _chn(True, False, True))
 place("tent_duffel", tl(duf["x"], duf["y"], FL + duf["z"] + 0.5 * AIINFO["duffel"]["size_cm"][2] * duf["s"]), 0)
 
 # ---------------------------------------------------------------- the tent's places, aimed for the camera (Chapter1_Camera_Spec 8.4-8.6, 10.2)
@@ -966,17 +1040,103 @@ def wall(a, b, courses=3, ruin=0.0, thick=False):
             s += sl * random.uniform(0.78, 0.9)
 
 
+# 2026-11-21 (user: the stone-by-stone walls were hollow - stones floating over stones - and far too neat): the walls are
+# now scanned dry-stone wall sections (free Megascans, Tools/Story/import_fab_2026_11_21 -> Saved/Fab_2026_11_21.json),
+# whose stones really rest on each other. Each wall line bows a little and wanders, every section has its own length,
+# height, lean and burial, some sections have slumped (low, with their fallen stones at the foot), and the field
+# corners are not square. The old stone-by-stone wall() stays only as the fallback when the scans are missing.
+FAB = {}
+try:
+    FAB = json.load(open(f"{ROOT}/Saved/Fab_2026_11_21.json"))
+except Exception:
+    pass
+SCAN_KINDS = [k for k in ("wall_mossy1", "wall_mossy2", "wall_jp1", "wall_jp2") if k in FAB]
+if SCAN_KINDS:
+    SCAN_ACT, SCAN_C = hism_actor("Ch1_KharkaWallScans", [(FAB[k]["mesh"], FAB[k]["mi"]) for k in SCAN_KINDS])
+    SCAN_T = [[] for _ in SCAN_C]
+n_sections = {"placed": 0, "gap": 0, "slumped": 0}
+
+
+def scan_wall(a, b, h_lo=0.8, h_hi=1.1, slump=0.12, bow=60.0):
+    """a dry-stone wall of scanned sections from camp-frame point a to b: bowed, wandering, uneven, partly slumped"""
+    A, B = at(*a), at(*b)
+    d = B - A; L = d.length(); u = d / L; n_ = V(-u.y, u.x, 0)
+    amp = random.uniform(-bow, bow)                       # the whole line bows to one side
+    s = random.uniform(-40, 0)
+    while s < L:
+        k = random.randrange(len(SCAN_C))
+        c, bmin, bsz = SCAN_C[k]
+        sx = random.uniform(0.82, 1.12)
+        seg = bsz.x * sx * random.uniform(0.86, 0.94)     # sections overlap a little: no daylight between them
+        t0, t1 = max(0.0, s / L), min(1.0, (s + seg) / L)
+        tm = 0.5 * (t0 + t1)
+        off = amp * math.sin(math.pi * tm) + random.uniform(-10, 10)
+        p0 = A + u * (t0 * L) + n_ * (amp * math.sin(math.pi * t0))
+        p1 = A + u * (t1 * L) + n_ * (amp * math.sin(math.pi * t1))
+        pm = A + u * (tm * L) + n_ * off
+        g0, g1, gm = ok_spot(p0, 40.0), ok_spot(p1, 40.0), ok_spot(pm, 40.0)
+        if g0 is None or g1 is None or gm is None:        # a path, a tent or an object: the wall has a gap here
+            n_sections["gap"] += 1; s += seg; continue
+        dir_ = (p1 - p0); dir_.z = 0
+        yaw = math.degrees(math.atan2(dir_.y, dir_.x)) + random.uniform(-3, 3)
+        flip = random.random() < 0.5
+        slumped = random.random() < slump
+        sz = random.uniform(0.42, 0.58) if slumped else random.uniform(h_lo, h_hi)
+        sy = random.uniform(0.9, 1.15)
+        span = max(1.0, (p1 - p0).length())
+        pitch = max(-9.0, min(9.0, math.degrees(math.atan2(g1.z - g0.z, span))))
+        lean = random.uniform(-3.5, 3.5)
+        zb = min(g0.z, g1.z, gm.z) - random.uniform(8, 16)  # buried a hand deep, never standing on a corner
+        yw = yaw + (180.0 if flip else 0.0)
+        ctr = V((bmin.x + bsz.x * 0.5) * sx, (bmin.y + bsz.y * 0.5) * sy, 0)
+        cs, sn = math.cos(math.radians(yw)), math.sin(math.radians(yw))
+        loc = V(pm.x - (ctr.x * cs - ctr.y * sn), pm.y - (ctr.x * sn + ctr.y * cs), zb - bmin.z * sz)
+        SCAN_T[k].append(unreal.Transform(loc, R(lean, pitch if not flip else -pitch, yw), V(sx, sy, sz)))
+        n_sections["placed"] += 1
+        if slumped:                                       # the stones that fell out lie at its foot, half sunk
+            n_sections["slumped"] += 1
+            for _ in range(random.randint(3, 6)):
+                side = random.choice((-1, 1))
+                q = pm + u * random.uniform(-seg * 0.4, seg * 0.4) + n_ * side * random.uniform(35, 80)
+                gq = ok_spot(q, 20.0)
+                if gq is not None:
+                    sz_ = random.uniform(22, 40)
+                    stone(q.x, q.y, gq.z - sz_ * 0.25, sz_, sz_ * random.uniform(0.65, 0.9), sz_ * random.uniform(0.45, 0.6),
+                          random.uniform(0, 360), 0, pitch=random.uniform(-20, 20), roll=random.uniform(-20, 20))
+        s += seg
+
+
+def jit(p, r=120.0):
+    return (p[0] + random.uniform(-r, r), p[1] + random.uniform(-r, r))
+
+
 # the camp's field: back wall behind the kitchen and the toilet, side walls past the flag poles, a front wall the paths cut
 FB, FF, FL, FR = -2450.0, 1350.0, -2550.0, 2650.0
-for a_, b_ in (((FB, FL), (FB, FR)), ((FB, FR), (FF, FR)), ((FF, FR), (FF, FL)), ((FF, FL), (FB, FL))):
-    wall(a_, b_, thick=True)
-# the neighbours' fields: lower, older walls (some upper stones tumbled)
-for a_, b_ in (((FB, FL), (FB, -6200)), ((FB, -6200), (FF, -6200)), ((FF, -6200), (FF, FL)),        # left
-               ((FB, FR), (FB, 6000)), ((FB, 6000), (FF + 300, 6000)),                              # right
-               ((FB, FL), (-5600, FL)), ((-5600, -6200), (-5600, FR)), ((FB, FR), (-5600, FR)),    # behind
-               ((FF, FL), (FF + 2600, FL - 200)), ((FF + 2600, FL - 200), (FF + 2600, -6200)),    # front left
-               ((FF, FR), (FF + 2800, FR + 150)), ((FF + 2800, FR + 150), (FF + 2800, 6000))):   # front right
-    wall(a_, b_, courses=2, ruin=0.25)
+if SCAN_KINDS:
+    c1, c2, c3, c4 = jit((FB, FL)), jit((FB, FR)), jit((FF, FR)), jit((FF, FL))
+    for a_, b_ in ((c1, c2), (c2, c3), (c3, c4), (c4, c1)):
+        scan_wall(a_, b_, 0.85, 1.15, 0.08)
+    # the neighbours' fields: lower, older walls, more of them slumped
+    o = {k: jit(v, 200.0) for k, v in {"bl": (FB, -6200), "fl": (FF, -6200), "br": (FB, 6000), "fr": (FF + 300, 6000),
+                                        "bbl": (-5600, -6200), "bbr": (-5600, FR), "bbm": (-5600, FL), "flf": (FF + 2600, FL - 200),
+                                        "flo": (FF + 2600, -6200), "frf": (FF + 2800, FR + 150), "fro": (FF + 2800, 6000)}.items()}
+    for a_, b_ in ((c1, o["bl"]), (o["bl"], o["fl"]), (o["fl"], c4), (c2, o["br"]), (o["br"], o["fr"]),
+                   (c1, o["bbm"]), (o["bbl"], o["bbr"]), (c2, o["bbr"]), (c4, o["flf"]), (o["flf"], o["flo"]),
+                   (c3, o["frf"]), (o["frf"], o["fro"])):
+        scan_wall(a_, b_, 0.6, 0.95, 0.22, 90.0)
+    for (cc, ts) in zip(SCAN_C, SCAN_T):
+        if ts: cc[0].add_instances(ts, False, True)
+    print("kharka scan walls:", n_sections)
+else:
+    for a_, b_ in (((FB, FL), (FB, FR)), ((FB, FR), (FF, FR)), ((FF, FR), (FF, FL)), ((FF, FL), (FB, FL))):
+        wall(a_, b_, thick=True)
+    # the neighbours' fields: lower, older walls (some upper stones tumbled)
+    for a_, b_ in (((FB, FL), (FB, -6200)), ((FB, -6200), (FF, -6200)), ((FF, -6200), (FF, FL)),        # left
+                   ((FB, FR), (FB, 6000)), ((FB, 6000), (FF + 300, 6000)),                              # right
+                   ((FB, FL), (-5600, FL)), ((-5600, -6200), (-5600, FR)), ((FB, FR), (-5600, FR)),    # behind
+                   ((FF, FL), (FF + 2600, FL - 200)), ((FF + 2600, FL - 200), (FF + 2600, -6200)),    # front left
+                   ((FF, FR), (FF + 2800, FR + 150)), ((FF + 2800, FR + 150), (FF + 2800, 6000))):   # front right
+        wall(a_, b_, courses=2, ruin=0.25)
 
 # clearance piles: the stones picked off the fields, heaped in the corners
 for f_, p_ in ((FB + 150, FL + 160), (FB + 140, FR - 170), (-4200, -4300), (-4300, 4400), (FF - 170, -4300)):
@@ -1492,6 +1652,21 @@ except Exception as e:
 check("nothing blocks the waking climber's capsule at tent_start", _ov_ok and not _blk,
       (f"capsule r {_cr_:.0f} / half {_ch_:.0f} cm ({_cs_}); " + ("clear" if not _blk else "blocked by " + "; ".join(_blk)))
       if _ov_ok else "overlap test failed: unverified")
+
+# the prayer-flag cloth cards of every flag line: one actor, one HISM per colour (2026-11-21, #6)
+if FLAGCLOTH and any(FLAG_T):
+    _fa = EAS.spawn_actor_from_class(unreal.Actor, CAMP)
+    _fa.set_actor_label("Ch1_PrayerFlags"); _fa.set_folder_path("Story/Ch1/Flags"); _fa.tags = ["Ch1"]
+    _root = SUBO.k2_gather_subobject_data_for_instance(_fa)[0]
+    for _k, _ts in enumerate(FLAG_T):
+        if not _ts: continue
+        _h, _ = SUBO.add_new_subobject(unreal.AddNewSubobjectParams(parent_handle=_root, new_class=unreal.HierarchicalInstancedStaticMeshComponent))
+        _c = SDBL.get_object(SDBL.get_data(_h))
+        _c.set_static_mesh(FLAGCLOTH); _c.set_material(0, FLAGCLOTH_MI[_k])
+        _c.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+        _c.set_editor_property("cast_shadow", True)
+        _c.add_instances(_ts, False, True)
+    print("prayer flags (cloth, HISM):", [len(t) for t in FLAG_T])
 
 for a in EAS.get_all_level_actors():
     if a.get_actor_label() == "WorldTree_Flags" and "worldtree_flags" not in [str(t) for t in a.tags]:

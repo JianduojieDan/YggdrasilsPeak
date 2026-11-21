@@ -198,6 +198,27 @@ public:
 	/** Softness (0 hard .. 1 deep powder) of the snow the player is standing on, 0 when not on snow. */
 	float GetGroundSoftness() const { return GroundSoftness; }
 
+	/** How far the player's body sinks into the ground of this hit (cm): MaxSinkCm x SnowSoftness, x CampSinkMultiplier
+	 *  while the player is in camp; 0 when it is not the mountain's snow (IsSnow). Story people sink by the same rule. */
+	float SinkDepthFor(const FHitResult& Ground) const;
+
+	// ---- the drawn trench read back on the CPU (2026-11-21, #84: story people floated over the player's trail)
+
+	/** The drawn snow against its collision at Location (cm: < 0 a print or the trench pushed it down, > 0 a bank of the
+	 *  snow pushed out beside it), the way the landscape material draws it from TrailSoftMap (M_EverestLandscape_TrailDisp:
+	 *  at most 18 cm deep, 7 cm banks, faded out towards the map's edge). The map lives on the GPU: small patches of it are
+	 *  read back a few frames late, only round the places asked for with RequestTrailPatch. bOutKnown = false when no
+	 *  fresh patch covers Location (0 is returned then). 0 and known while the trail is off. Rock and bare ice are the
+	 *  caller's business (the material draws no trench there: IsSnow). Who's own patch is looked at first. */
+	float TrailOffsetCm(const UObject* Who, const FVector& Location, bool* bOutKnown = nullptr) const;
+
+	/** Keeps a patch of the trail map round Location read back for Who (~2.4 m square): re-read every TrailPatchEverySec,
+	 *  sooner once Location nears its edge; forgotten 2 s after Who last asked. At most MaxTrailPatches askers at once. */
+	void RequestTrailPatch(const UObject* Who, const FVector& Location);
+
+	static constexpr int32 MaxTrailPatches = 10;
+	static constexpr float TrailPatchEverySec = 0.15f;
+
 	// ---- Footstep sounds (one per foot plant, chosen by the surface under the foot)
 	/** Soft / wind-packed snow. Empty = Ultra Dynamic Sky's Snow_Compress recordings. */
 	UPROPERTY(EditAnywhere, Category="Snow Trail|Footsteps")
@@ -407,4 +428,22 @@ private:
 	float TargetSink = 0.f;
 	float CurrentSink = 0.f;
 	float SinkCheckTimer = 0.f;
+
+	/** One patch of TrailSoftMap being read back (GPU readback + results; defined in the .cpp, shared with the render thread). */
+	struct FTrailPatch;
+	struct FTrailPatchSlot
+	{
+		TWeakObjectPtr<const UObject> Who;
+		TSharedPtr<FTrailPatch, ESPMode::ThreadSafe> Patch;
+		/** Where and when Who last asked. */
+		FVector2D AskedFor = FVector2D::ZeroVector;
+		double AskedAt = -100.0;
+	};
+	TArray<FTrailPatchSlot> TrailPatches;
+	/** Hands finished readbacks over, polls the ones in flight and sends new copies (after the trail map is drawn). */
+	void TickTrailPatches();
+	/** Lets a patch go on the render thread (its readback is an RHI resource that a queued command may still use). */
+	static void ReleaseTrailPatch(TSharedPtr<FTrailPatch, ESPMode::ThreadSafe>& Patch);
+	/** Bumped whenever the trail map is cleared or rescaled (footprint quality): older patches no longer describe it. */
+	int32 TrailMapEpoch = 0;
 };

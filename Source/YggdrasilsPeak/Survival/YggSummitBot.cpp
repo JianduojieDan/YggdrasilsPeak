@@ -83,7 +83,7 @@ namespace
 			if (UYggSummitBot* Bot = World ? World->GetSubsystem<UYggSummitBot>() : nullptr) { Bot->StopRun(TEXT("stopped (ygg.Bot.Summit.Stop)")); }
 		}));
 
-	FString Clock(double S)
+	FString SummitBotClock(double S)
 	{
 		const int32 T = FMath::Max(0, FMath::RoundToInt(S));
 		return T >= 3600 ? FString::Printf(TEXT("%d:%02d:%02d"), T / 3600, (T / 60) % 60, T % 60) : FString::Printf(TEXT("%d:%02d"), T / 60, T % 60);
@@ -185,7 +185,7 @@ void UYggSummitBot::StopRun(const FString& Why)
 
 void UYggSummitBot::Note(const FString& Text)
 {
-	const FString L = FString::Printf(TEXT("%s  %s"), *Clock(GameT), *Text);
+	const FString L = FString::Printf(TEXT("%s  %s"), *SummitBotClock(GameT), *Text);
 	if (Events.Num() < 2000) { Events.Add(L); }
 	UE_LOG(LogYggSummitBot, Display, TEXT("SummitBot %s"), *L);
 }
@@ -320,7 +320,7 @@ void UYggSummitBot::Tick(float DeltaTime)
 			DeathCause = Sv->GetDeathCause().ToString();
 			MoveDir = FVector::ZeroVector;
 			Note(FString::Printf(TEXT("DEATH at %.0f m a.s.l., %.0f m along: %s (%s after the start of the climb%s)"), DeathElev, S / 100.f, *DeathCause,
-				*Clock(UpStartT >= 0.0 ? GameT - UpStartT : 0.0), StayStartT >= 0.0 ? *FString::Printf(TEXT(", %s after stopping at the summit"), *Clock(GameT - StayStartT)) : TEXT("")));
+				*SummitBotClock(UpStartT >= 0.0 ? GameT - UpStartT : 0.0), StayStartT >= 0.0 ? *FString::Printf(TEXT(", %s after stopping at the summit"), *SummitBotClock(GameT - StayStartT)) : TEXT("")));
 		}
 		if (GameT - DeathT > 3.5 && !Shots.ContainsByPredicate([](const FShot& X) { return X.Stage == TEXT("death"); })) { Shot(TEXT("death"), true); }
 		if (GameT - DeathT > 5.0) { Finish(FString::Printf(TEXT("died: %s"), *DeathCause)); }
@@ -379,8 +379,8 @@ void UYggSummitBot::Tick(float DeltaTime)
 			MoveDir = FVector::ZeroVector;
 			if (Sv) { Sv->SetSprintRequested(false); }
 			if (OffRopeFrom >= 0.f) { OffRope.Add(FVector2D(OffRopeFrom, S / 100.f)); OffRopeFrom = -1.f; }
-			Note(FString::Printf(TEXT("SUMMIT reached after %s game time (%s real), %.0f m along, %.0f m a.s.l."), *Clock(SummitT - UpStartT),
-				*Clock(SummitReal - UpStartReal), S / 100.f, Sv ? Sv->GetSnapshot().ElevationMeters : 0.f));
+			Note(FString::Printf(TEXT("SUMMIT reached after %s game time (%s real), %.0f m along, %.0f m a.s.l."), *SummitBotClock(SummitT - UpStartT),
+				*SummitBotClock(SummitReal - UpStartReal), S / 100.f, Sv ? Sv->GetSnapshot().ElevationMeters : 0.f));
 			Phase = EPhase::Summit;
 			PhaseT = 0.0;
 			SummitStep = 0;
@@ -407,7 +407,7 @@ void UYggSummitBot::Tick(float DeltaTime)
 		if (S <= FMath::Max(0.f, DownStartS - DownM * 100.f) + 100.f || S <= 200.f)
 		{
 			DownEndT = GameT;
-			Note(FString::Printf(TEXT("down %.0f m along the route in %s"), (DownStartS - S) / 100.f, *Clock(DownEndT - DownStartT)));
+			Note(FString::Printf(TEXT("down %.0f m along the route in %s"), (DownStartS - S) / 100.f, *SummitBotClock(DownEndT - DownStartT)));
 			Shot(TEXT("8_descent_end"), true);
 			Finish(TEXT("summit run finished: summit reached and back down the route"));
 			return;
@@ -855,7 +855,7 @@ void UYggSummitBot::DrainLog()
 	{
 		int32 Nl;
 		const FString L = Full.FindChar(TEXT('\n'), Nl) ? Full.Left(Nl).TrimEnd() : Full.TrimEnd();
-		if (ExpeditionLines.Num() < 400) { ExpeditionLines.Add(FString::Printf(TEXT("%s  %s"), *Clock(GameT), *L.Left(240))); }
+		if (ExpeditionLines.Num() < 400) { ExpeditionLines.Add(FString::Printf(TEXT("%s  %s"), *SummitBotClock(GameT), *L.Left(240))); }
 		if (DeathZoneMsgT < 0.0 && L.Contains(TEXT("death zone")))
 		{
 			DeathZoneMsgT = GameT;
@@ -898,7 +898,7 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 	TStringBuilder<16384> R;
 	R.Appendf(TEXT("# Summit robot run %s\n\n"), *RunName);
 	R.Appendf(TEXT("- Result: %s\n"), bFinal ? *EndWhy : TEXT("(running)"));
-	R.Appendf(TEXT("- Now: %s, game %s, %.0f m along leg 7 of %.0f m\n"), PhaseName(uint8(Phase)), *Clock(GameT), S / 100.f, RouteLen / 100.f);
+	R.Appendf(TEXT("- Now: %s, game %s, %.0f m along leg 7 of %.0f m\n"), PhaseName(uint8(Phase)), *SummitBotClock(GameT), S / 100.f, RouteLen / 100.f);
 	R.Appendf(TEXT("- Mode: %s, %s; stay %.0f min, down %.0f m\n"), bNoO2 ? TEXT("no oxygen") : TEXT("bottled oxygen (a full bottle on at the start + one spare, never more)"),
 		bFast ? TEXT("sprinting whenever stamina allows (fast)") : TEXT("plain walk (no sprint)"), StayMin, DownM);
 	R.Appendf(TEXT("- Start: camp jump to %s; oxygen pickups within 40 m of it: %d\n"), *SouthColName, PickupsAtCol);
@@ -907,13 +907,13 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 	R.Append(TEXT("## Times\n\n| | game | real |\n|---|---|---|\n"));
 	if (UpStartT >= 0.0 && SummitT >= 0.0)
 	{
-		R.Appendf(TEXT("| South Col -> summit | **%s** | %s |\n"), *Clock(SummitT - UpStartT), *Clock(SummitReal - UpStartReal));
+		R.Appendf(TEXT("| South Col -> summit | **%s** | %s |\n"), *SummitBotClock(SummitT - UpStartT), *SummitBotClock(SummitReal - UpStartReal));
 		R.Appendf(TEXT("| summit beat -> summit screen | %.1f s | |\n"), MenuT >= 0.0 ? MenuT - SummitT : -1.0);
 	}
-	else if (UpStartT >= 0.0) { R.Appendf(TEXT("| climbing (summit not reached) | %s | |\n"), *Clock(GameT - UpStartT)); }
-	if (DownStartT >= 0.0) { R.Appendf(TEXT("| down %.0f m of route | %s | |\n"), (DownStartS - S) / 100.f, *Clock((DownEndT >= 0.0 ? DownEndT : GameT) - DownStartT)); }
-	if (StayStartT >= 0.0) { R.Appendf(TEXT("| standing at the summit | %s | |\n"), *Clock((DeathT >= 0.0 ? DeathT : GameT) - StayStartT)); }
-	if (DeathT >= 0.0) { R.Appendf(TEXT("| death after the climb started | **%s** (%.0f m a.s.l.: %s) | |\n"), *Clock(DeathT - UpStartT), DeathElev, *DeathCause); }
+	else if (UpStartT >= 0.0) { R.Appendf(TEXT("| climbing (summit not reached) | %s | |\n"), *SummitBotClock(GameT - UpStartT)); }
+	if (DownStartT >= 0.0) { R.Appendf(TEXT("| down %.0f m of route | %s | |\n"), (DownStartS - S) / 100.f, *SummitBotClock((DownEndT >= 0.0 ? DownEndT : GameT) - DownStartT)); }
+	if (StayStartT >= 0.0) { R.Appendf(TEXT("| standing at the summit | %s | |\n"), *SummitBotClock((DeathT >= 0.0 ? DeathT : GameT) - StayStartT)); }
+	if (DeathT >= 0.0) { R.Appendf(TEXT("| death after the climb started | **%s** (%.0f m a.s.l.: %s) | |\n"), *SummitBotClock(DeathT - UpStartT), DeathElev, *DeathCause); }
 	if (UpStartT >= 0.0 && SummitT >= 0.0 && SummitT > UpStartT)
 	{
 		const float ClimbSec = float(SummitT - UpStartT);
@@ -930,8 +930,8 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 	R.Appendf(TEXT("- Stuck teleports: %d; sidestep jumps: %d; ground probes: %d (Saved/Review/ground_probe.csv, labels A5_*)\n"), Teleports, Sidesteps, Probes);
 
 	R.Append(TEXT("\n## Body\n\n"));
-	R.Appendf(TEXT("- Death-zone message: %s\n"), DeathZoneMsgT >= 0.0 ? *FString::Printf(TEXT("%s at %.0f m (%s)%s"), *Clock(DeathZoneMsgT), DeathZoneMsgElev, *DeathZoneMsg.Left(120), bDeathZoneHeld ? TEXT(" HELD BACK") : TEXT("")) : TEXT("not seen"));
-	const auto At = [this](double T) { return T >= 0.0 ? FString::Printf(TEXT("from %s"), *Clock(T - FMath::Max(0.0, UpStartT))) : FString(TEXT("never")); };
+	R.Appendf(TEXT("- Death-zone message: %s\n"), DeathZoneMsgT >= 0.0 ? *FString::Printf(TEXT("%s at %.0f m (%s)%s"), *SummitBotClock(DeathZoneMsgT), DeathZoneMsgElev, *DeathZoneMsg.Left(120), bDeathZoneHeld ? TEXT(" HELD BACK") : TEXT("")) : TEXT("not seen"));
+	const auto At = [this](double T) { return T >= 0.0 ? FString::Printf(TEXT("from %s"), *SummitBotClock(T - FMath::Max(0.0, UpStartT))) : FString(TEXT("never")); };
 	R.Appendf(TEXT("- On the view (0..1, max): thin-air tunnel %.2f (%s), frost %.2f (%s), spent %.2f (%s), faint %.2f (%s)\n"), MaxHyp, *At(FirstHypT), MaxFrost, *At(FirstFrostT),
 		MaxExh, *At(FirstExhT), MaxFaint, *At(FirstFaintT));
 	R.Appendf(TEXT("- Lowest SpO2 %.1f %%, highest heart rate %.0f bpm, lowest health %.1f (first damage %s), lowest core %.2f C\n"), MinSpO2, MaxHeart, MinHealth, *At(FirstDamageT), MinCore);
@@ -942,7 +942,7 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 	for (const FSample& X : Samples)
 	{
 		if (X.Phase != uint8(EPhase::Up) || X.Elev < NextBand) { continue; }
-		R.Appendf(TEXT("| %.0f | %s | %.0f | %.1f | %.0f | %.1f | %.0f | %.2f | %.0f | %d | %.2f | %.2f | %.2f |\n"), X.Elev, *Clock(X.T - UpStartT), X.S, X.SpO2, X.Heart, X.Health, X.Stamina, X.Core,
+		R.Appendf(TEXT("| %.0f | %s | %.0f | %.1f | %.0f | %.1f | %.0f | %.2f | %.0f | %d | %.2f | %.2f | %.2f |\n"), X.Elev, *SummitBotClock(X.T - UpStartT), X.S, X.SpO2, X.Heart, X.Health, X.Stamina, X.Core,
 			X.Bottle, X.bRope ? 1 : 0, X.Hyp, X.Frost, X.Speed / 100.f);
 		NextBand = (int32(X.Elev) / 100 + 1) * 100;
 	}
@@ -953,7 +953,7 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 		for (const FSample& X : Samples)
 		{
 			if (X.Phase != uint8(EPhase::Stay) || X.T < NextT) { continue; }
-			R.Appendf(TEXT("| %s | %.1f | %.0f | %.1f | %.2f | %.2f |\n"), *Clock(X.T - StayStartT), X.SpO2, X.Heart, X.Health, X.Core, X.Faint);
+			R.Appendf(TEXT("| %s | %.1f | %.0f | %.1f | %.2f | %.2f |\n"), *SummitBotClock(X.T - StayStartT), X.SpO2, X.Heart, X.Health, X.Core, X.Faint);
 			NextT = X.T + 30.0;
 		}
 	}
@@ -964,7 +964,7 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 
 	R.Append(TEXT("\n## Issues\n\n"));
 	if (Issues.Num() == 0) { R.Append(TEXT("none\n")); }
-	for (const FIssue& I : Issues) { R.Appendf(TEXT("- %s %s at %.0f m along, %.0f m a.s.l. (%s): %s\n"), *Clock(I.T), *I.Kind, I.S, I.Elev, *SummitBotCm(I.Pos), *I.Text); }
+	for (const FIssue& I : Issues) { R.Appendf(TEXT("- %s %s at %.0f m along, %.0f m a.s.l. (%s): %s\n"), *SummitBotClock(I.T), *I.Kind, I.S, I.Elev, *SummitBotCm(I.Pos), *I.Text); }
 
 	// frames
 	if (FrameMs.Num() > 10)
@@ -985,7 +985,7 @@ FString UYggSummitBot::BuildReport(bool bFinal) const
 	}
 
 	R.Append(TEXT("\n## Pictures\n\n"));
-	for (const FShot& X : Shots) { R.Appendf(TEXT("- %s  %s (%.0f m): %s\n"), *Clock(X.T), *X.Stage, X.Elev, *X.File); }
+	for (const FShot& X : Shots) { R.Appendf(TEXT("- %s  %s (%.0f m): %s\n"), *SummitBotClock(X.T), *X.Stage, X.Elev, *X.File); }
 	R.Append(TEXT("\n## Expedition and story lines\n\n"));
 	for (const FString& L : ExpeditionLines) { R.Appendf(TEXT("- %s\n"), *L); }
 	R.Append(TEXT("\n## Events\n\n"));
