@@ -42,6 +42,10 @@ for who in [w for w in ("marek_hl", "nima_hl", "elena_hl", "pema_body_hl") if w 
     rc.assign_ik_rig_to_all_ops(unreal.RetargetSourceOrTarget.SOURCE, src_rig)
     rc.assign_ik_rig_to_all_ops(unreal.RetargetSourceOrTarget.TARGET, rig)
     rc.auto_map_chains(unreal.AutoMapChainType.EXACT, True)
+    # a Meshy skeleton has no root bone (its root IS the pelvis): the default "Root Motion" op would write Manny's
+    # floor-level root motion onto the pelvis and drag the hips/coat to the ground (#82, Tools/Story/npc_retarget_fix)
+    _rm = rc.get_index_of_op_by_name("Root Motion")
+    if _rm >= 0: rc.set_retarget_op_enabled(_rm, False)
     EAL.save_asset(rtg_path, False)
     ctx = [EAL.find_asset_data(abp_path)] + [EAL.find_asset_data(d) for d in sorted(deps)]
     unreal.IKRetargetBatchOperation.duplicate_and_retarget(ctx, src_mesh, mesh, rtg, "", "", "", f"_{who}", D, False, False, True)
